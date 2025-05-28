@@ -1,0 +1,51 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: rft
+  sample_size: 16
+  channels: 256
+  
+  n_layers: 12
+  n_heads: 6
+  d_model: 384
+
+  tokens_per_frame: 16
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+
+train:
+  trainer_id: rft
+  data_id: cod_latent
+
+  target_batch_size: 32
+  batch_size: 32
+
+  epochs: 200
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 0.01
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [core.proj_in, core.proj_out.proj]
+
+  scheduler: null #LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 3000
+    min_lr: 1.0e-5
+
+  checkpoint_dir: checkpoints/v0
+
+  sample_interval: 100
+  save_interval: 10000
+
+  sampler_id: simple
+
+wandb:
+  name: shahbuland
+  project: rft_test
+  run_name: v0
