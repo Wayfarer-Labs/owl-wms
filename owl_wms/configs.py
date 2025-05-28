@@ -47,6 +47,10 @@ class TrainingConfig:
     sample_interval : int = 1000
     save_interval : int = 1000
 
+    vae_scale : float = 0.13
+    vae_batch_size: int = 8
+    n_samples: int = 8 # For sampling
+
 @dataclass
 class WANDBConfig:
     name : str = None

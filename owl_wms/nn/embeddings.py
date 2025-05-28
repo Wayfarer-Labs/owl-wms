@@ -179,21 +179,27 @@ class MouseEmbedding(nn.Module):
     def forward(self, x):
         # x is [b,n,2]
         # Convert to polar coordinates
-        angles = torch.atan2(x[..., 1], x[..., 0])  # [b,n]
-        magnitudes = torch.norm(x, dim=-1)  # [b,n]
-        
-        # Embed angles
-        angle_emb = torch.stack([
-            torch.cos(angles),
-            torch.sin(angles)
-        ], dim=-1)  # [b,n,2]
-        angle_emb = self.angle_proj(angle_emb)  # [b,n,dim//2]
-        
-        # Embed magnitudes
-        magnitude_emb = self.magnitude_embed(magnitudes)  # [b,n,dim//2]
-        
-        # Combine and pass through MLP
-        x = torch.cat([angle_emb, magnitude_emb], dim=-1)  # [b,n,dim]
+        with torch.no_grad():
+            # Apply symlog scaling to x and y coordinates
+            x_sign = torch.sign(x)
+            x_abs = torch.abs(x)
+            x = x_sign * torch.log1p(x_abs)
+
+            angles = torch.atan2(x[..., 1], x[..., 0])  # [b,n]
+            magnitudes = torch.norm(x, dim=-1)  # [b,n]
+            
+            # Embed angles
+            angle_emb = torch.stack([
+                torch.cos(angles),
+                torch.sin(angles)
+            ], dim=-1)  # [b,n,2]
+            angle_emb = self.angle_proj(angle_emb)  # [b,n,dim//2]
+            
+            # Embed magnitudes
+            magnitude_emb = self.magnitude_embed(magnitudes)  # [b,n,dim//2]
+            
+            # Combine and pass through MLP
+            x = torch.cat([angle_emb, magnitude_emb], dim=-1)  # [b,n,dim]
         x = self.mlp(x)
         return x
 
@@ -204,8 +210,8 @@ class ButtonEmbeddding(nn.Module):
         self.proj = MLPCustom(n_buttons, dim*4, dim_out)
     
     def forward(self, x):
-        # x is bool tensor or 0s and 1s
-        x = (x.float() * 2) - 1
+        # x is float tensor of 0s and 1s
+        x = (x * 2) - 1
         x = self.proj(x)
         return x
 

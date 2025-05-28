@@ -3,15 +3,17 @@ from torch import nn
 import torch.nn.functional as F
 
 from .normalization import LayerNorm, RMSNorm, QKNorm
-from .embeddings import ImageRoPE
 from .mlp import MLP
 
 import einops as eo
-from .mimetic import mimetic_init
 
 from .modulation import AdaLN, Gate
+from .embeddings import FlatVideoRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
+
+from einops._torch_specific import allow_ops_in_compiled_graph
+allow_ops_in_compiled_graph()
 
 class Attn(nn.Module):
     def __init__(self, config : 'TransformerConfig'):
@@ -23,15 +25,13 @@ class Attn(nn.Module):
         self.out = nn.Linear(config.d_model, config.d_model)
 
         self.qk_norm = QKNorm(config.d_model // config.n_heads)
-        #self.rope = ImageRoPE(config)
-
-        mimetic_init(self.qkv, self.out, config)
+        self.rope = FlatVideoRoPE(config)
 
     def forward(self, x):
 
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
-        #q,k = self.rope(q,k)
+        q,k = self.rope(q,k)
         x = F.scaled_dot_product_attention(q,k,v)
         x = eo.rearrange(x, 'b h n d -> b n (h d)')
         x = self.out(x)
