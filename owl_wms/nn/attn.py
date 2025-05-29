@@ -8,7 +8,8 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-from .embeddings import FlatVideoRoPE
+#from .embeddings import FlatVideoRoPE
+from rotary_embedding_torch import RotaryEmbedding
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -25,13 +26,15 @@ class Attn(nn.Module):
         self.out = nn.Linear(config.d_model, config.d_model)
 
         self.qk_norm = QKNorm(config.d_model // config.n_heads)
-        self.rope = FlatVideoRoPE(config)
+        self.rope = RotaryEmbedding(dim = config.d_model//config.n_heads//2)
 
     def forward(self, x):
-
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
-        q,k = self.rope(q,k)
+
+        q = self.rope.rotate_queries_or_keys(q)
+        k = self.rope.rotate_queries_or_keys(k)
+
         x = F.scaled_dot_product_attention(q,k,v)
         x = eo.rearrange(x, 'b h n d -> b n (h d)')
         x = self.out(x)

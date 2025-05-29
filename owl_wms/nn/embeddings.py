@@ -60,6 +60,7 @@ class FlatVideoRoPE(nn.Module):
             freqs_for = 'pixel',
             max_freq = 256
         )
+        self.pos_emb.freqs.requires_grad = False
         self.tokens_per_frame = config.sample_size
 
         self.rearrange_in = lambda x: eo.rearrange(x, 'b h (n_t m) d -> b h n_t m d', m = self.tokens_per_frame)
@@ -72,7 +73,8 @@ class FlatVideoRoPE(nn.Module):
         k = self.rearrange_in(k)
 
         n_t = q.shape[2]
-        freqs = self.get_freqs(n_t)
+        with torch.no_grad():
+            freqs = self.get_freqs(n_t)
 
         q = apply_rotary_emb(freqs.float(), q.float()).to(q.dtype)
         k = apply_rotary_emb(freqs.float(), k.float()).to(k.dtype)
@@ -188,18 +190,17 @@ class MouseEmbedding(nn.Module):
             angles = torch.atan2(x[..., 1], x[..., 0])  # [b,n]
             magnitudes = torch.norm(x, dim=-1)  # [b,n]
             
-            # Embed angles
+            # Embed angles and magnitudes
             angle_emb = torch.stack([
                 torch.cos(angles),
                 torch.sin(angles)
             ], dim=-1)  # [b,n,2]
-            angle_emb = self.angle_proj(angle_emb)  # [b,n,dim//2]
-            
-            # Embed magnitudes
             magnitude_emb = self.magnitude_embed(magnitudes)  # [b,n,dim//2]
-            
-            # Combine and pass through MLP
-            x = torch.cat([angle_emb, magnitude_emb], dim=-1)  # [b,n,dim]
+
+        angle_emb = self.angle_proj(angle_emb)  # [b,n,dim//2]
+        
+        # Combine and pass through MLP
+        x = torch.cat([angle_emb, magnitude_emb], dim=-1)  # [b,n,dim]
         x = self.mlp(x)
         return x
 

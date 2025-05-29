@@ -23,9 +23,10 @@ class CoDDataset(IterableDataset):
             
             for base_file in base_files:
                 base_path = os.path.join(splits_dir, base_file)
-                base_name = os.path.splitext(base_file)[0]
-                mouse_path = os.path.join(splits_dir, f"{base_name}_mouse.pt") 
-                buttons_path = os.path.join(splits_dir, f"{base_name}_buttons.pt")
+                # Get just the numeric prefix from the filename
+                base_name = base_file.split('_')[0]
+                mouse_path = os.path.join(splits_dir, f"{base_name}_mouse.pt")
+                buttons_path = os.path.join(splits_dir, f"{base_name}_buttons.pt") 
                 
                 if os.path.exists(mouse_path) and os.path.exists(buttons_path):
                     self.paths.append((base_path, mouse_path, buttons_path))
@@ -63,7 +64,7 @@ def collate_fn(x):
     buttons = torch.stack(buttons) # [b,n,n_buttons]
     return vids, mouses, buttons
 
-def get_loader(batch_size, **dataloader_kwargs):
+def get_loader(batch_size, **data_kwargs):
     """
     Creates a DataLoader for the CoDDataset with the specified batch size
     
@@ -74,12 +75,11 @@ def get_loader(batch_size, **dataloader_kwargs):
     Returns:
         DataLoader instance
     """
-    dataset = CoDDataset()
+    dataset = CoDDataset(**data_kwargs)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        collate_fn=collate_fn,
-        **dataloader_kwargs
+        collate_fn=collate_fn
     )
     return loader
 

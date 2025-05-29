@@ -6,7 +6,7 @@ class CFGSampler:
     @torch.no_grad()
     def __call__(self, model, dummy_batch, mouse, btn, sampling_steps = 64, decode_fn = None, scale = 1, cfg_scale = 1.5):
         x = torch.randn_like(dummy_batch)
-        ts = torch.ones(x.shape[0], device=x.device,dtype=x.dtype)
+        ts = torch.ones(x.shape[0], x.shape[1], device=x.device,dtype=x.dtype)
         dt = 1. / sampling_steps
 
         for _ in range(sampling_steps):
@@ -24,7 +24,7 @@ class CFGSampler:
 
         if decode_fn is not None:
             x = x * scale # x is [b,n,m,d]
-            x = decode_fn(x)
+            x = decode_fn(x[...,:128]) # Ignore optical flow
         return x
 
 if __name__ == "__main__":

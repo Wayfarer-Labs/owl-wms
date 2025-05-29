@@ -3,6 +3,7 @@ import wandb
 import torch
 
 import numpy as np
+from .vis import draw_frames
 
 class LogHelper:
     """
@@ -53,8 +54,8 @@ class LogHelper:
         self.data = {}
         return final
 
-def to_wandb(x, gather = False):
-    # x is [b,c,h,w]
+def to_wandb(x, batch_mouse, batch_btn, gather = False):
+    # x is [b,n,c,h,w]
     x = x.clamp(-1, 1)
 
     if dist.is_initialized() and gather:
@@ -62,7 +63,7 @@ def to_wandb(x, gather = False):
         dist.all_gather(gathered, x)
         x = torch.cat(gathered, dim=0)
 
-    x = (x.detach().float().cpu() + 1) * 127.5 # [-1,1] -> [0,255]
-    x = x.permute(0,2,3,1).numpy().astype(np.uint8) # [b,c,h,w] -> [b,h,w,c]
-    return [wandb.Image(img) for img in x]
+    # Get labels on them
+    x = draw_frames(x, batch_mouse, batch_btn)
+    return [wandb.Video(vid, format='mp4',fps=60) for vid in x]
     

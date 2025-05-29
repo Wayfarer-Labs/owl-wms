@@ -11,6 +11,7 @@ class CoDLatentDataset(IterableDataset):
 
         self.window = window_length
         self.paths = []
+
         for root_dir in os.listdir(root):
             splits_dir = os.path.join(root, root_dir, "splits")
             if not os.path.isdir(splits_dir):
@@ -19,17 +20,27 @@ class CoDLatentDataset(IterableDataset):
             # Get all files in splits dir
             files = os.listdir(splits_dir)
             # Filter to just the base files (without _mouse or _buttons)
-            base_files = [f for f in files if f.endswith("_rgblatents.pt")]
+            base_files = [f for f in files if f.endswith("_rgblatent.pt")]
             
             for base_file in base_files:
                 base_path = os.path.join(splits_dir, base_file)
-                base_name = os.path.splitext(base_file)[0]
-                mouse_path = os.path.join(splits_dir, f"{base_name}_mouse.pt") 
-                buttons_path = os.path.join(splits_dir, f"{base_name}_buttons.pt")
-                of_path = os.path.join(splits_dir, f"{base_name}_flowlatents.pt")
+                # Get just the numeric prefix from the filename
+                base_name = base_file.split('_')[0]
+                mouse_path = os.path.join(splits_dir, f"{base_name}_mouse.pt")
+                buttons_path = os.path.join(splits_dir, f"{base_name}_buttons.pt") 
+                of_path = os.path.join(splits_dir, f"{base_name}_flowlatent.pt")
+
                 
-                if os.path.exists(mouse_path) and os.path.exists(buttons_path):
+                if os.path.exists(mouse_path) and os.path.exists(buttons_path) and os.path.exists(of_path):
                     self.paths.append((base_path, mouse_path, buttons_path, of_path))
+                else:
+                    print(f"Missing files for {base_name}:")
+                    if not os.path.exists(mouse_path):
+                        print(f"  Missing mouse data: {mouse_path}")
+                    if not os.path.exists(buttons_path):
+                        print(f"  Missing button data: {buttons_path}")
+                    if not os.path.exists(of_path):
+                        print(f"  Missing optical flow data: {of_path}")
     
     def get_item(self):
         vid_path, mouse_path, btn_path, of_path = random.choice(self.paths)
@@ -48,7 +59,7 @@ class CoDLatentDataset(IterableDataset):
         
         # Extract window slices
         vid_slice = vid[window_start:window_start+self.window]
-        of_slice = of[window_start:window_end+self.window]
+        of_slice = of[window_start:window_start+self.window]
         vid_slice = torch.cat([vid_slice, of_slice], dim = -1)
         
         mouse_slice = mouse[window_start:window_start+self.window]
@@ -68,7 +79,7 @@ def collate_fn(x):
     buttons = torch.stack(buttons) # [b,n,n_buttons]
     return vids, mouses, buttons
 
-def get_loader(batch_size, **dataloader_kwargs):
+def get_loader(batch_size, **data_kwargs):
     """
     Creates a DataLoader for the CoDDataset with the specified batch size
     
@@ -79,18 +90,19 @@ def get_loader(batch_size, **dataloader_kwargs):
     Returns:
         DataLoader instance
     """
-    dataset = CoDDataset()
+    dataset = CoDLatentDataset(**data_kwargs)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         collate_fn=collate_fn,
-        **dataloader_kwargs
+        prefetch_factor=1,
+        num_workers=1
     )
     return loader
 
 if __name__ == "__main__":
     import time
-    loader = get_loader(32)
+    loader = get_loader(32, root="../cod_data/BlackOpsColdWar")
 
     start = time.time()
     batch = next(iter(loader))
