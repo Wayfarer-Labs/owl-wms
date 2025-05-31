@@ -65,10 +65,17 @@ class RFTTrainer(BaseTrainer):
         super().save(save_dict)
     
     def load(self):
-        if self.train_cfg.resume_ckpt is not None:
-            save_dict = super().load(self.train_cfg.resume_ckpt)
-        else:
+        has_ckpt = False
+        try:
+            if self.train_cfg.resume_ckpt is not None:
+                save_dict = super().load(self.train_cfg.resume_ckpt)
+                has_ckpt = True
+        except:
+            print("Error loading checkpoint")
+        
+        if not has_ckpt:
             return
+
         
         self.model.load_state_dict(save_dict['model'])
         self.ema.load_state_dict(save_dict['ema'])
@@ -86,7 +93,7 @@ class RFTTrainer(BaseTrainer):
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
         self.decoder = self.decoder.cuda().eval().bfloat16()
-        decode_fn = make_batched_decode_fn(self.decoder.decode, self.train_cfg.vae_batch_size)
+        decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
         self.ema = EMA(
             self.model,
@@ -115,6 +122,8 @@ class RFTTrainer(BaseTrainer):
         accum_steps = max(1, accum_steps)
         self.scaler = torch.amp.GradScaler()
         ctx = torch.amp.autocast('cuda',torch.bfloat16)
+
+        self.load()
 
         # Timer reset
         timer = Timer()

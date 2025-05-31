@@ -55,6 +55,6 @@ class BaseTrainer:
         torch.save(save_dict, fp)
     
     def load(self, path):
-        return torch.load(path, map_location = 'cpu', weights_only=False)
+        return torch.load(path, map_location=f'cuda:{self.local_rank}',weights_only=False)
 
             
