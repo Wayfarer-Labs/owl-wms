@@ -26,14 +26,10 @@ class Attn(nn.Module):
         self.out = nn.Linear(config.d_model, config.d_model)
 
         self.qk_norm = QKNorm(config.d_model // config.n_heads)
-        self.rope = RotaryEmbedding(dim = config.d_model//config.n_heads//2)
 
     def forward(self, x):
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
-
-        q = self.rope.rotate_queries_or_keys(q)
-        k = self.rope.rotate_queries_or_keys(k)
 
         x = F.scaled_dot_product_attention(q,k,v)
         x = eo.rearrange(x, 'b h n d -> b n (h d)')
@@ -134,45 +130,13 @@ class UViT(nn.Module):
 
 # === VIT Specific Layers ===
 
-class PatchProjIn(nn.Module):
-    def __init__(self, d_model, channels = 3, patch_size=1):
-        super().__init__()
-
-        self.proj_in = nn.Conv2d(channels, d_model, patch_size, patch_size, 0, bias=False)
-    
-    def forward(self, x):
-        b,c,h,w = x.shape
-        x = self.proj_in(x)
-        x = eo.rearrange(x, 'b c h w -> b (h w) c')
-        return x
-
-class PatchProjOut(nn.Module):
+class FinalLayer(nn.Module):
     def __init__(self, sample_size, d_model, channels = 3, patch_size=1):
         super().__init__()
 
         self.norm = AdaLN(d_model)
         self.act = nn.SiLU()
         self.proj = nn.Linear(d_model, channels*patch_size*patch_size)
-        self.sample_size = sample_size
-        self.patch_size = patch_size
-
-        self.n_patches = self.sample_size//self.patch_size
-
-    def forward(self, x, cond):
-        x = self.norm(x, cond)
-        x = self.act(x)
-        x = self.proj(x)
-        x = eo.rearrange(x, 'b (h w) (ph pw c) -> b c (h ph) (w pw)', h = self.n_patches, ph = self.patch_size, pw = self.patch_size)
-
-        return x
-
-class ProjOut(nn.Module):
-    def __init__(self, d_model, channels = 3):
-        super().__init__()
-
-        self.norm = AdaLN(d_model)
-        self.act = nn.SiLU()
-        self.proj = nn.Linear(d_model, channels, bias = False)
 
     def forward(self, x, cond):
         x = self.norm(x, cond)

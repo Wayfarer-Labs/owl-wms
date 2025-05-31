@@ -10,9 +10,10 @@ import einops as eo
 
 from ..nn.embeddings import (
     TimestepEmbedding,
-    ControlEmbedding
+    ControlEmbedding,
+    LearnedPosEnc
 )
-from ..nn.attn import UViT, ProjOut
+from ..nn.attn import UViT, FinalLayer
 
 class GameRFTCore(nn.Module):
     def __init__(self, config):
@@ -23,7 +24,9 @@ class GameRFTCore(nn.Module):
         self.t_embed = TimestepEmbedding(config.d_model)
 
         self.proj_in = nn.Linear(config.channels, config.d_model, bias = False)
-        self.proj_out = ProjOut(config.d_model, config.channels)
+        self.proj_out = FinalLayer(config.sample_size, config.d_model, config.channels)
+
+        self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
 
     def forward(self, x, t, mouse, btn):
         # x is [b,n,m,d]
@@ -34,15 +37,16 @@ class GameRFTCore(nn.Module):
         ctrl_cond = self.control_embed(mouse, btn)
         t_cond = self.t_embed(t)
         cond = ctrl_cond + t_cond # [b,n,d]
-
-        # x is [b,n_frames,n,c]
-        b,n,m,c = x.shape
-        x = x.view(b,n*m,c) # Flatten into sequence
+        
+        # x is [b,n,c,h,w]
+        b,n,c,h,w = x.shape
+        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
 
         x = self.proj_in(x)
+        x = self.pos_enc(x)
         x = self.transformer(x, cond)
-        x = self.proj_out(x, cond) # -> [b,n*m,c]
-        x = x.view(b,n,m,c)
+        x = self.proj_out(x, cond) # -> [b,n*hw,c]
+        x = eo.rearrange(x, 'b (n h w) c -> b n c h w', n=n,h=h,w=w)
 
         return x
 
@@ -54,10 +58,10 @@ class GameRFT(nn.Module):
         self.cfg_prob = config.cfg_prob
     
     def forward(self, x, mouse, btn):
-        # x is [b,n,m,d]
+        # x is [b,n,c,h,w]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
-        b,n,m,d = x.shape
+        b,n,c,h,w = x.shape
 
         # Apply classifier-free guidance dropout
         if self.cfg_prob > 0.:
@@ -72,7 +76,7 @@ class GameRFT(nn.Module):
         with torch.no_grad():
             ts = torch.randn(b,n,device=x.device,dtype=x.dtype).sigmoid()
             
-            ts_exp = eo.repeat(ts, 'b n -> b n m d',m=m,d=d)
+            ts_exp = eo.repeat(ts, 'b n -> b n 1 1 1')
             z = torch.randn_like(x)
 
             lerpd = x * (1. - ts_exp) + z * ts_exp

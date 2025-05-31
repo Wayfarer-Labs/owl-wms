@@ -1,25 +1,27 @@
 # Config for a simple 256 -> 16 autoencoder
 model:
   model_id: game_rft
-  sample_size: 16
-  channels: 256
+  sample_size: 4
+  channels: 128
   
-  n_layers: 13
-  n_heads: 12
-  d_model: 768
+  n_layers: 17
+  n_heads: 16
+  d_model: 1024
 
   tokens_per_frame: 16
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.1
+  n_frames: 60
 
 train:
   trainer_id: rft
   data_id: cod_latent
   data_kwargs:
-    window_length: 128
+    window_length: 60
     root: ../cod_data/BlackOpsColdWar
+    add_optical_flow: false
 
   target_batch_size: 256
   batch_size: 32
@@ -38,17 +40,24 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: checkpoints/v0
+  checkpoint_dir: checkpoints/v2
+  resume_ckpt: checkpoints/v2/step_65000.pt
 
   sample_interval: 1000
   save_interval: 5000
 
   sampler_id: cfg
+  sampler_kwargs:
+    sampler_id: cfg
+    n_steps: 20
+    cfg_scale: 1.3
+    window_length: 32
+    
   vae_batch_size: 16
-  vae_scale: 0.13
+  vae_scale: 2.17
   n_samples: 8
 
 wandb:
   name: shahbuland
   project: video_models
-  run_name: v0
+  run_name: v2

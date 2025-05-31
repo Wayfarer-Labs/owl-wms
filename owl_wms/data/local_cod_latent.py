@@ -6,11 +6,12 @@ import os
 import random
 
 class CoDLatentDataset(IterableDataset):
-    def __init__(self, window_length = 120, root = "/home/shahbuland/cod_data/raw"):
+    def __init__(self, window_length = 120, root = "/home/shahbuland/cod_data/raw", add_optical_flow=True):
         super().__init__()
 
         self.window = window_length
         self.paths = []
+        self.add_optical_flow = add_optical_flow
 
         for root_dir in os.listdir(root):
             splits_dir = os.path.join(root, root_dir, "splits")
@@ -31,7 +32,7 @@ class CoDLatentDataset(IterableDataset):
                 of_path = os.path.join(splits_dir, f"{base_name}_flowlatent.pt")
 
                 
-                if os.path.exists(mouse_path) and os.path.exists(buttons_path) and os.path.exists(of_path):
+                if os.path.exists(mouse_path) and os.path.exists(buttons_path) and (not self.add_optical_flow or os.path.exists(of_path)):
                     self.paths.append((base_path, mouse_path, buttons_path, of_path))
                 else:
                     print(f"Missing files for {base_name}:")
@@ -39,16 +40,18 @@ class CoDLatentDataset(IterableDataset):
                         print(f"  Missing mouse data: {mouse_path}")
                     if not os.path.exists(buttons_path):
                         print(f"  Missing button data: {buttons_path}")
-                    if not os.path.exists(of_path):
+                    if self.add_optical_flow and not os.path.exists(of_path):
                         print(f"  Missing optical flow data: {of_path}")
     
     def get_item(self):
         vid_path, mouse_path, btn_path, of_path = random.choice(self.paths)
         # Load tensors with memory mapping
         vid = torch.load(vid_path, map_location='cpu', mmap=True).float()
-        of = torch.load(of_path, map_location='cpu',mmap=True).float()
         mouse = torch.load(mouse_path, map_location='cpu', mmap=True) 
         buttons = torch.load(btn_path, map_location='cpu', mmap=True)
+
+        if self.add_optical_flow:
+            of = torch.load(of_path, map_location='cpu',mmap=True).float()
 
         # Get minimum length
         min_len = min(len(vid), len(mouse), len(buttons))
@@ -59,8 +62,9 @@ class CoDLatentDataset(IterableDataset):
         
         # Extract window slices
         vid_slice = vid[window_start:window_start+self.window]
-        of_slice = of[window_start:window_start+self.window]
-        vid_slice = torch.cat([vid_slice, of_slice], dim = -1)
+        if self.add_optical_flow:
+            of_slice = of[window_start:window_start+self.window]
+            vid_slice = torch.cat([vid_slice, of_slice], dim = -1)
         
         mouse_slice = mouse[window_start:window_start+self.window]
         buttons_slice = buttons[window_start:window_start+self.window]
@@ -102,7 +106,7 @@ def get_loader(batch_size, **data_kwargs):
 
 if __name__ == "__main__":
     import time
-    loader = get_loader(32, root="../cod_data/BlackOpsColdWar")
+    loader = get_loader(64, root="../cod_data/BlackOpsColdWar", add_optical_flow=False)
 
     start = time.time()
     batch = next(iter(loader))
@@ -111,5 +115,6 @@ if __name__ == "__main__":
     x,y,z = batch
     print(f"Time to load batch: {end-start:.2f}s")
     print(f"Video shape: {x.shape}")
+    print(x.std())
     print(f"Mouse shape: {y.shape}") 
     print(f"Button shape: {z.shape}")
