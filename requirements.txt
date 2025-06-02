@@ -1,5 +1,4 @@
 opencv-python
 wandb
 einops
-rotary-embeddings-pytorch
 ema-pytorch
