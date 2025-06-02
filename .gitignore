@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environment
+.venv/
+
+# Test and coverage outputs
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.cache/
+
+# Static analysis artifacts
+.mypy_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs or local metadata
+*.log
+.DS_Store
+
+# IDE/editor config (optional)
+.vscode/
+.idea/
