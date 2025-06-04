@@ -13,8 +13,8 @@ from pathlib import Path
 # Add webapp to path
 sys.path.append(str(Path(__file__).parent))
 
-from render import VideoRenderer, RenderConfig, quick_render, batch_render
-from action_builder import ActionPattern, ActionSequenceGenerator, ActionConfig, MouseGenerator, ButtonGenerator
+from webapp.render import render_video, save_video
+from webapp.action_builder import ActionPattern, ActionSequenceGenerator, ActionConfig, MouseGenerator, ButtonGenerator
 
 
 def demo_quick_renders():
@@ -33,7 +33,7 @@ def demo_quick_renders():
         print(f"Generating video with pattern: {pattern.value}")
         result = quick_render(
             pattern=pattern,
-            sequence_length=64,
+            sequence_length=60,
             output_dir=f"demo_output/{pattern.value}"
         )
         print(f"✅ Generated: {result['video_path']}")
@@ -56,7 +56,7 @@ def demo_batch_render():
     print(f"Generating batch video with {len(patterns)} different patterns...")
     result = batch_render(
         patterns=patterns,
-        sequence_length=64,
+        sequence_length=60,
         output_dir="demo_output/batch"
     )
     
@@ -153,7 +153,7 @@ def demo_with_args():
     parser.add_argument("--pattern", type=str, default="look_around",
                        choices=[p.value for p in ActionPattern],
                        help="Action pattern to use")
-    parser.add_argument("--length", type=int, default=64,
+    parser.add_argument("--length", type=int, default=60,
                        help="Sequence length")
     parser.add_argument("--output", type=str, default="demo_output",
                        help="Output directory")

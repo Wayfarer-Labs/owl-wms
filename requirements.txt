@@ -8,3 +8,10 @@ torch
 toolz
 termcolor
 multimethod
+diffusers
+vector-quantize-pytorch
+torchtyping
+imageio
+einops
+numpy
+imageio[ffmpeg]

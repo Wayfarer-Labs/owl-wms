@@ -8,7 +8,8 @@ from termcolor import colored
 
 from owl_wms.models import get_model_cls
 from owl_wms.configs import Config
-
+from owl_wms.utils.owl_vae_bridge import get_decoder_only
+from owl_wms.utils import freeze
 
 @dataclass(frozen=True)
 class ModelPaths:
@@ -64,8 +65,11 @@ class ModelLoader:
         
         # Load and filter state dict
         checkpoint = self._load_checkpoint()
-        filtered_state_dict = self._append_state_dict_prefix(checkpoint)
-        model.load_state_dict(filtered_state_dict)
+        
+        if config.model.model_id == "game_rft":
+            checkpoint = self._append_state_dict_prefix(checkpoint)
+
+        model.load_state_dict(checkpoint)
         
         # Configure model
         if eval_mode:
@@ -83,13 +87,34 @@ class ModelLoader:
             print(f'{colored("Checkpoint", "blue")}  \t\t {colored(str(self.paths.checkpoint), "green", attrs=["bold"])}')
         
         return model
+    
+    def load_decoder(self,
+                     device: Optional[Union[str, torch.device]] = None,
+                     eval_mode: bool = True,
+                     verbose: bool = True) -> nn.Module:
+        decoder = get_decoder_only()
+        freeze(decoder)
+        
+        if verbose:
+            print(f'{colored("Decoder loaded", "blue")}\t\t {colored("successfully", "green")}')
+            print(f'{colored("Parameters", "blue")}  \t\t {colored(f"{self._count_parameters(decoder):,}", "green")}')
+            print(f'{colored("Config", "blue")}      \t\t {colored(str(self.paths.config), "green", attrs=["bold"])}')
+            print(f'{colored("Checkpoint", "blue")}  \t\t {colored(str(self.paths.checkpoint), "green", attrs=["bold"])}')
+        
+        if device is not None:
+            decoder = decoder.to(device)
+        
+        if eval_mode:
+            decoder.eval()
+
+        return decoder
 
 
-def load_model(config_path: Optional[str] = None,
+def load_models(config_path: Optional[str] = None,
                checkpoint_path: Optional[str] = None,
                device: Optional[Union[str, torch.device]] = None,
                eval_mode: bool = True,
-               verbose: bool = True) -> nn.Module:
+               verbose: bool = True) -> tuple[nn.Module, nn.Module]:
     """
     Convenience function for loading models with custom paths.
     
@@ -114,7 +139,9 @@ def load_model(config_path: Optional[str] = None,
         # Use default paths
         loader = ModelLoader()
     
-    return loader.load_model(device=device, eval_mode=eval_mode, verbose=verbose)
+    encoder = loader.load_model(device=device, eval_mode=eval_mode, verbose=verbose)
+    decoder = loader.load_decoder(device=device, eval_mode=eval_mode, verbose=verbose)
+    return encoder, decoder
 
 
 if __name__ == "__main__":
@@ -128,4 +155,4 @@ if __name__ == "__main__":
 
     # Method 2: Using the convenience function
     print("=== Loading model using convenience function ===")
-    model = load_model()
+    encoder, decoder = load_models()

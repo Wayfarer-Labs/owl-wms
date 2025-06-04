@@ -41,15 +41,17 @@ class MouseGenerator:
         if window_size <= 1:
             return values
         
-        kernel = torch.ones(window_size, device=values.device) / window_size
-        # Add padding to maintain sequence length
+        # values is [2, sequence_length] for mouse x,y coordinates
+        # Use groups=2 to smooth each channel independently
+        kernel = torch.ones(2, 1, window_size, device=values.device) / window_size
         padding = window_size // 2
         padded = torch.nn.functional.pad(values, (padding, padding), mode='reflect')
-        return torch.nn.functional.conv1d(
-            padded.unsqueeze(0), 
-            kernel.unsqueeze(0).unsqueeze(0), 
-            padding=0
-        ).squeeze(0)
+        smoothed = torch.nn.functional.conv1d(
+            padded.unsqueeze(0),  # Add batch dim: [1, 2, sequence_length]
+            kernel, padding=0,
+            groups=2              # Each output channel only depends on corresponding input channel
+        ).squeeze(0)              # Remove batch dim: [2, sequence_length]
+        return smoothed
     
     @staticmethod
     def idle(config: ActionConfig) -> torch.Tensor:
@@ -314,6 +316,6 @@ if __name__ == "__main__":
                                   .add_button_segment(0, 50, ButtonGenerator.hold_buttons, button_names=["W"])
                                   .add_button_segment(50, 100, ButtonGenerator.hold_buttons, button_names=["W", "LSHIFT"])
                                   .build())
-    
+
     print(f"Custom sequence mouse shape: {mouse_custom.shape}, button shape: {button_custom.shape}")
     print("Button names mapping:", BUTTON_INDICES)
