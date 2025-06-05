@@ -138,7 +138,7 @@ def render_video(pattern=DEFAULT_PATTERN, length=SEQUENCE_LENGTH, verbose=True):
     # Load model and create sampler
     if verbose:
         print("Loading model...")
-    encoder, decoder = load_models(device=DEVICE, verbose=verbose)
+    encoder, decoder, model_config = load_models(device=DEVICE, verbose=verbose)
     
     if verbose:
         print("Creating sampler...")

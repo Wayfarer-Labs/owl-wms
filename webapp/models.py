@@ -111,10 +111,10 @@ class ModelLoader:
 
 
 def load_models(config_path: Optional[str] = None,
-               checkpoint_path: Optional[str] = None,
-               device: Optional[Union[str, torch.device]] = None,
-               eval_mode: bool = True,
-               verbose: bool = True) -> tuple[nn.Module, nn.Module]:
+                checkpoint_path: Optional[str] = None,
+                device: Optional[Union[str, torch.device]] = None,
+                eval_mode: bool = True,
+                verbose: bool = True) -> tuple[nn.Module, nn.Module, Config]:
     """
     Convenience function for loading models with custom paths.
     
@@ -141,7 +141,7 @@ def load_models(config_path: Optional[str] = None,
     
     encoder = loader.load_model(device=device, eval_mode=eval_mode, verbose=verbose)
     decoder = loader.load_decoder(device=device, eval_mode=eval_mode, verbose=verbose)
-    return encoder, decoder
+    return encoder, decoder, loader._load_config()
 
 
 if __name__ == "__main__":
@@ -155,4 +155,5 @@ if __name__ == "__main__":
 
     # Method 2: Using the convenience function
     print("=== Loading model using convenience function ===")
-    encoder, decoder = load_models()
+    encoder, decoder, config = load_models()
+    print(f"Config: {config}")

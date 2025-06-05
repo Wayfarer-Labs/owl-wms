@@ -15,3 +15,4 @@ imageio
 einops
 numpy
 imageio[ffmpeg]
+accelerate

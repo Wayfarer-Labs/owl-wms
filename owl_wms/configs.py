@@ -70,3 +70,12 @@ class Config:
         
         cfg = OmegaConf.create(raw_cfg)
         return OmegaConf.structured(cls(**cfg))
+
+
+@dataclass    
+class WindowSamplingConfig:
+    n_steps : int = 20
+    cfg_scale : float = 1.3
+    window_length : int = 60
+    num_frames : int = 60
+    noise_prev : float = 0.2
