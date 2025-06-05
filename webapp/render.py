@@ -45,8 +45,9 @@ def generate_dummy_actions(pattern=DEFAULT_PATTERN, length=SEQUENCE_LENGTH):
 def synthesize_video(mouse_actions, button_actions, encoder, decoder, sampler):
     """Generate video using model and sampler."""
     batch_size, sequence_length = mouse_actions.shape[:2]
-    
+
     # Create dummy latent batch - hardcoded dimensions from config
+    # NOTE: Must match training scaling! Training divides latents by vae_scale=2.17
     dummy_batch = torch.randn(
         batch_size, sequence_length, CHANNELS,
         int(math.sqrt(TOKENS_PER_FRAME)), # H
@@ -174,3 +175,5 @@ if __name__ == "__main__":
     
     # Render with different pattern
     render_video(ActionPattern.AIM_AND_SHOOT, verbose=True)
+    render_video(ActionPattern.LOOK_AROUND, verbose=True)
+    render_video(ActionPattern.CIRCLE_STRAFE, verbose=True)
