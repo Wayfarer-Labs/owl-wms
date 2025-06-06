@@ -16,3 +16,4 @@ einops
 numpy
 imageio[ffmpeg]
 accelerate
+fastapi

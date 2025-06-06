@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from termcolor import colored
 
 from owl_wms.models import get_model_cls
-from owl_wms.configs import Config
+from owl_wms.configs import Config as RunConfig
 from owl_wms.utils.owl_vae_bridge import get_decoder_only
 from owl_wms.utils import freeze
 
@@ -48,8 +48,8 @@ class ModelLoader:
     def _count_parameters(model: nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
     
-    def _load_config(self) -> Config:
-        return Config.from_yaml(str(self.paths.config))
+    def _load_config(self) -> RunConfig:
+        return RunConfig.from_yaml(str(self.paths.config))
     
     def _load_checkpoint(self) -> Dict:
         return torch.load(str(self.paths.checkpoint), map_location='cpu')
@@ -114,7 +114,7 @@ def load_models(config_path: Optional[str] = None,
                 checkpoint_path: Optional[str] = None,
                 device: Optional[Union[str, torch.device]] = None,
                 eval_mode: bool = True,
-                verbose: bool = True) -> tuple[nn.Module, nn.Module, Config]:
+                verbose: bool = True) -> tuple[nn.Module, nn.Module, RunConfig]:
     """
     Convenience function for loading models with custom paths.
     

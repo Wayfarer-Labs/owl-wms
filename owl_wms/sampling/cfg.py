@@ -65,8 +65,8 @@ def zlerp(x, alpha):
 
 
 class WindowCFGSampler:
-    def __init__(self, n_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2):
-        self.n_steps = n_steps
+    def __init__(self, sampling_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2):
+        self.sampling_steps = sampling_steps
         self.cfg_scale = cfg_scale
         self.window_length = window_length
         self.num_frames = num_frames
@@ -77,7 +77,7 @@ class WindowCFGSampler:
         
         x = torch.randn_like(dummy_batch)
         ts = torch.ones(x.shape[0], x.shape[1], device=x.device,dtype=x.dtype)
-        dt = 1. / self.n_steps
+        dt = 1. / self.sampling_steps
 
         clean_history = dummy_batch.clone()
         
@@ -94,7 +94,7 @@ class WindowCFGSampler:
             ts_history = torch.ones(local_history.shape[0], local_history.shape[1], device=x.device,dtype=x.dtype)
             ts_history[:,-1] = self.noise_prev
 
-            for _ in range(self.n_steps):
+            for _ in range(self.sampling_steps):
                 # CFG Branches
                 x = local_history.clone()
                 ts = ts_history.clone()
@@ -113,16 +113,17 @@ class WindowCFGSampler:
             clean_history = torch.cat([clean_history, new_frame], dim = 1)
 
         x = clean_history
-        if decode_fn is not None:
-            x = x * scale 
-            x = decode_fn(x)
-        return x
+        pixels = None
+
+        if decode_fn is not None: 
+            pixels = decode_fn(x * scale)
+        return x, pixels
     
 
 if __name__ == "__main__":
     model = lambda x,t,m,b: x
 
     sampler = CFGSampler()
-    x = sampler(model, torch.randn(4, 128, 16, 128), 
+    x, pixels = sampler(model, torch.randn(4, 128, 16, 128), 
                 torch.randn(4, 128, 2), torch.randn(4, 128, 11))
     print(x.shape)

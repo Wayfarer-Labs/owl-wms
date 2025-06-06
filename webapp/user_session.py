@@ -1,9 +1,13 @@
+import cv2
 import time
 import json
 import torch
+import base64
 import asyncio
 import termcolor
+import numpy as np
 
+from fastapi import WebSocket
 from webapp.action_converter import ActionCollector
 from webapp.streaming import StreamingFrameGenerator, FrameBuffer
 
@@ -45,7 +49,8 @@ class UserGameSession:
                 # Queue frames for streaming
                 await self.frame_buffer.add_frame_batch(frame_batch)
             except Exception as e:
-                print(termcolor.colored(f"Error in frame generation: {e}", "red"))
+                import traceback
+                print(termcolor.colored(f"Error in frame generation: {e} :\n {traceback.format_exc()}", "red"))
                 await asyncio.sleep(0.1)  # Brief pause before retry
     
     async def _frame_output_loop(self, websocket):
@@ -57,11 +62,17 @@ class UserGameSession:
                 print(termcolor.colored(f"Error in frame streaming: {e}", "red"))
                 await asyncio.sleep(self.frame_generator.streaming_config.frame_interval)
     
-    async def _send_frame_to_client(self, websocket, frame: torch.Tensor):
-        # For now, just send frame shape info
-        frame_info = {
+    async def _send_frame_to_client(self, websocket: WebSocket, frame: torch.Tensor):
+        # Convert frame to base64 JPEG
+        print(f"Frame shape: {frame.shape} - with stats: {frame.min()=}, {frame.max()=}, {frame.mean()=}, {frame.std()=}")
+        frame_np = frame.cpu().numpy().transpose(1, 2, 0)  # CHW -> HWC
+        frame_np = ((frame_np + 1) * 127.5).clip(0, 255).astype(np.uint8)  # Normalize
+        
+        _, buffer = cv2.imencode('.jpg', frame_np)
+        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        await websocket.send(json.dumps({
             "type": "frame",
-            "shape": list(frame.shape),
+            "data": frame_base64,
             "timestamp": time.time()
-        }
-        await websocket.send(json.dumps(frame_info))
+        }))

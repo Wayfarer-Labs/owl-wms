@@ -2,30 +2,12 @@ import math
 import time
 import torch
 import asyncio
-from dataclasses    import dataclass
 from torch          import nn
+from dataclasses    import dataclass
 
-from owl_wms.sampling.cfg           import WindowCFGSampler
-from owl_wms.utils.owl_vae_bridge   import make_batched_decode_fn
-from owl_wms.configs                import TrainingConfig, WindowSamplingConfig, TransformerConfig as ModelConfig
-
-
-@dataclass
-class StreamingConfig:
-    fps: int = 20
-    frames_per_batch: int = 8
-    window_length: int = 60
-    device: str = 'cuda'
-    n_buttons: int = 11
-    mouse_range: tuple[float, float] = (-1.0, 1.0)
-    
-    @property
-    def frame_interval(self) -> float:
-        return 1.0 / self.fps
-
-    @property
-    def batch_duration(self) -> float:
-        return self.frames_per_batch / self.fps
+from webapp.samplers                import create_sampler
+from webapp.utils.configs           import SamplingConfig, StreamingConfig
+from owl_wms.configs                import TrainingConfig, TransformerConfig as ModelConfig
 
 class FrameBuffer:
     """Manages frame streaming at precise timing."""
@@ -65,7 +47,7 @@ class StreamingFrameGenerator:
                  streaming_config: StreamingConfig,
                  model_config: ModelConfig,
                  train_config: TrainingConfig,
-                 sampling_config: WindowSamplingConfig):
+                 sampling_config: SamplingConfig):
         self.streaming_config = streaming_config
         self.model_config     = model_config
         self.train_config     = train_config
@@ -75,68 +57,58 @@ class StreamingFrameGenerator:
         self.decoder = decoder
         
         # Create WindowCFGSampler for 8-frame generation
-        self.window_sampler = WindowCFGSampler(
-            window_length=self.streaming_config.window_length,
-            num_frames=self.streaming_config.frames_per_batch,  # 8 frames per batch
-            noise_prev=self.sampling_config.noise_prev,
-            cfg_scale=self.sampling_config.cfg_scale
-        )
+        self.sample_window_fn = create_sampler('window', encoder, decoder,
+                                             batch_size=1,
+                                             sampling_steps=self.sampling_config.sampling_steps,
+                                             cfg_scale=self.sampling_config.cfg_scale,
+                                             scale=self.train_config.vae_scale)
+        # Initialize frame history as empty tensor
+        self.frame_history: torch.Tensor = torch.tensor([], device=self.streaming_config.device)
+
+    def add_to_history(self, frame_batch: torch.Tensor):
+        if self.frame_history.equal(torch.tensor([], device=self.streaming_config.device)):
+            self.frame_history = frame_batch
+            return
+
+        self.frame_history = torch.cat([self.frame_history, frame_batch], dim=1)
         
-        # Create batched decode function
-        self.decode_fn = make_batched_decode_fn(decoder, batch_size=8)
-        
-        # Initialize frame history (60 frames of dummy data)
-        self.frame_history = self._initialize_frame_history()
+        # cap this at around 60 frames
+        if self.frame_history.shape[1] > self.streaming_config.window_length:
+            self.frame_history = self.frame_history[:, -self.streaming_config.window_length:]
+
     
-    def _initialize_frame_history(self) -> torch.Tensor:
-        """Initialize with dummy frame history for cold start."""
-        # Generate random latent frames matching model's expected input
-        # Shape: [1, window_length, channels, height, width]
+    @property
+    def dummy_batch(self) -> torch.Tensor:
+        """Generate dummy autoencoder latents for cold start."""
         tokens_h = tokens_w = int(math.sqrt(self.model_config.tokens_per_frame))
         dummy_frames = torch.randn(
             1, self.streaming_config.window_length,
             self.model_config.channels, tokens_h, tokens_w,
-            device=self.streaming_config.device, dtype=torch.float32
-        )
+            device=self.streaming_config.device, dtype=torch.bfloat16)
         return dummy_frames
+
     
     async def generate_frame_batch(self, mouse_batch: torch.Tensor, button_batch: torch.Tensor) -> torch.Tensor:
         """
-        Generate 8 frames using WindowCFGSampler.
+        Generate window_length frames, return first frames_per_batch for streaming.
         
         Args:
-            mouse_batch: [1, 8, 2] 
-            button_batch: [1, 8, n_buttons]
+            mouse_batch: [1, window_length, 2] 
+            button_batch: [1, window_length, n_buttons]
             
         Returns:
-            frame_batch: [1, 8, 3, 256, 256] - decoded RGB frames
+            frame_batch: [1, frames_per_batch, 3, 256, 256] - only streaming frames
         """
-        # Use current frame history as dummy_batch for the window sampler
-        dummy_batch = self.frame_history  # [1, 60, channels, h, w]
-        
-        # Generate new frames
-        with torch.no_grad():
-            new_frames = self.window_sampler(
-                model=self.encoder,
-                dummy_batch=dummy_batch,
-                mouse=mouse_batch,
-                btn=button_batch,
-                decode_fn=self.decode_fn,
-                scale=self.train_config.vae_scale
-            )
-        
-        # Update frame history by sliding window
-        # Remove oldest 8 frames, add newest 8 frames
-        new_history = torch.cat([
-            self.frame_history[:, self.streaming_config.frames_per_batch:],     # Remove first 8
-            new_frames                                                          # Add new 8 frames
-        ], dim=1)
-        self.frame_history = new_history
-        return new_frames
+        with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            latents, full_frames = self.sample_window_fn(dummy_batch=self.dummy_batch, mouse=mouse_batch, btn=button_batch)  # [1, window_length, 3, 256, 256]
+            self.add_to_history(latents[0, :self.streaming_config.frames_per_batch, :, :, :])
+
+        # Take only first frames_per_batch for streaming
+        streaming_frames = full_frames[:, :self.streaming_config.frames_per_batch, :, :, :]
+        return streaming_frames  # [1, frames_per_batch, 3, 256, 256]
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         del self.encoder, self.decoder ; torch.cuda.empty_cache()
-

@@ -8,9 +8,9 @@ import numpy as np
 
 import einops as eo
 
-from webapp.models import load_models
+from webapp.utils.models import load_models
 from webapp.samplers import create_sampler
-from webapp.action_builder import ActionSequenceGenerator, ActionConfig, ActionPattern
+from webapp.utils.action_builder import ActionSequenceGenerator, ActionConfig, ActionPattern
 
 HEIGHT = 256
 WIDTH = 256
@@ -20,7 +20,7 @@ SEQUENCE_LENGTH = 60
 TOKENS_PER_FRAME = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 OUTPUT_DIR = "generated_videos"
-SAMPLER_TYPE = 'cfg'
+SAMPLER_TYPE = 'window'
 DEFAULT_PATTERN = ActionPattern.LOOK_AROUND
 
 
@@ -46,8 +46,6 @@ def synthesize_video(mouse_actions, button_actions, encoder, decoder, sampler):
     """Generate video using model and sampler."""
     batch_size, sequence_length = mouse_actions.shape[:2]
 
-    # Create dummy latent batch - hardcoded dimensions from config
-    # NOTE: Must match training scaling! Training divides latents by vae_scale=2.17
     dummy_batch = torch.randn(
         batch_size, sequence_length, CHANNELS,
         int(math.sqrt(TOKENS_PER_FRAME)), # H
@@ -61,7 +59,7 @@ def synthesize_video(mouse_actions, button_actions, encoder, decoder, sampler):
     
     # Generate video
     with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-        video = sampler(
+        latents, video = sampler(
             dummy_batch=dummy_batch,
             mouse=mouse_actions,
             btn=button_actions

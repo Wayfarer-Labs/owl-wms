@@ -93,30 +93,51 @@ class ActionCollector:
     
     async def collect_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Collect actions for one batch (8 frames worth).
+        Collect real actions, extend to model's expected window_length.
         
-        Returns action tensors ready for model inference.
+        Returns:
+            mouse_batch: [1, window_length, 2] 
+            button_batch: [1, window_length, n_buttons]
         """
-        actions = []
+        # Collect real actions for frames_per_batch (8 frames)
+        real_actions = []
         batch_duration = self.streaming_config.batch_duration
         start_time = time.time()
         
-        # Collect actions for the batch duration (400ms for 8 frames)
-        while len(actions) < self.streaming_config.frames_per_batch:
+        while len(real_actions) < self.streaming_config.frames_per_batch:
             try:
-                # Wait for next action, but don't wait forever
                 timeout = max(0.01, batch_duration - (time.time() - start_time))
                 action = await asyncio.wait_for(self.action_queue.get(), timeout=timeout)
-                actions.append(action)
+                real_actions.append(action)
             except asyncio.TimeoutError:
-                # If no action received, repeat the last action or use idle
-                if actions:
-                    actions.append(actions[-1])  # Repeat last action
+                # Fill with idle or repeated actions
+                if real_actions:
+                    real_actions.append(real_actions[-1])
                 else:
-                    # Generate idle action
                     idle_mouse = torch.zeros(2, device=self.streaming_config.device)
                     idle_buttons = torch.zeros(self.streaming_config.n_buttons, device=self.streaming_config.device)
-                    actions.append((idle_mouse, idle_buttons))
+                    real_actions.append((idle_mouse, idle_buttons))
         
-        # Convert to batch tensors
-        return self.converter.actions_to_batch(actions)
+        # Convert 8 real actions to batch tensors
+        mouse, button = self.converter.actions_to_batch(real_actions)
+        
+        # Extend to window_length for model compatibility
+        window_length = self.streaming_config.window_length
+        mouse_full = self._extend_to_window_length(mouse, window_length)
+        button_full = self._extend_to_window_length(button, window_length)
+        
+        return mouse_full, button_full
+
+    def _extend_to_window_length(self, tensor_batch: torch.Tensor, target_length: int) -> torch.Tensor:
+        """Extend [1, frames_per_batch, features] to [1, window_length, features]."""
+        current_length = tensor_batch.shape[1]
+        
+        if current_length >= target_length:
+            return tensor_batch[:, :target_length, :]  # Truncate if somehow longer
+        
+        # Repeat last action to fill remaining frames
+        last_action = tensor_batch[:, -1:, :]  # [1, 1, features]
+        missing_frames = target_length - current_length
+        repeated = last_action.repeat(1, missing_frames, 1)  # [1, missing_frames, features]
+        
+        return torch.cat([tensor_batch, repeated], dim=1)  # [1, target_length, features]
