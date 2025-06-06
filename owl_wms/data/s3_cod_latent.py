@@ -116,7 +116,6 @@ class S3CoDLatentDataset(IterableDataset):
                         for member in members:
                             if member.name.endswith('.latent.pt'):
                                 base_names.add(member.name.split('.')[0])
-                                print("Found a latent")
 
                         for base_name in base_names:
                             # Load all tensors for this base name
@@ -126,8 +125,6 @@ class S3CoDLatentDataset(IterableDataset):
 
                             if all(t is not None for t in [latent, mouse, button]):
                                 min_len = min(len(latent), len(mouse), len(button))
-
-                                print("Got to condition")
                                 
                                 # Sample multiple windows if requested
                                 for _ in range(self.file_share_max):

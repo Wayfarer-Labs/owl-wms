@@ -3,3 +3,8 @@ wandb
 einops
 rotary-embedding-torch
 ema-pytorch
+omegaconf
+diffusers
+accelerate
+boto3
+python-dotenv
