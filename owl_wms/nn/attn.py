@@ -19,14 +19,14 @@ allow_ops_in_compiled_graph()
 def create_block_causal_mask(tokens, tokens_per_frame):
     frames = tokens // tokens_per_frame
     
-    # Create base causal mask
+    # Create base causal mask, nothing is masked
     mask = torch.zeros(tokens, tokens)
     
     # Allow attention within each frame
     for i in range(frames):
         start = i * tokens_per_frame
         end = (i + 1) * tokens_per_frame
-        mask[start:end, :end] = True
+        mask[start:end, end:] = True # It can't see anything after its end
         
     return mask
 
@@ -200,23 +200,11 @@ def test_attn_mask():
     plt.imshow(mask.float().cpu().numpy(), cmap='gray')
     plt.colorbar()
     plt.title(f'Block Causal Mask ({total_tokens} tokens, {tokens_per_frame} per frame)')
-    plt.xlabel('Query Position')
-    plt.ylabel('Key Position')
+    plt.xlabel('Key Position')
+    plt.ylabel('Query Position')
     plt.savefig('test_mask.png')
     plt.close()
 
-    # Basic causal mask
-    import torch
-    basic_mask = torch.tril(torch.ones(total_tokens, total_tokens))
-    
-    plt.figure(figsize=(10,10))
-    plt.imshow(basic_mask.numpy(), cmap='gray')
-    plt.colorbar()
-    plt.title('Basic Causal Mask (tril)')
-    plt.xlabel('Query Position')
-    plt.ylabel('Key Position')
-    plt.savefig('test_basic_mask.png')
-    plt.close()
 
 @torch.no_grad()
 def test_kv_cache():
@@ -258,5 +246,4 @@ def test_kv_cache():
     print("Cache test complete")
 
 if __name__ == "__main__":
-    test_kv_cache()
-    
+    test_attn_mask()

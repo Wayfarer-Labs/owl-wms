@@ -79,5 +79,33 @@ def batch_permute(mouse, button, factor = 1):
         button = torch.cat([button, button_clone], dim = 1)
 
     return mouse, button
+
+@torch.no_grad()
+def batch_permute_to_length(mouse, button, length):
+    """
+    Calls batch_permute with a factor that ensures output length >= target length,
+    then truncates to exact length needed.
+    
+    Args:
+        mouse: [b,n,2] tensor
+        button: [b,n,n_button] tensor 
+        length: Target sequence length
+    Returns:
+        mouse, button tensors with sequence length = length
+    """
+    # Calculate how many times we need to double n to exceed length
+    n = mouse.shape[1]
+    factor = 0
+    doubled_length = n
+    while doubled_length < length:
+        factor += 1
+        doubled_length *= 2
+        
+    # Do the permutation and truncate to exact size needed
+    mouse, button = batch_permute(mouse, button, factor=factor)
+    mouse = mouse[:,:length]
+    button = button[:,:length]
+    
+    return mouse, button
     
 

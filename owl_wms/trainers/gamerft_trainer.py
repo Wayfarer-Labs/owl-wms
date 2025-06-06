@@ -49,7 +49,12 @@ class RFTTrainer(BaseTrainer):
         self.scaler = None
 
         self.total_step_counter = 0
-        self.decoder = get_decoder_only()
+        self.decoder = get_decoder_only(
+            self.train_cfg.vae_id,
+            self.train_cfg.vae_cfg_path,
+            self.train_cfg.vae_ckpt_path
+        )
+
         freeze(self.decoder)
 
     def save(self):
@@ -101,6 +106,7 @@ class RFTTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
+        #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
             if self.world_size > 1:
@@ -183,11 +189,10 @@ class RFTTrainer(BaseTrainer):
                                     batch_vid[:n_samples],
                                     batch_mouse[:n_samples],
                                     batch_btn[:n_samples],
-                                    sampling_steps=30,
                                     decode_fn = decode_fn,
                                     scale=self.train_cfg.vae_scale
                                 ) # -> [b,n,c,h,w]
-                                wandb_dict['samples'] = to_wandb(samples, sample_mouse, sample_button)
+                                if self.rank == 0: wandb_dict['samples'] = to_wandb(samples, sample_mouse, sample_button)
                             
 
                         if self.rank == 0:
