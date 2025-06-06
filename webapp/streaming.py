@@ -3,7 +3,6 @@ import time
 import torch
 import asyncio
 from torch          import nn
-from dataclasses    import dataclass
 
 from webapp.samplers                import create_sampler
 from webapp.utils.configs           import SamplingConfig, StreamingConfig

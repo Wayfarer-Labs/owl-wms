@@ -1,4 +1,3 @@
-import torch
 from torch import nn, Tensor
 from typing import Literal, Callable
 from functools import partial, cache

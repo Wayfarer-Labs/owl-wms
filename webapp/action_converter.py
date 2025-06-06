@@ -1,6 +1,6 @@
+import time
 import torch
 import asyncio
-import time
 
 from webapp.streaming import StreamingConfig
 
