@@ -1,0 +1,71 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: dcae
+  discriminator:
+    model_id: r3gan
+    channels: 3
+    sample_size: 360
+    ch_0: 64
+    ch_max: 512
+    blocks_per_stage: 2
+
+  sample_size: 360
+  channels: 3
+  latent_size: 5
+  latent_channels: 64
+  attn_d_model: 96
+
+  noise_decoder_inputs: 0.05
+  ch_0: 64
+  ch_max: 1024
+
+  encoder_blocks_per_stage: [2, 2, 2, 2, 2, 2, 2]
+  decoder_blocks_per_stage: [2, 2, 2, 2, 2, 2, 2]
+
+  checkpoint_grads: false
+
+train:
+  #trainer_id: temporal_dec_tune
+  trainer_id: dec_tune
+  data_id: local_cod
+  target_batch_size: 128
+  batch_size: 8
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-4
+    eps: 1.0e-15
+    betas: [0.5, 0.95]
+    weight_decay: 1.0e-4
+
+  lpips_id: convnext
+  loss_weights:
+    lpips: 1.0
+    adv: 0.5
+
+  scheduler: LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 2000
+    min_lr: 1.0e-5
+
+  checkpoint_dir: checkpoints/cod_stage2
+  resume_ckpt: checkpoints/cod_stage2/step_15000.pt
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  delay_adv: 15000
+  warmup_adv: 5000
+
+  teacher_cfg: configs/128x_cod.yml
+  teacher_ckpt: checkpoints/2d_64x/step_35000.pt
+  use_teacher_decoder: true
+
+  latent_scale: 1.0
+
+wandb:
+  name: ${env:WANDB_USER_NAME}
+  project: new_vaes
+  run_name: 128x_cod
