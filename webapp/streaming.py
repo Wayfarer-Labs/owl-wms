@@ -4,7 +4,7 @@ import torch
 import asyncio
 from torch          import nn
 
-from webapp.samplers                import create_sampler
+from webapp.utils.samplers                import create_sampler
 from webapp.utils.configs           import SamplingConfig, StreamingConfig
 from owl_wms.configs                import TrainingConfig, TransformerConfig as ModelConfig
 
