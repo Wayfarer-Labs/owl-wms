@@ -9,7 +9,7 @@ import numpy as np
 import einops as eo
 
 from webapp.utils.models import load_models
-from webapp.samplers import create_sampler
+from webapp.utils.samplers import create_sampler
 from webapp.utils.action_builder import ActionSequenceGenerator, ActionConfig, ActionPattern
 
 HEIGHT = 256
