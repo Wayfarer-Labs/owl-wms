@@ -2,7 +2,8 @@ import math
 import time
 import torch
 import asyncio
-from torch          import nn
+from torch import nn
+import numpy as np
 
 from webapp.utils.samplers                  import create_sampler
 from webapp.utils.configs                   import SamplingConfig, StreamingConfig
@@ -21,13 +22,12 @@ class FrameBuffer:
         self.frame_queue = asyncio.Queue(maxsize=streaming_config.frames_per_batch * 2)  # Buffer 2 batches
         self.last_frame_time = 0.0
         
-    async def add_frame_batch(self, frame_batch: torch.Tensor):
-        # frame_batch shape: [1, frames_per_batch, channels, height, width]
-        batch_size, num_frames = frame_batch.shape[:2]
+    async def queue_frames(self, frames: torch.Tensor):
+        # frames shape: [frames_per_batch, channels, height, width]
+        num_frames = frames.shape[0]
         
         for i in range(num_frames):
-            frame = frame_batch[0, i]  # take first batch cause 1 user only, then [channels, height, width]
-            await self.frame_queue.put(frame)
+            await self.frame_queue.put(frames[i])
     
     async def get_next_frame(self) -> torch.Tensor:
         """Get next frame for streaming at capped FPS."""
@@ -110,26 +110,49 @@ class StreamingFrameGenerator:
         frames = [torch.from_numpy(frame) for frame in frames]
         return torch.stack(frames).permute(0, 3, 1, 2).unsqueeze(0) # [1, num_frames, c, h, w]
 
-    async def generate_frame_batch(self, mouse_batch: torch.Tensor, button_batch: torch.Tensor) -> torch.Tensor:
+    def overlay_actions(self,
+                        video: torch.Tensor,
+                        mouse: torch.Tensor, button: torch.Tensor,
+                        action_margin_px_height: int = 150) -> torch.Tensor:
+        num_frames, channels, height, width = video.shape
+        action_height = height + action_margin_px_height
+        action_width  = width
+        action_video  = torch.zeros((num_frames, action_height, action_width, channels), # [n h w c]
+                                    device=self.streaming_config.device, dtype=torch.bfloat16)
+        # Copy video into top portion of action video
+        action_video[:, :height, :, :]    = video.permute(0, 2, 3, 1) # [n c h w] -> [n h w c]
+        action_video_np: list[np.ndarray] = _draw_action_overlays(action_video, button, mouse)
+        action_video                      = [torch.from_numpy(frame) for frame in action_video_np]
+        action_video                      = torch.stack(action_video).permute(0, 3, 1, 2) # [n h w c] -> [n c h w]
+        return action_video
+
+    async def generate_frames(self, mouse: torch.Tensor, button: torch.Tensor,
+                                    action_margin_px_height: int = 150) -> torch.Tensor:
         """
         Generate window_length frames, return first frames_per_batch for streaming.
         
         Args:
-            mouse_batch:  [1, window_length, 2] 
-            button_batch: [1, window_length, n_buttons]
+            mouse:  [window_length, 2] 
+            button: [window_length, n_buttons]
             
         Returns:
-            frame_batch: [1, frames_per_batch, 3, 256, 256] - only streaming frames
+            frame_batch: [frames_per_batch, 3, 256, 256] - only streaming frames
         """
         if self.debug:
-            return self.debug_generate_frame_batch(mouse_batch, button_batch)
+            num_frames  = mouse.shape[0]
+            full_frames = torch.randn(num_frames, 3, 256, 256,
+                                      device=self.streaming_config.device, dtype=torch.bfloat16)
+        else:
+            with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                latents, full_frames = self.sample_window_fn(dummy_batch=self.dummy_batch,
+                                                             mouse=mouse.unsqueeze(0), btn=button.unsqueeze(0))  # [1, window_length, 3, 256, 256]
+                # remove batch dimension
+                latents     = latents       [0, ::]
+                full_frames = full_frames   [0, ::]
+                self.add_to_history(latents, mouse, button) # ignore batch dimension (1 user per model)
 
-        with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            latents, full_frames = self.sample_window_fn(dummy_batch=self.dummy_batch,
-                                                         mouse=mouse_batch, btn=button_batch)  # [1, window_length, 3, 256, 256]
-            self.add_to_history(latents[0, ::], mouse_batch[0, ::], button_batch[0, ::]) # ignore batch dimension (1 user per model)
-
-        return full_frames  # [1, window_length, 3, 256, 256]
+        action_overlayed_frames = self.overlay_actions(full_frames, mouse, button, action_margin_px_height)
+        return action_overlayed_frames  # [window_length, 3, 256+action_margin_px_height, 256]
 
     def __enter__(self):
         return self

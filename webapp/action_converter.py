@@ -9,7 +9,7 @@ BUTTON_NAMES    = ["W", "A", "S", "D", "LSHIFT", "SPACE", "R", "F", "E", "LMB", 
 BUTTON_INDICES  = {name: idx for idx, name in enumerate(BUTTON_NAMES)}
 
 
-def _interpolate(tensor_batch: torch.Tensor,
+def _interpolate(actions: torch.Tensor,
                  empty_action: torch.Tensor,
                  target_length: int) -> torch.Tensor:
 
@@ -21,25 +21,25 @@ def _interpolate(tensor_batch: torch.Tensor,
     Must provide empty_action, which is the action to repeat when the batch is shorter than target_length.
     Must also provide target_length, which is the length to interpolate to.
     Returns:
-        tensor_batch: [1, target_length, features]
+        actions: [target_length, features]
     """
-    num_actions = tensor_batch.shape[1]
+    num_actions = actions.shape[0]
     
     if num_actions >= target_length:
         # subsample actions if somehow longer than frames_per_batch
-        downsampled = torch.arange(0, num_actions, num_actions // target_length)
-        return tensor_batch[:, downsampled, :]
+        downsampled = torch.arange(0, num_actions, step=(num_actions // target_length))
+        return actions[downsampled, :]
     
     # Repeat with empty actions to fill remaining frames
     num_missing_actions = target_length - num_actions
     if num_missing_actions == target_length:
-        return empty_action.repeat(1, target_length, 1)
+        return empty_action.repeat(target_length, 1)
     
     # NOTE: Repeat last action for the remaining frames
-    last_action         = tensor_batch[:, -1, :]
-    repeated            = last_action.repeat(1, num_missing_actions, 1)  # [1, missing_frames, features]
+    last_action         = actions[-1, :]
+    repeated            = last_action.repeat(num_missing_actions, 1)  # [missing_frames, features]
     
-    return torch.cat([tensor_batch, repeated], dim=1)  # [1, target_length, features]
+    return torch.cat([actions, repeated], dim=0)  # [target_length, features]
 
 
 class ActionConverter:
@@ -92,20 +92,20 @@ class ActionConverter:
             actions: List of (mouse, buttons) tuples
             
         Returns:
-            mouse_batch: [batch_size, sequence_length, 2]
-            button_batch: [batch_size, sequence_length, n_buttons]  
+            mouse: [sequence_length, 2]
+            button: [sequence_length, n_buttons]  
         """
         if not actions:
-            # Return empty batch - [B, 0, 2] and [B, 0, n_buttons]
+            # Return empty batch - [0, 2] and [0, n_buttons]
             return (
-                torch.zeros(1, 0, 2, device=self.device),
-                torch.zeros(1, 0, self.streaming_config.n_buttons, device=self.device)
+                torch.zeros(0, 2, device=self.device),
+                torch.zeros(0, self.streaming_config.n_buttons, device=self.device)
             )
 
-        mouse_batch  = torch.stack([action[0] for action in actions], dim=0).unsqueeze(0)  # [1, seq_len, 2]
-        button_batch = torch.stack([action[1] for action in actions], dim=0).unsqueeze(0)  # [1, seq_len, n_buttons]
+        mouse  = torch.stack([action[0] for action in actions], dim=0)  # [seq_len, 2]
+        button = torch.stack([action[1] for action in actions], dim=0)  # [seq_len, n_buttons]
 
-        return mouse_batch, button_batch
+        return mouse, button
 
 
 class ActionCollector:
@@ -115,7 +115,6 @@ class ActionCollector:
         self.streaming_config = streaming_config
         self.converter = ActionConverter(streaming_config)
         self.action_queue = asyncio.Queue(maxsize=100)  # Buffer incoming actions
-        self.current_batch = []
 
         # -- constants
         self.empty_mouse    = torch.zeros((streaming_config.frames_per_batch, streaming_config.n_mouse_axes),
@@ -131,20 +130,20 @@ class ActionCollector:
 
         await self.action_queue.put(timestamped_action)
     
-    async def collect_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
+    async def collect_actions(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Collect actions from the UI at whatever rate is sent over by the client. 
         This collects all the frames that have been supplied between the last frame generation and now.
         
         It takes in as many actions as the model generates frames at once. For example, in CausVid, if
-         the model generates 4 frames at a time, this function will return [1, 4, 2] and [1, 4, 11]
+         the model generates 4 frames at a time, this function will return [4, 2] and [4, 11]
          for mouse and button actions.
         
         If, for one reason or another, we have <4 actions, we will fill the batch with idle actions.
 
         Returns:
-            mouse_batch:  [1, X, 2] 
-            button_batch: [1, X, n_buttons]
+            mouse:  [X, 2] 
+            button: [X, n_buttons]
         """
         real_actions = []
         start_time = time.time()
@@ -185,9 +184,9 @@ class ActionCollector:
 
         # Convert real actions to batch tensors
         mouse, button   = self.converter.actions_to_batch(real_actions)
-        mouse           = _interpolate(mouse,  empty_action=self.empty_mouse,
-                                                    target_length=self.streaming_config.frames_per_batch)
-        button          = _interpolate(button, empty_action=self.empty_buttons,
-                                                    target_length=self.streaming_config.frames_per_batch)
+        mouse           = _interpolate(mouse, empty_action=self.empty_mouse,
+                                              target_length=self.streaming_config.frames_per_batch)
+        button          = _interpolate(button,empty_action=self.empty_buttons,
+                                              target_length=self.streaming_config.frames_per_batch)
         
         return mouse, button

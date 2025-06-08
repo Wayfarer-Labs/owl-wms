@@ -21,7 +21,7 @@ class UserGameSession:
         self.action_collector   = ActionCollector(frame_generator.streaming_config)
         self.frame_buffer       = FrameBuffer(frame_generator.streaming_config)
         
-    async def run_session(self, websocket):
+    async def run_session(self, websocket: WebSocket):
         with self.frame_generator:
             print(termcolor.colored(f"Starting streaming session at {self.frame_generator.streaming_config.fps} FPS", "green"))
             print(termcolor.colored(f"Generating                    {self.frame_generator.streaming_config.frames_per_batch} frames per batch", "green"))
@@ -32,7 +32,7 @@ class UserGameSession:
                 tg.create_task(self._frame_generation_loop  ())
                 tg.create_task(self._frame_display_loop     (websocket))
     
-    async def _action_input_loop(self, websocket):
+    async def _action_input_loop(self, websocket: WebSocket):
         while True:
             try:
                 message = await websocket.receive_text()
@@ -53,19 +53,19 @@ class UserGameSession:
         while True:
             try:
                 # Collect multiple frames worth of actions, e.g. X frames, that have happened between the last frame generation and now.
-                mouse_batch, button_batch = await self.action_collector.collect_batch()
+                mouse, button = await self.action_collector.collect_actions()
                 # Generate Y frames from X actions by taking the X[-1]'th action. Typically, X >> Y, because they are sampled at uncapped FPS from the UI,
                 #  whereas Y frames are sampled from the model one at a time.
-                frame_batch = await self.frame_generator.generate_frame_batch(mouse_batch, button_batch)
+                frames = await self.frame_generator.generate_frames(mouse, button)
                 # Queue frames for streaming at a capped FPS. If model predictions speed up or slow down, it won't cause any dilation of frames being displayed.
                 # However, if the model predictions are too slow, the frames will be displayed at a lower FPS than the capped FPS.
-                await self.frame_buffer.add_frame_batch(frame_batch)
+                await self.frame_buffer.queue_frames(frames)
             except Exception as e:
                 import traceback
                 print(termcolor.colored(f"Error in frame generation: {e} :\n {traceback.format_exc()}", "red"))
                 await asyncio.sleep(0.05)  # Brief pause before retry
     
-    async def _frame_display_loop(self, websocket):
+    async def _frame_display_loop(self, websocket: WebSocket):
         while True:
             try:
                 frame = await self.frame_buffer.get_next_frame()
@@ -100,3 +100,4 @@ class UserGameSession:
         except Exception as e:
             # Re-raise to be caught by the display loop
             raise e
+    # TODO Audio

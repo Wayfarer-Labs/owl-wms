@@ -52,8 +52,23 @@
 <body>
     <h1>🎮 OWL-WMS Game Stream</h1>
     <div id="status" class="connecting">Connecting to server...</div>
-    <canvas id="gameCanvas" width="256" height="256"></canvas>
+    <canvas id="gameCanvas" width="256"></canvas>
     <p>Move your mouse over the canvas to interact with the game world!</p>
+    <script>
+        // Load config and set canvas height
+        fetch('/assets/../../configs/webapp/config.yaml')
+            .then(response => response.text())
+            .then(text => {
+                const config = jsyaml.load(text);
+                return config.stream_config.action_margin_px_height;
+            })
+            .then(config => {
+                const baseHeight = 256;
+                const marginHeight = config.stream_config.action_margin_px_height;
+                const totalHeight = baseHeight + marginHeight;
+                document.getElementById('gameCanvas').height = totalHeight;
+            });
+    </script>
     
     <script>
         const canvas = document.getElementById('gameCanvas');

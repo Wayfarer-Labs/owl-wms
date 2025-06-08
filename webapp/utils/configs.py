@@ -45,6 +45,7 @@ class StreamingConfig:
     n_buttons: int = 11
     n_mouse_axes: int = 2
     mouse_range: tuple[float, float] = (-1.0, 1.0)
+    action_margin_px_height: int = 150
 
     @property
     def frame_interval(self) -> float:

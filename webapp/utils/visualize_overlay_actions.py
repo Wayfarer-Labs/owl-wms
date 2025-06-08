@@ -264,10 +264,9 @@ def _draw_video(
     Draw video with input device monitoring overlays.
     
     Args:
-        video: torch tensor of video frames
+        video: torch tensor of video frames, [num_frames, 256, 256, 3]
         buttons: torch tensor of button states
-        mouse_vec: torch tensor of mouse vectors
-        mouse_std: torch tensor of mouse standard deviations
+        mouse_delta: torch tensor of mouse deltas between frames
         save_path: optional path to save video
         fps: frames per second for output video
         arrow_scale_factor: optional override for arrow scaling

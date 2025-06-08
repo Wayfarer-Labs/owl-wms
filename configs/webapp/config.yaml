@@ -10,6 +10,7 @@ stream_config:
   n_buttons: 11
   n_mouse_axes: 2
   mouse_range: [-1.0, 1.0]
+  action_margin_px_height: 150
 
 sampling_config:
   sampling_steps: 20
