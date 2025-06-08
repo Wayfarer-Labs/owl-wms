@@ -18,7 +18,7 @@ class ActionPattern(Enum):
     WALK_BACKWARD   = "walk_backward"
     CIRCLE_STRAFE   = "circle_strafe"
     LOOK_AROUND     = "look_around"
-    AIM_AND_SHOOT   = "aim_and_shoot"
+    SHOOT           = "shoot"
     SPRINT_FORWARD  = "sprint_forward"
     RELOAD          = "reload"
 
@@ -258,7 +258,7 @@ class ActionSequenceGenerator:
             mouse = MouseGenerator.look_around(self.config, **mouse_kwargs)
             buttons = ButtonGenerator.idle(self.config)
         
-        elif pattern == ActionPattern.AIM_AND_SHOOT:
+        elif pattern == ActionPattern.SHOOT:
             mouse = MouseGenerator.aim_tracking(self.config, **mouse_kwargs)
             # Add some shooting
             shoot_times = [(i * 30, 5) for i in range(self.config.sequence_length // 30)]

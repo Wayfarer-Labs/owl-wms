@@ -9,6 +9,8 @@ from webapp.utils.action_builder import ActionPattern
 from webapp.utils.configs import SamplingConfig
 
 
+DEBUG = True
+
 async def demo_streaming_generation(pattern=ActionPattern.LOOK_AROUND):
     """Generate one batch using StreamingFrameGenerator instead of regular sampler."""
     
@@ -24,7 +26,6 @@ async def demo_streaming_generation(pattern=ActionPattern.LOOK_AROUND):
         window_length=60,
         device=device
     )
-    
     sampling_config = SamplingConfig()
     
     # Load models (reuse render.py's load_models)
@@ -37,7 +38,8 @@ async def demo_streaming_generation(pattern=ActionPattern.LOOK_AROUND):
     print("🎬 Creating streaming frame generator...")
     frame_generator = StreamingFrameGenerator(
         encoder, decoder,
-        streaming_config, model_config, training_config, sampling_config
+        streaming_config, model_config, training_config, sampling_config,
+        debug=DEBUG
     )
     
     # Generate actions (reuse render.py's generate_dummy_actions)
@@ -49,7 +51,7 @@ async def demo_streaming_generation(pattern=ActionPattern.LOOK_AROUND):
     with frame_generator:
         frame_batch = await frame_generator.generate_frame_batch(mouse_batch, button_batch)
     
-    print(f"Generated {frame_batch.shape[1]} frames with shape: {frame_batch.shape}")
+    print(f"Generated {frame_batch.shape[0]} frames with shape: {frame_batch.shape}")
     
     # Save video (reuse render.py's save_video)
     print("💾 Saving video...")
@@ -61,7 +63,7 @@ async def demo_streaming_generation(pattern=ActionPattern.LOOK_AROUND):
 
 if __name__ == "__main__":
     # Try different patterns by changing this:
-    pattern = ActionPattern.LOOK_AROUND  # or AIM_AND_SHOOT, CIRCLE_STRAFE, etc.
+    pattern = ActionPattern.CIRCLE_STRAFE  # or AIM_AND_SHOOT, CIRCLE_STRAFE, etc.
     
     print("Available patterns:")
     for p in ActionPattern:

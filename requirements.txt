@@ -17,3 +17,4 @@ numpy
 imageio[ffmpeg]
 accelerate
 fastapi
+uvicorn[standard]

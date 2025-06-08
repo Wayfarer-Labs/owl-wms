@@ -82,12 +82,8 @@ def save_video(video_tensor: torch.Tensor, filename="generated_video", fps=30):
         str: Path to saved video file
     """
     setup_output_dir()
-    
-    # Generate timestamp for unique filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = Path(OUTPUT_DIR) / f"{filename}_{timestamp}.mp4"
-    
-    # Convert tensor to numpy and handle batch dimension
+
+    output_path = Path(OUTPUT_DIR) / f"{filename}.mp4"
     video_np: np.ndarray = video_tensor.float().cpu().detach().numpy()
     
     # Take first batch item if batch_size > 1
@@ -123,7 +119,7 @@ def save_video(video_tensor: torch.Tensor, filename="generated_video", fps=30):
         print(f"Warning: Could not save as MP4 ({e}), falling back to .pt format")
 
     # Fallback: save as PyTorch tensor
-    fallback_path = Path(OUTPUT_DIR) / f"{filename}_{timestamp}.pt"
+    fallback_path = Path(OUTPUT_DIR) / f"{filename}.pt"
     torch.save(video_tensor.cpu(), fallback_path)
     return str(fallback_path)
 
@@ -172,6 +168,6 @@ if __name__ == "__main__":
     render_video(verbose=True)
     
     # Render with different pattern
-    render_video(ActionPattern.AIM_AND_SHOOT, verbose=True)
+    render_video(ActionPattern.SHOOT, verbose=True)
     render_video(ActionPattern.LOOK_AROUND, verbose=True)
     render_video(ActionPattern.CIRCLE_STRAFE, verbose=True)

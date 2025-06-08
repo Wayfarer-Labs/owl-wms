@@ -3,9 +3,38 @@ import torch
 import asyncio
 
 from webapp.streaming import StreamingConfig
+from torch.nn import functional as F
 
 BUTTON_NAMES    = ["W", "A", "S", "D", "LSHIFT", "SPACE", "R", "F", "E", "LMB", "RMB"]
 BUTTON_INDICES  = {name: idx for idx, name in enumerate(BUTTON_NAMES)}
+
+
+def _interpolate(tensor_batch: torch.Tensor,
+                 empty_action: torch.Tensor,
+                 target_length: int) -> torch.Tensor:
+
+    """
+    Interpolate actions to target_length.
+    If tensor_batch is longer than target_length, subsample.
+    If tensor_batch is shorter than target_length, repeat with empty actions.
+
+    Must provide empty_action, which is the action to repeat when the batch is shorter than target_length.
+    Must also provide target_length, which is the length to interpolate to.
+    Returns:
+        tensor_batch: [1, target_length, features]
+    """
+    num_actions = tensor_batch.shape[1]
+    if num_actions >= target_length:
+        # subsample actions if somehow longer than frames_per_batch
+        downsampled = torch.arange(0, num_actions, num_actions // target_length)
+        return tensor_batch[:, downsampled, :]
+    
+    # Repeat with empty actions to fill remaining frames
+    num_missing_actions = target_length - num_actions
+    repeated            = empty_action.repeat(1, num_missing_actions, 1)  # [1, missing_frames, features]
+    
+    return torch.cat([tensor_batch, repeated], dim=1)  # [1, target_length, features]
+
 
 class ActionConverter:
     """Converts WebSocket messages to model tensor format."""
@@ -13,7 +42,7 @@ class ActionConverter:
     def __init__(self, streaming_config: StreamingConfig):
         self.streaming_config = streaming_config
         self.device = streaming_config.device
-        
+
     def websocket_to_action(self, ws_message: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Convert WebSocket message to action tensors.
@@ -61,19 +90,15 @@ class ActionConverter:
             button_batch: [batch_size, sequence_length, n_buttons]  
         """
         if not actions:
-            # Return empty batch
+            # Return empty batch - [B, 0, 2] and [B, 0, n_buttons]
             return (
                 torch.zeros(1, 0, 2, device=self.device),
                 torch.zeros(1, 0, self.streaming_config.n_buttons, device=self.device)
             )
-        
-        mouse_list  = [action[0] for action in actions]
-        button_list = [action[1] for action in actions]
-        
-        # Stack into sequences and add batch dimension
-        mouse_batch = torch.stack(mouse_list, dim=0).unsqueeze(0)  # [1, seq_len, 2]
-        button_batch = torch.stack(button_list, dim=0).unsqueeze(0)  # [1, seq_len, n_buttons]
-        
+
+        mouse_batch  = torch.stack([action[0] for action in actions], dim=0).unsqueeze(0)  # [1, seq_len, 2]
+        button_batch = torch.stack([action[1] for action in actions], dim=0).unsqueeze(0)  # [1, seq_len, n_buttons]
+
         return mouse_batch, button_batch
 
 
@@ -85,7 +110,13 @@ class ActionCollector:
         self.converter = ActionConverter(streaming_config)
         self.action_queue = asyncio.Queue(maxsize=100)  # Buffer incoming actions
         self.current_batch = []
-        
+
+        # -- constants
+        self.empty_mouse    = torch.zeros((streaming_config.frames_per_batch, streaming_config.n_mouse_axes),
+                                        device=streaming_config.device, dtype=torch.float32)
+        self.empty_buttons  = torch.zeros((streaming_config.frames_per_batch, streaming_config.n_buttons),
+                                        device=streaming_config.device, dtype=torch.bool)
+
     async def add_websocket_action(self, ws_message: dict):
         """Add action from WebSocket message."""
         action = self.converter.websocket_to_action(ws_message)
@@ -93,51 +124,34 @@ class ActionCollector:
     
     async def collect_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Collect real actions, extend to model's expected window_length.
+        Collect actions from the UI at whatever rate is sent over by the client. 
+        This collects all the frames that have been supplied between the last frame generation and now.
         
+        It takes in as many actions as the model generates frames at once. For example, in CausVid, if
+         the model generates 4 frames at a time, this function will return [1, 4, 2] and [1, 4, 11]
+         for mouse and button actions.
+        
+        If, for one reason or another, we have <4 actions, we will fill the batch with idle actions.
+
         Returns:
-            mouse_batch: [1, window_length, 2] 
-            button_batch: [1, window_length, n_buttons]
+            mouse_batch:  [1, X, 2] 
+            button_batch: [1, X, n_buttons]
         """
-        # Collect real actions for frames_per_batch (8 frames)
         real_actions = []
-        batch_duration = self.streaming_config.batch_duration
         start_time = time.time()
         
-        while len(real_actions) < self.streaming_config.frames_per_batch:
+        while start_time + self.streaming_config.batch_duration > time.time():
             try:
-                timeout = max(0.01, batch_duration - (time.time() - start_time))
-                action = await asyncio.wait_for(self.action_queue.get(), timeout=timeout)
+                timeout = max(0.01, self.streaming_config.batch_duration - (time.time() - start_time))
+                action  = await asyncio.wait_for(self.action_queue.get(), timeout=timeout)
                 real_actions.append(action)
             except asyncio.TimeoutError:
-                # Fill with idle or repeated actions
-                if real_actions:
-                    real_actions.append(real_actions[-1])
-                else:
-                    idle_mouse = torch.zeros(2, device=self.streaming_config.device)
-                    idle_buttons = torch.zeros(self.streaming_config.n_buttons, device=self.streaming_config.device)
-                    real_actions.append((idle_mouse, idle_buttons))
-        
-        # Convert 8 real actions to batch tensors
-        mouse, button = self.converter.actions_to_batch(real_actions)
-        
-        # Extend to window_length for model compatibility
-        window_length = self.streaming_config.window_length
-        mouse_full = self._extend_to_window_length(mouse, window_length)
-        button_full = self._extend_to_window_length(button, window_length)
-        
-        return mouse_full, button_full
+                pass
 
-    def _extend_to_window_length(self, tensor_batch: torch.Tensor, target_length: int) -> torch.Tensor:
-        """Extend [1, frames_per_batch, features] to [1, window_length, features]."""
-        current_length = tensor_batch.shape[1]
-        
-        if current_length >= target_length:
-            return tensor_batch[:, :target_length, :]  # Truncate if somehow longer
-        
-        # Repeat last action to fill remaining frames
-        last_action = tensor_batch[:, -1:, :]  # [1, 1, features]
-        missing_frames = target_length - current_length
-        repeated = last_action.repeat(1, missing_frames, 1)  # [1, missing_frames, features]
-        
-        return torch.cat([tensor_batch, repeated], dim=1)  # [1, target_length, features]
+        # Convert 8 real actions to batch tensors
+        mouse, button   = self.converter.actions_to_batch(real_actions)
+        mouse           = _interpolate(mouse,  empty_action=self.empty_mouse,
+                                                    target_length=self.streaming_config.frames_per_batch)
+        button          = _interpolate(button, empty_action=self.empty_buttons,
+                                                    target_length=self.streaming_config.frames_per_batch)
+        return mouse, button

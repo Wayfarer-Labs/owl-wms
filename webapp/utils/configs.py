@@ -5,27 +5,25 @@ import yaml
 from typing import Optional
 from dataclasses import dataclass
 
-from owl_wms.configs import Config as RunConfig, TransformerConfig as ModelConfig
+from owl_wms.configs import Config as RunConfig, TransformerConfig as ModelConfig, TrainingConfig
 
 @dataclass
 class WebappConfig:
     model_checkpoint_path : os.PathLike
-    model_config_path : os.PathLike
-    model_config : ModelConfig
     run_config : RunConfig
     stream_config : StreamingConfig
     sampling_config : SamplingConfig
+    run_config_path : os.PathLike
     device : str = 'cuda'
 
     @classmethod
     def from_yaml(cls, path: os.PathLike) -> WebappConfig:
-        
-        with (open(path, 'r')                           as wcp,
-              open(config['model_config_path'], 'r')    as mcp,
-              open(config['run_config_path'], 'r')      as rcp):
-            config = yaml.safe_load(wcp)
-            config['model_config'] = yaml.safe_load(mcp)
-            config['run_config'] = yaml.safe_load(rcp)
+        #  
+        with open(path, 'r') as wcp:
+            config                      = yaml.safe_load(wcp)
+            config['run_config']        = RunConfig.from_yaml(config['run_config_path'])
+            config['sampling_config']   = SamplingConfig(**config['sampling_config'])
+            config['stream_config']     = StreamingConfig(**config['stream_config'])
 
         return cls(**config)
 
@@ -45,6 +43,7 @@ class StreamingConfig:
     window_length: int = 60
     device: str = 'cuda'
     n_buttons: int = 11
+    n_mouse_axes: int = 2
     mouse_range: tuple[float, float] = (-1.0, 1.0)
 
     @property

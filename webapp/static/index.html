@@ -1,30 +1,234 @@
 <!DOCTYPE html>
 <html>
-<head><title>Open-World Labs</title></head>
+<head>
+    <title>Open-World Labs - OWL-WMS</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        h1 {
+            color: #4CAF50;
+            margin-bottom: 20px;
+        }
+        
+        #gameCanvas {
+            border: 2px solid #4CAF50;
+            background-color: #000;
+            cursor: crosshair;
+            margin: 20px 0;
+        }
+        
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .connected {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .disconnected {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .connecting {
+            background-color: #ff9800;
+            color: white;
+        }
+    </style>
+</head>
 <body>
+    <h1>🎮 OWL-WMS Game Stream</h1>
+    <div id="status" class="connecting">Connecting to server...</div>
     <canvas id="gameCanvas" width="256" height="256"></canvas>
+    <p>Move your mouse over the canvas to interact with the game world!</p>
+    
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const ws = new WebSocket('ws://localhost:8000/ws/game');
+        const statusDiv = document.getElementById('status');
         
-        function sendAction(mouse_x, mouse_y, buttons) {
-            ws.send(JSON.stringify({
-                mouse_x, mouse_y, ...buttons
-            }));
-        }
-        
-        ws.onmessage = (event) => {
-            const frame = JSON.parse(event.data);
-            displayFrame(frame);
+        // Game state - match action_converter.py BUTTON_NAMES
+        let buttons = {
+            "W": false,
+            "A": false, 
+            "S": false,
+            "D": false,
+            "LSHIFT": false,
+            "SPACE": false,
+            "R": false,
+            "F": false,
+            "E": false,
+            "LMB": false,
+            "RMB": false
         };
         
+        // WebSocket connection
+        const ws = new WebSocket('ws://localhost:8000/ws/game');
+        
+        ws.onopen = () => {
+            console.log('WebSocket connected');
+            statusDiv.textContent = '✅ Connected to game server';
+            statusDiv.className = 'connected';
+        };
+        
+        ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            statusDiv.textContent = '❌ Disconnected from server';
+            statusDiv.className = 'disconnected';
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            statusDiv.textContent = '⚠️ Connection error';
+            statusDiv.className = 'disconnected';
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const frame = JSON.parse(event.data);
+                displayFrame(frame);
+            } catch (error) {
+                console.error('Error parsing frame data:', error);
+            }
+        };
+        
+        function displayFrame(frameData) {
+            if (frameData.type === 'frame') {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                };
+                img.src = 'data:image/jpeg;base64,' + frameData.data;
+            }
+        }
+        
+        function getCurrentButtons() {
+            return { ...buttons }; // Return copy of current button state
+        }
+        
+        function sendAction(mouse_x, mouse_y, buttonState) {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    mouse_x, 
+                    mouse_y, 
+                    ...buttonState
+                }));
+            }
+        }
+        
+        // Keyboard event listeners
+        document.addEventListener('keydown', (e) => {
+            const key = e.code;
+            let buttonName = null;
+            
+            // Map keyboard codes to button names
+            switch(key) {
+                case 'KeyW': buttonName = 'W'; break;
+                case 'KeyA': buttonName = 'A'; break;
+                case 'KeyS': buttonName = 'S'; break;
+                case 'KeyD': buttonName = 'D'; break;
+                case 'ShiftLeft': buttonName = 'LSHIFT'; break;
+                case 'Space': buttonName = 'SPACE'; break;
+                case 'KeyR': buttonName = 'R'; break;
+                case 'KeyF': buttonName = 'F'; break;
+                case 'KeyE': buttonName = 'E'; break;
+            }
+            
+            if (buttonName && !buttons[buttonName]) {
+                e.preventDefault();
+                buttons[buttonName] = true;
+                // Send current mouse position with new button state
+                const rect = canvas.getBoundingClientRect();
+                const mouse_x = 0; // Default to center if no recent mouse event
+                const mouse_y = 0;
+                sendAction(mouse_x, mouse_y, getCurrentButtons());
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            const key = e.code;
+            let buttonName = null;
+            
+            // Map keyboard codes to button names
+            switch(key) {
+                case 'KeyW': buttonName = 'W'; break;
+                case 'KeyA': buttonName = 'A'; break;
+                case 'KeyS': buttonName = 'S'; break;
+                case 'KeyD': buttonName = 'D'; break;
+                case 'ShiftLeft': buttonName = 'LSHIFT'; break;
+                case 'Space': buttonName = 'SPACE'; break;
+                case 'KeyR': buttonName = 'R'; break;
+                case 'KeyF': buttonName = 'F'; break;
+                case 'KeyE': buttonName = 'E'; break;
+            }
+            
+            if (buttonName && buttons[buttonName]) {
+                e.preventDefault();
+                buttons[buttonName] = false;
+                // Send current mouse position with new button state
+                const rect = canvas.getBoundingClientRect();
+                const mouse_x = 0; // Default to center if no recent mouse event
+                const mouse_y = 0;
+                sendAction(mouse_x, mouse_y, getCurrentButtons());
+            }
+        });
+        
+        // Mouse event listeners
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
             const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
-            const mouse_y = (e.clientY - rect.top) / rect.height * 2 - 1;
+            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
             sendAction(mouse_x, mouse_y, getCurrentButtons());
         });
+        
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            if (e.button === 0) buttons["LMB"] = true;  // Left mouse button
+            if (e.button === 2) buttons["RMB"] = true;  // Right mouse button
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
+            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
+            sendAction(mouse_x, mouse_y, getCurrentButtons());
+        });
+        
+        canvas.addEventListener('mouseup', (e) => {
+            e.preventDefault();
+            if (e.button === 0) buttons["LMB"] = false; // Left mouse button
+            if (e.button === 2) buttons["RMB"] = false; // Right mouse button
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
+            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
+            sendAction(mouse_x, mouse_y, getCurrentButtons());
+        });
+        
+        // Prevent context menu on right click
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+        
+        // Initial black screen
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for game stream...', canvas.width/2, canvas.height/2);
     </script>
 </body>
 </html>
