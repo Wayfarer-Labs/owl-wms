@@ -24,6 +24,7 @@ def _interpolate(tensor_batch: torch.Tensor,
         tensor_batch: [1, target_length, features]
     """
     num_actions = tensor_batch.shape[1]
+    
     if num_actions >= target_length:
         # subsample actions if somehow longer than frames_per_batch
         downsampled = torch.arange(0, num_actions, num_actions // target_length)
@@ -31,7 +32,12 @@ def _interpolate(tensor_batch: torch.Tensor,
     
     # Repeat with empty actions to fill remaining frames
     num_missing_actions = target_length - num_actions
-    repeated            = empty_action.repeat(1, num_missing_actions, 1)  # [1, missing_frames, features]
+    if num_missing_actions == target_length:
+        return empty_action.repeat(1, target_length, 1)
+    
+    # NOTE: Repeat last action for the remaining frames
+    last_action         = tensor_batch[:, -1, :]
+    repeated            = last_action.repeat(1, num_missing_actions, 1)  # [1, missing_frames, features]
     
     return torch.cat([tensor_batch, repeated], dim=1)  # [1, target_length, features]
 
@@ -120,7 +126,10 @@ class ActionCollector:
     async def add_websocket_action(self, ws_message: dict):
         """Add action from WebSocket message."""
         action = self.converter.websocket_to_action(ws_message)
-        await self.action_queue.put(action)
+        # Add timestamp to track when action was received
+        timestamped_action = (action, time.time())
+
+        await self.action_queue.put(timestamped_action)
     
     async def collect_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -140,18 +149,45 @@ class ActionCollector:
         real_actions = []
         start_time = time.time()
         
+        # First, clear any stale actions from the queue (older than 1 second)
+        stale_threshold = start_time - 1.0
+        temp_actions = []
+        stale_count = 0
+        
+        # Drain the queue and filter out stale actions
+        while not self.action_queue.empty():
+            try:
+                timestamped_action = self.action_queue.get_nowait()
+                action, timestamp = timestamped_action
+                if timestamp >= stale_threshold:
+                    temp_actions.append(action)
+                else:
+                    stale_count += 1
+            except asyncio.QueueEmpty:
+                break
+        
+        # Re-add fresh actions to the queue
+        for action in temp_actions:
+            try:
+                await self.action_queue.put((action, time.time()))
+            except asyncio.QueueFull:
+                break  # Skip if queue is full
+        
+        # Now collect actions for the current batch
         while start_time + self.streaming_config.batch_duration > time.time():
             try:
                 timeout = max(0.01, self.streaming_config.batch_duration - (time.time() - start_time))
-                action  = await asyncio.wait_for(self.action_queue.get(), timeout=timeout)
+                timestamped_action = await asyncio.wait_for(self.action_queue.get(), timeout=timeout)
+                action, timestamp = timestamped_action
                 real_actions.append(action)
             except asyncio.TimeoutError:
                 pass
 
-        # Convert 8 real actions to batch tensors
+        # Convert real actions to batch tensors
         mouse, button   = self.converter.actions_to_batch(real_actions)
         mouse           = _interpolate(mouse,  empty_action=self.empty_mouse,
                                                     target_length=self.streaming_config.frames_per_batch)
         button          = _interpolate(button, empty_action=self.empty_buttons,
                                                     target_length=self.streaming_config.frames_per_batch)
+        
         return mouse, button

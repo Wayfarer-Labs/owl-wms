@@ -4,7 +4,7 @@ device: "cuda"
 
 stream_config:
   fps: 20
-  frames_per_batch: 8
+  frames_per_batch: 2
   window_length: 60
   device: "cuda"
   n_buttons: 11

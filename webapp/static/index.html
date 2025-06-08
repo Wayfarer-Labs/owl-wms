@@ -75,19 +75,37 @@
             "RMB": false
         };
         
+        // Mouse tracking for deltas with exponential smoothing
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let isFirstMove = true;
+        let smoothedDeltaX = 0;
+        let smoothedDeltaY = 0;
+        const DELTA_SCALE = 0.8; // Scale down deltas for smoother movement
+        const DEAD_ZONE = 0.002; // Ignore tiny movements
+        const SMOOTHING_FACTOR = 0.3; // Lower = smoother, higher = more responsive
+        
         // WebSocket connection
-        const ws = new WebSocket('ws://localhost:8000/ws/game');
+        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${scheme}://${location.hostname}:8000/ws/game`);
+
         
         ws.onopen = () => {
             console.log('WebSocket connected');
             statusDiv.textContent = '✅ Connected to game server';
             statusDiv.className = 'connected';
+            
+            // Start sending continuous keyboard updates at 60 FPS
+            startContinuousKeyboardUpdates();
         };
         
         ws.onclose = () => {
             console.log('WebSocket disconnected');
             statusDiv.textContent = '❌ Disconnected from server';
             statusDiv.className = 'disconnected';
+            
+            // Stop continuous updates
+            stopContinuousKeyboardUpdates();
         };
         
         ws.onerror = (error) => {
@@ -104,6 +122,26 @@
                 console.error('Error parsing frame data:', error);
             }
         };
+        
+        let updateInterval = null;
+        
+        function startContinuousKeyboardUpdates() {
+            // Send keyboard state at 60 FPS, but only if keys are pressed
+            // NO MOUSE DATA - only keyboard
+            updateInterval = setInterval(() => {
+                const hasKeysPressed = Object.values(buttons).some(pressed => pressed);
+                if (hasKeysPressed) {
+                    sendAction(0, 0, getCurrentButtons()); // Zero mouse deltas for keyboard-only updates
+                }
+            }, 16);
+        }
+        
+        function stopContinuousKeyboardUpdates() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+        }
         
         function displayFrame(frameData) {
             if (frameData.type === 'frame') {
@@ -151,11 +189,7 @@
             if (buttonName && !buttons[buttonName]) {
                 e.preventDefault();
                 buttons[buttonName] = true;
-                // Send current mouse position with new button state
-                const rect = canvas.getBoundingClientRect();
-                const mouse_x = 0; // Default to center if no recent mouse event
-                const mouse_y = 0;
-                sendAction(mouse_x, mouse_y, getCurrentButtons());
+                console.log(`🔽 Key pressed: ${buttonName}`);
             }
         });
         
@@ -179,20 +213,44 @@
             if (buttonName && buttons[buttonName]) {
                 e.preventDefault();
                 buttons[buttonName] = false;
-                // Send current mouse position with new button state
-                const rect = canvas.getBoundingClientRect();
-                const mouse_x = 0; // Default to center if no recent mouse event
-                const mouse_y = 0;
-                sendAction(mouse_x, mouse_y, getCurrentButtons());
+                console.log(`🔼 Key released: ${buttonName}`);
             }
         });
         
-        // Mouse event listeners
+        // Mouse event listeners - SMOOTH DELTAS
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
-            const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
-            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
-            sendAction(mouse_x, mouse_y, getCurrentButtons());
+            const currentMouseX = (e.clientX - rect.left) / rect.width * 2 - 1;
+            const currentMouseY = -((e.clientY - rect.top) / rect.height * 2 - 1);
+            
+            if (isFirstMove) {
+                // First move - just set position, don't send
+                lastMouseX = currentMouseX;
+                lastMouseY = currentMouseY;
+                isFirstMove = false;
+                return;
+            }
+            
+            // Calculate raw deltas
+            let deltaX = (currentMouseX - lastMouseX) * DELTA_SCALE;
+            let deltaY = (currentMouseY - lastMouseY) * DELTA_SCALE;
+            
+            // Apply dead zone - ignore tiny movements
+            if (Math.abs(deltaX) < DEAD_ZONE) deltaX = 0;
+            if (Math.abs(deltaY) < DEAD_ZONE) deltaY = 0;
+            
+            // Calculate smoothed deltas using exponential smoothing
+            smoothedDeltaX = deltaX * SMOOTHING_FACTOR + smoothedDeltaX * (1 - SMOOTHING_FACTOR);
+            smoothedDeltaY = deltaY * SMOOTHING_FACTOR + smoothedDeltaY * (1 - SMOOTHING_FACTOR);
+            
+            // Only send if there's actual movement after smoothing
+            if (smoothedDeltaX !== 0 || smoothedDeltaY !== 0) {
+                sendAction(smoothedDeltaX, smoothedDeltaY, getCurrentButtons());
+            }
+            
+            // Update last position
+            lastMouseX = currentMouseX;
+            lastMouseY = currentMouseY;
         });
         
         canvas.addEventListener('mousedown', (e) => {
@@ -200,10 +258,8 @@
             if (e.button === 0) buttons["LMB"] = true;  // Left mouse button
             if (e.button === 2) buttons["RMB"] = true;  // Right mouse button
             
-            const rect = canvas.getBoundingClientRect();
-            const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
-            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
-            sendAction(mouse_x, mouse_y, getCurrentButtons());
+            // Send button state change with zero mouse delta
+            sendAction(0, 0, getCurrentButtons());
         });
         
         canvas.addEventListener('mouseup', (e) => {
@@ -211,10 +267,8 @@
             if (e.button === 0) buttons["LMB"] = false; // Left mouse button
             if (e.button === 2) buttons["RMB"] = false; // Right mouse button
             
-            const rect = canvas.getBoundingClientRect();
-            const mouse_x = (e.clientX - rect.left) / rect.width * 2 - 1;
-            const mouse_y = -((e.clientY - rect.top) / rect.height * 2 - 1);
-            sendAction(mouse_x, mouse_y, getCurrentButtons());
+            // Send button state change with zero mouse delta  
+            sendAction(0, 0, getCurrentButtons());
         });
         
         // Prevent context menu on right click
