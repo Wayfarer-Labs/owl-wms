@@ -25,12 +25,12 @@ webapp_config_path      = "./configs/webapp/config.yaml" ; assert os.path.exists
 async def lifespan(app: FastAPI):
     global encoder, decoder, config
     config = WebappConfig.from_yaml(webapp_config_path)
-
-    encoder, decoder, _ = load_models(
-        checkpoint_path=config.model_checkpoint_path,
-        config_path=config.run_config_path,
-        device=config.device, verbose=True,
-    )
+    if not DEBUG:
+        encoder, decoder, _ = load_models(
+            checkpoint_path=config.model_checkpoint_path,
+            config_path=config.run_config_path,
+            device=config.device, verbose=True,
+        )
 
     yield
     encoder, decoder, config = None, None, None

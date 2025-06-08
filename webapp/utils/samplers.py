@@ -15,7 +15,7 @@ VideoData   = Tensor
 LatentData  = Tensor
 
 @multimethod
-def create_sampler(sampler_id: Literal['cfg'], encoder: nn.Module, decoder: nn.Module,
+def create_sampler(sampler_id: Literal['cfg'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
@@ -34,7 +34,7 @@ def create_sampler(sampler_id: Literal['cfg'], encoder: nn.Module, decoder: nn.M
     )
 
 @multimethod
-def create_sampler(sampler_id: Literal['inpaint_cfg'], encoder: nn.Module, decoder: nn.Module,
+def create_sampler(sampler_id: Literal['inpaint_cfg'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
@@ -53,7 +53,7 @@ def create_sampler(sampler_id: Literal['inpaint_cfg'], encoder: nn.Module, decod
     )
 
 @multimethod
-def create_sampler(sampler_id: Literal['window'], encoder: nn.Module, decoder: nn.Module,
+def create_sampler(sampler_id: Literal['window'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
