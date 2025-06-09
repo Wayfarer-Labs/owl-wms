@@ -56,10 +56,10 @@ class UserGameSession:
                 mouse, button = await self.action_collector.collect_actions()
                 # Generate Y frames from X actions by taking the X[-1]'th action. Typically, X >> Y, because they are sampled at uncapped FPS from the UI,
                 #  whereas Y frames are sampled from the model one at a time.
-                frames = await self.frame_generator.generate_frames(mouse, button)
+                video_frames, overlay_frames = await self.frame_generator.generate_frames(mouse, button)
                 # Queue frames for streaming at a capped FPS. If model predictions speed up or slow down, it won't cause any dilation of frames being displayed.
                 # However, if the model predictions are too slow, the frames will be displayed at a lower FPS than the capped FPS.
-                await self.frame_buffer.queue_frames(frames)
+                await self.frame_buffer.queue_frames(video_frames, mouse, button)
             except Exception as e:
                 import traceback
                 print(termcolor.colored(f"Error in frame generation: {e} :\n {traceback.format_exc()}", "red"))
@@ -68,8 +68,8 @@ class UserGameSession:
     async def _frame_display_loop(self, websocket: WebSocket):
         while True:
             try:
-                frame = await self.frame_buffer.get_next_frame()
-                await self._send_frame_to_client(websocket, frame)
+                video_frame, button, mouse = await self.frame_buffer.get_next_frames()
+                await self._send_frames_to_client(websocket, video_frame, button, mouse)
             except Exception as e:
                 # Check if this is a WebSocket disconnect
                 if "websocket.close" in str(e) or "response already completed" in str(e):
@@ -80,22 +80,31 @@ class UserGameSession:
                     print(termcolor.colored(f"Error in frame streaming: {e} :\n {traceback.format_exc()}", "red"))
                     await asyncio.sleep(self.frame_generator.streaming_config.frame_interval)
     
-    async def _send_frame_to_client(self, websocket: WebSocket, frame: torch.Tensor):
+    async def _send_frames_to_client(self,
+                                     websocket: WebSocket,
+                                     video_frame: torch.Tensor,
+                                     button: torch.Tensor,
+                                     mouse: torch.Tensor):
         try:
             # TODO Do this more intelligently. I'm sure there's better tech to stream video to a UI.
-            # Convert frame to base64 JPEG\
-            frame_np = frame.cpu().numpy().transpose(1, 2, 0)  # CHW -> HWC
-            # NOTE: Assumes -1 to 1 range for frames.
-            multiplier = 127.5 if frame.max() < 1 else 1
-            frame_np = (frame_np * multiplier).clip(0, 255).astype(np.uint8)  # Normalize
+            # Convert video frame to base64 JPEG
+            video_frame_np = video_frame.float().cpu().numpy().transpose(1, 2, 0)  # CHW -> HWC
+            # Normalize frame data to 0-255 range
+            if video_frame_np.max() <= 1.0:
+                video_frame_np = (video_frame_np * 255).clip(0, 255).astype(np.uint8)
+            else:
+                video_frame_np = video_frame_np.clip(0, 255).astype(np.uint8)
             
-            _, buffer = cv2.imencode('.jpg', frame_np)
-            frame_base64 = base64.b64encode(buffer).decode('utf-8')
+            _, video_buffer = cv2.imencode('.jpg', video_frame_np)
+            video_base64 = base64.b64encode(video_buffer).decode('utf-8')
+            
             
             await websocket.send_json({
-                "type": "frame",
-                "data": frame_base64,
-                "timestamp": time.time()
+                "type":         "frame",
+                "video_data":   video_base64,
+                "button_data":  self.action_collector.converter.buttons_to_dict(button),
+                "mouse_data":   self.action_collector.converter.mouse_to_dict(mouse),
+                "timestamp":    time.time()
             })
         except Exception as e:
             # Re-raise to be caught by the display loop

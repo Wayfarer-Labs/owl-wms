@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 # Global configuration
 KEYBINDS = ["W", "A", "S", "D", "LSHIFT", "SPACE", "R", "F", "E", "LMB", "RMB"]
-MINIMUM_FRAME_SIZE = 512
+MINIMUM_FRAME_SIZE = 150
 # Colors (BGR format for OpenCV)
 COLOR_PRESSED = (50, 200, 50)      # Green
 COLOR_UNPRESSED = (100, 100, 100)  # Gray
@@ -21,13 +21,13 @@ COLOR_LMB_SECTOR = COLOR_PRESSED  # Green
 COLOR_RMB_SECTOR = COLOR_PRESSED  # Green
 
 # Key dimensions
-KEY_SIZE = 30
+KEY_SIZE = 20
 KEY_MARGIN = 5
 SHIFT_WIDTH = int(KEY_SIZE * 2 + KEY_MARGIN)  # Two keys worth of width
 SPACE_WIDTH = int(KEY_SIZE * 5)
 
 # Mouse compass dimensions
-COMPASS_RADIUS = 48  # 80% of 80
+COMPASS_RADIUS = 24  # 80% of 80
 COMPASS_START_X_PERCENT = 0.80
 
 # Mouse button arc dimensions
@@ -39,8 +39,8 @@ ARROW_SCALE_FACTOR  = 1  # Base scaling factor for arrow length
 ARROW_MIN_LENGTH    = 55      # Minimum arrow length in pixels
 ARROW_MAX_SCALE     = 0.75     # Maximum scale relative to compass radius
 
-START_X_PERCENT = 0.12
-START_Y_PERCENT = 0.65
+START_X_PERCENT = 0.18
+START_Y_PERCENT = 0.85
 
 
 @contextmanager
@@ -59,6 +59,9 @@ def _rescale_icons(ratio: float):
             "SHIFT_WIDTH": SHIFT_WIDTH,
             "SPACE_WIDTH": SPACE_WIDTH,
             "COMPASS_RADIUS": COMPASS_RADIUS,
+            "MOUSE_BUTTON_OFFSET": MOUSE_BUTTON_OFFSET,
+            "MOUSE_BUTTON_THICKNESS": MOUSE_BUTTON_THICKNESS,
+            "ARROW_SCALE_FACTOR": ARROW_SCALE_FACTOR,
         }
         
         KEY_SIZE *= ratio ; KEY_SIZE = int(KEY_SIZE)
@@ -69,12 +72,45 @@ def _rescale_icons(ratio: float):
         MOUSE_BUTTON_OFFSET *= ratio ; MOUSE_BUTTON_OFFSET = int(MOUSE_BUTTON_OFFSET)
         MOUSE_BUTTON_THICKNESS *= ratio ; MOUSE_BUTTON_THICKNESS = int(MOUSE_BUTTON_THICKNESS)
         ARROW_SCALE_FACTOR *= ratio ; ARROW_SCALE_FACTOR = float(ARROW_SCALE_FACTOR)
-        ARROW_MIN_LENGTH *= ratio ; ARROW_MIN_LENGTH = int(ARROW_MIN_LENGTH)
-        ARROW_MAX_SCALE *= ratio ; ARROW_MAX_SCALE = float(ARROW_MAX_SCALE)
+        # Note: ARROW_MIN_LENGTH and ARROW_MAX_SCALE are now calculated relative to COMPASS_RADIUS
+        # so they don't need separate scaling
         yield
     finally:
         for key, value in old_values.items():
             globals()[key] = value
+
+
+def _get_adaptive_positioning(frame_width: int, frame_height: int) -> tuple[float, float, float]:
+    """
+    Calculate adaptive positioning percentages based on frame dimensions.
+    Returns (keyboard_start_y_percent, mouse_start_y_percent, start_x_percent)
+    """
+    aspect_ratio = frame_width / frame_height
+    
+    # Calculate how much vertical space the keyboard needs
+    keyboard_height_needed = KEY_SIZE * 3 + KEY_MARGIN * 2 + 20  # 3 rows + margins + buffer
+    
+    # Adaptive Y positioning - ensure keyboard fits
+    if frame_height <= keyboard_height_needed + 40:  # Very short frame
+        keyboard_start_y_percent = 0.1  # Start near top
+        mouse_start_y_percent = 0.6    # Place mouse in middle-bottom
+    elif frame_height < 300:  # Short frame
+        keyboard_start_y_percent = 0.4
+        mouse_start_y_percent = 0.75
+    else:  # Normal/tall frame
+        keyboard_start_y_percent = 0.75
+        mouse_start_y_percent = 0.85
+    
+    # Adaptive X positioning based on aspect ratio
+    if aspect_ratio > 1.5:  # Wide frame
+        start_x_percent = 0.08
+    elif aspect_ratio < 0.75:  # Tall frame
+        start_x_percent = 0.15
+    else:  # Near square frame
+        start_x_percent = 0.12
+    
+    return keyboard_start_y_percent, mouse_start_y_percent, start_x_percent
+
 
 
 def _draw_buttons(
@@ -82,17 +118,18 @@ def _draw_buttons(
     button_sequence: list[bool],
 ) -> None:
     """
-    Draw keyboard buttons on the frame.
-    
-    Args:
-        frame: numpy array representing the image frame
-        button_sequence: list of bools corresponding to KEYBINDS (excluding LMB, RMB)
+    Draw keyboard buttons on the frame with adaptive positioning.
     """
-    # Starting position for keyboard layout (bottom left)
-    start_x = int(frame.shape[1] * START_X_PERCENT)
-    start_y = int(frame.shape[0] * START_Y_PERCENT)
+    frame_height, frame_width = frame.shape[:2]
     
-    # Key positions - organized by rows
+    # Get adaptive positioning
+    keyboard_start_y_percent, _, start_x_percent = _get_adaptive_positioning(frame_width, frame_height)
+    
+    # Starting position for keyboard layout
+    start_x = int(frame_width * start_x_percent)
+    start_y = int(frame_height * keyboard_start_y_percent)
+    
+    # Rest of the function remains the same...
     key_positions = {
         # Top row: W E R (W above S)
         "W": (start_x + (KEY_SIZE + KEY_MARGIN) * 1, start_y),
@@ -110,10 +147,14 @@ def _draw_buttons(
         "SPACE": (start_x + SHIFT_WIDTH + KEY_MARGIN, start_y + (KEY_SIZE + KEY_MARGIN) * 2),
     }
     
-    # Draw each key
+    # Draw each key (rest remains the same)
     for i, key in enumerate(KEYBINDS[:-2]):  # Exclude LMB and RMB
         if key in key_positions:
             x, y = key_positions[key]
+            
+            # Ensure keys stay within frame bounds
+            if x < 0 or y < 0 or x + KEY_SIZE > frame_width or y + KEY_SIZE > frame_height:
+                continue
             
             # Determine key dimensions
             if key == "LSHIFT":
@@ -125,6 +166,10 @@ def _draw_buttons(
             else:
                 width = KEY_SIZE
                 height = KEY_SIZE
+            
+            # Final bounds check with actual key dimensions
+            if x + width > frame_width or y + height > frame_height:
+                continue
             
             # Determine color based on pressed state
             color = COLOR_PRESSED if button_sequence[i] else COLOR_UNPRESSED
@@ -142,7 +187,6 @@ def _draw_buttons(
             cv2.putText(frame, key, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 
                        0.5, COLOR_TEXT, 1, cv2.LINE_AA)
 
-
 def _draw_mouse(
     frame: np.ndarray,
     LMB_on: bool,
@@ -151,15 +195,14 @@ def _draw_mouse(
     center: tuple[int, int],
 ) -> None:
     """
-    Draw mouse compass with direction arrow and uncertainty cone.
+    Draw mouse compass with direction arrow and properly positioned labels.
     Arrow length is proportional to mouse movement magnitude.
     
     Args:
         frame: numpy array representing the image frame
         LMB_on: bool indicating if left mouse button is pressed
         RMB_on: bool indicating if right mouse button is pressed
-        mouse_vec: tuple of floats (x, y) representing mouse direction
-        mouse_std: tuple of floats (x_std, y_std) representing uncertainty
+        mouse_delta: tuple of floats (x, y) representing mouse direction
         center: tuple (x, y) for compass center position
     """
     # Draw compass circle
@@ -178,10 +221,14 @@ def _draw_mouse(
     cv2.ellipse(frame, center, (button_radius, button_radius), 
                0, 270, 315, color_rmb, MOUSE_BUTTON_THICKNESS)
     
-    text_loc_lmb = center[0] - COMPASS_RADIUS + 10, center[1] - COMPASS_RADIUS - 10 
-    cv2.putText(frame, 'LMB', text_loc_lmb, cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_TEXT, 1, cv2.LINE_AA)
-    text_loc_rmb = center[0], center[1] - COMPASS_RADIUS - 10
-    cv2.putText(frame, 'RMB', text_loc_rmb, cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_TEXT, 1, cv2.LINE_AA)
+    # Fixed label positioning - spread them out more and position them better
+    # LMB label - position it to the left of the compass
+    text_loc_lmb = (center[0] - COMPASS_RADIUS - 15, center[1] - COMPASS_RADIUS + 5)
+    cv2.putText(frame, 'LMB', text_loc_lmb, cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLOR_TEXT, 1, cv2.LINE_AA)
+    
+    # RMB label - position it to the right of the compass  
+    text_loc_rmb = (center[0] + COMPASS_RADIUS - 10, center[1] - COMPASS_RADIUS + 5)
+    cv2.putText(frame, 'RMB', text_loc_rmb, cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLOR_TEXT, 1, cv2.LINE_AA)
     
     # Calculate mouse direction
     mouse_x, mouse_y = mouse_delta
@@ -192,13 +239,17 @@ def _draw_mouse(
         unit_x = mouse_x / magnitude
         unit_y = mouse_y / magnitude
         
-        # Calculate arrow length proportional to magnitude
+        # Fixed arrow scaling - ensure arrow stays within compass bounds
+        # Calculate minimum and maximum arrow lengths relative to compass size
+        min_arrow_length = COMPASS_RADIUS * 0.3  # 30% of compass radius
+        max_arrow_length = COMPASS_RADIUS * 0.8  # 80% of compass radius (stays within circle)
+        
         # Scale by magnitude but clamp to reasonable bounds
         arrow_scale = max(
-            ARROW_MIN_LENGTH,  # Ensure minimum visible arrow
+            min_arrow_length,  # Minimum visible arrow
             min(
                 COMPASS_RADIUS * magnitude * ARROW_SCALE_FACTOR,  # Proportional to magnitude
-                COMPASS_RADIUS * ARROW_MAX_SCALE  # Cap at maximum scale
+                max_arrow_length  # Cap at 80% of compass radius
             )
         )
         
@@ -206,7 +257,7 @@ def _draw_mouse(
         end_y = int(center[1] - unit_y * arrow_scale)  # Negative because y-axis is inverted
         
         # Draw direction arrow with proportional length
-        cv2.arrowedLine(frame, center, (end_x, end_y), COLOR_MOUSE_ARROW, 3, tipLength=0.3)
+        cv2.arrowedLine(frame, center, (end_x, end_y), COLOR_MOUSE_ARROW, 2, tipLength=0.4)
         
         # Optional: Display magnitude as text for debugging
         # magnitude_text = f"Mag: {magnitude:.2f}"
@@ -214,11 +265,12 @@ def _draw_mouse(
         #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLOR_TEXT, 1, cv2.LINE_AA)
     
     # Draw center dot
-    cv2.circle(frame, center, 3, COLOR_TEXT, -1)
+    cv2.circle(frame, center, 2, COLOR_TEXT, -1)
     
-    # Add labels
-    cv2.putText(frame, "Mouse", (center[0] - 25, center[1] + button_radius + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 1, cv2.LINE_AA)
+    # Add "Mouse" label below the compass
+    cv2.putText(frame, "Mouse", (center[0] - 20, center[1] + button_radius + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_TEXT, 1, cv2.LINE_AA)
+
 
 def _draw_frame(
     frame: np.ndarray,
@@ -226,23 +278,28 @@ def _draw_frame(
     mouse_delta: tuple[float, float],
 ) -> np.ndarray:
     """
-    Overlay keyboard & mouse on a single frame and return it.
+    Overlay keyboard & mouse on a single frame with adaptive positioning.
     """
     buttons, lmb, rmb = buttons[:-2], buttons[-2], buttons[-1]
     _draw_buttons(frame, buttons)
 
     frame_height, frame_width = frame.shape[:2]
-    margin = 30
-    compass_x = frame_width - margin - COMPASS_RADIUS - MOUSE_BUTTON_OFFSET
-    compass_y = int(frame_height * START_Y_PERCENT)
-    compass_x = int(compass_x * COMPASS_START_X_PERCENT)
+    
+    # Get adaptive positioning
+    _, mouse_start_y_percent, _ = _get_adaptive_positioning(frame_width, frame_height)
+    
+    # Calculate compass position
+    compass_x_percent = COMPASS_START_X_PERCENT
+    compass_x = int(frame_width * compass_x_percent) - COMPASS_RADIUS - MOUSE_BUTTON_OFFSET
+    compass_y = int(frame_height * mouse_start_y_percent)
 
     # Ensure compass fits within frame boundaries
     min_x = COMPASS_RADIUS + MOUSE_BUTTON_OFFSET + 20
     max_x = frame_width - COMPASS_RADIUS - MOUSE_BUTTON_OFFSET - 20
     compass_x = max(min_x, min(compass_x, max_x))
+    
     min_y = COMPASS_RADIUS + MOUSE_BUTTON_OFFSET + 30
-    max_y = frame_height - COMPASS_RADIUS - MOUSE_BUTTON_OFFSET - 30
+    max_y = frame_height - COMPASS_RADIUS - MOUSE_BUTTON_OFFSET - 50
     compass_y = max(min_y, min(compass_y, max_y))
 
     _draw_mouse(frame,
@@ -280,13 +337,25 @@ def _draw_video(
         ARROW_MAX_SCALE = arrow_max_scale
 
     video = video.float().cpu().numpy()
-    # upscale image to 512x512 only if < 512 on smallest dimension.
-    if video.shape[1] < MINIMUM_FRAME_SIZE or video.shape[2] < MINIMUM_FRAME_SIZE:
-        frames = [cv2.resize(frame, (512, 512), interpolation=cv2.INTER_CUBIC) for frame in video]
+    
+    # Get original dimensions
+    original_height, original_width = video.shape[1], video.shape[2]
+    
+    # Calculate scaling to meet minimum size while preserving aspect ratio
+    if original_height < MINIMUM_FRAME_SIZE or original_width < MINIMUM_FRAME_SIZE:
+        # Calculate scale factor to make smallest dimension equal to MINIMUM_FRAME_SIZE
+        scale_factor = MINIMUM_FRAME_SIZE / min(original_height, original_width)
+        new_height = int(original_height * scale_factor)
+        new_width = int(original_width * scale_factor)
+        
+        frames = [cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC) for frame in video]
+        # UI scaling ratio - keep icons at base size since we're scaling up small frames
         ratio = 1.0
     else:
         frames = video
-        ratio = min(video.shape[1] / MINIMUM_FRAME_SIZE, video.shape[2] / MINIMUM_FRAME_SIZE)
+        # UI scaling ratio - scale icons proportional to how much larger the frame is than minimum
+        # This ensures icons don't become too large on big frames
+        ratio = min(original_height, original_width) / MINIMUM_FRAME_SIZE
 
     with _rescale_icons(ratio):
         frames = [
@@ -294,7 +363,7 @@ def _draw_video(
             for i, frame in enumerate(frames)
         ]
     if save_path is not None:
-        imio.mimsave(save_path, frames, fps=fps)
+        imio.mimsave(save_path, [f.astype(np.uint8) for f in frames], fps=fps)
 
     return frames
 

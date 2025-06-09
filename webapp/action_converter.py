@@ -27,7 +27,7 @@ def _interpolate(actions: torch.Tensor,
     
     if num_actions >= target_length:
         # subsample actions if somehow longer than frames_per_batch
-        downsampled = torch.arange(0, num_actions, step=(num_actions // target_length))
+        downsampled = torch.arange(0, num_actions, step=(num_actions // target_length))[:target_length]
         return actions[downsampled, :]
     
     # Repeat with empty actions to fill remaining frames
@@ -84,7 +84,7 @@ class ActionConverter:
         
         return mouse, button_states
 
-    def actions_to_batch(self, actions: list[tuple[torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
+    def actions_to_sequence(self, actions: list[tuple[torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Convert list of individual actions to batch tensors.
         
@@ -106,6 +106,14 @@ class ActionConverter:
         button = torch.stack([action[1] for action in actions], dim=0)  # [seq_len, n_buttons]
 
         return mouse, button
+    
+    def buttons_to_dict(self, buttons: torch.Tensor) -> dict:
+        """Convert buttons tensor to dictionary."""
+        return {BUTTON_NAMES[i]: bool(buttons[i]) for i in range(buttons.shape[0])}
+    
+    def mouse_to_dict(self, mouse: torch.Tensor) -> dict:
+        """Convert mouse tensor to dictionary."""
+        return {"mouse_x": mouse[0].item(), "mouse_y": mouse[1].item()}
 
 
 class ActionCollector:
@@ -116,10 +124,10 @@ class ActionCollector:
         self.converter = ActionConverter(streaming_config)
         self.action_queue = asyncio.Queue(maxsize=100)  # Buffer incoming actions
 
-        # -- constants
-        self.empty_mouse    = torch.zeros((streaming_config.frames_per_batch, streaming_config.n_mouse_axes),
+        # an empty action is for one frame only
+        self.empty_mouse    = torch.zeros((1, streaming_config.n_mouse_axes),
                                         device=streaming_config.device, dtype=torch.float32)
-        self.empty_buttons  = torch.zeros((streaming_config.frames_per_batch, streaming_config.n_buttons),
+        self.empty_buttons  = torch.zeros((1, streaming_config.n_buttons),
                                         device=streaming_config.device, dtype=torch.bool)
 
     async def add_websocket_action(self, ws_message: dict):
@@ -183,7 +191,7 @@ class ActionCollector:
                 pass
 
         # Convert real actions to batch tensors
-        mouse, button   = self.converter.actions_to_batch(real_actions)
+        mouse, button   = self.converter.actions_to_sequence(real_actions)
         mouse           = _interpolate(mouse, empty_action=self.empty_mouse,
                                               target_length=self.streaming_config.frames_per_batch)
         button          = _interpolate(button,empty_action=self.empty_buttons,

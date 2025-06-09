@@ -1,4 +1,4 @@
-from torch import nn, Tensor
+from torch import Tensor
 from typing import Literal, Callable
 from functools import partial, cache
 from multimethod import multimethod
@@ -19,7 +19,8 @@ def create_sampler(sampler_id: Literal['cfg'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
-                   scale: float         = SCALE) -> Callable[[MouseData, ButtonData],
+                   vae_scale: float     = SCALE,
+                   **kwargs) -> Callable[[MouseData, ButtonData],
                                                         tuple[LatentData, VideoData]]:
     @cache # simple singleton
     def _sampler(): return CFGSampler()
@@ -28,7 +29,7 @@ def create_sampler(sampler_id: Literal['cfg'], encoder, decoder,
         _sampler().__call__,
         sampling_steps=sampling_steps,
         decode_fn=make_batched_decode_fn(decoder, batch_size=batch_size),
-        scale=scale,
+        scale=vae_scale,
         cfg_scale=cfg_scale,
         model=encoder
     )
@@ -38,7 +39,8 @@ def create_sampler(sampler_id: Literal['inpaint_cfg'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
-                   scale: float         = SCALE) -> Callable[[MouseData, ButtonData],
+                   vae_scale: float     = SCALE,
+                   **kwargs) -> Callable[[MouseData, ButtonData],
                                                         tuple[LatentData, VideoData]]:
     @cache
     def _sampler(): return InpaintCFGSampler()
@@ -47,7 +49,7 @@ def create_sampler(sampler_id: Literal['inpaint_cfg'], encoder, decoder,
         _sampler().__call__,
         sampling_steps=sampling_steps,
         decode_fn=make_batched_decode_fn(decoder, batch_size=batch_size),
-        scale=scale,
+        scale=vae_scale,
         cfg_scale=cfg_scale,
         model=encoder
     )
@@ -57,7 +59,8 @@ def create_sampler(sampler_id: Literal['window'], encoder, decoder,
                    batch_size: int      = 8,
                    sampling_steps: int  = SAMPLING_STEPS,
                    cfg_scale: float     = CFG_SCALE,
-                   scale: float         = SCALE) -> Callable[[MouseData, ButtonData],
+                   vae_scale: float     = SCALE,
+                   **kwargs) -> Callable[[MouseData, ButtonData],
                                                         tuple[LatentData, VideoData]]:
     @cache
     def _sampler(): return WindowCFGSampler()
@@ -66,7 +69,8 @@ def create_sampler(sampler_id: Literal['window'], encoder, decoder,
         _sampler().__call__,
         sampling_steps=sampling_steps,
         decode_fn=make_batched_decode_fn(decoder, batch_size=batch_size),
-        scale=scale,
+        scale=vae_scale,
         cfg_scale=cfg_scale,
-        model=encoder
+        model=encoder,
+        **kwargs
     )

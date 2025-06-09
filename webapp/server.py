@@ -58,14 +58,23 @@ async def websocket_endpoint(websocket: WebSocket):
                                               sampling_config=config.sampling_config,
                                               debug=DEBUG)
     session = UserGameSession(frame_generator)
-    
-    # Run the session (your existing code!)
     await session.run_session(websocket)
 
 
-if __name__ == "__main__":
+def main():
+    global DEBUG
+    import argparse
     import uvicorn
     
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--no-debug", action="store_true", default=True, help="Disable debug mode")
+    parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
+    args = parser.parse_args()
+    
+    assert not (args.debug and args.no_debug), "Cannot have both debug and no-debug flags"
+    DEBUG = args.debug or not args.no_debug
+
     print("🚀 Starting OWL-WMS FastAPI Server...")
     print("📡 WebSocket endpoint: ws://localhost:8000/ws/game")
     print("🌐 Access via: http://localhost:8000")
@@ -74,7 +83,11 @@ if __name__ == "__main__":
     uvicorn.run(
         "webapp.server:app",
         host="0.0.0.0",  # Allow external connections
-        port=8000,
+        port=args.port,
         reload=True,     # Auto-reload on file changes
         log_level="info"
     )
+
+
+if __name__ == "__main__":
+    main()

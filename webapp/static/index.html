@@ -1,303 +1,527 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Open-World Labs - OWL-WMS</title>
+    <meta charset="UTF-8" />
+    <title>Open‑World Labs – OWL‑WMS</title>
     <style>
+        :root {
+            --brand: #4caf50;
+            --bg: #1a1a1a;
+            --text: #ffffff;
+            --key-bg: #333;
+            --key-active: #4caf50;
+            --key-border: #ffffff;
+        }
+
+        * { box-sizing: border-box; }
+
         body {
             font-family: Arial, sans-serif;
-            background-color: #1a1a1a;
-            color: white;
+            background: var(--bg);
+            color: var(--text);
             margin: 0;
             padding: 20px;
             display: flex;
             flex-direction: column;
             align-items: center;
         }
-        
+
         h1 {
-            color: #4CAF50;
-            margin-bottom: 20px;
+            margin: 0 0 20px;
+            color: var(--brand);
+            text-align: center;
         }
-        
-        #gameCanvas {
-            border: 2px solid #4CAF50;
-            background-color: #000;
-            cursor: crosshair;
-            margin: 20px 0;
-        }
-        
+
         #status {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 5px;
+            padding: 10px 16px;
             font-weight: bold;
+            margin-bottom: 12px;
+            display: inline-block;
         }
-        
-        .connected {
-            background-color: #4CAF50;
-            color: white;
+        .connected    { background: var(--brand); }
+        .disconnected { background: #f44336; }
+        .connecting   { background: #ff9800; }
+
+        #gameContainer {
+            position: relative;
+            border: 2px solid var(--key-border);
+            background: #000;
+            cursor: crosshair;
+            width: 256px;
+            height: 256px;
+            transition: border-color 0.3s ease;
         }
-        
-        .disconnected {
-            background-color: #f44336;
-            color: white;
+
+        #gameContainer.connected {
+            border-color: #4caf50;
         }
-        
-        .connecting {
-            background-color: #ff9800;
-            color: white;
+
+        #gameContainer.disconnected {
+            border-color: #f44336;
         }
+
+        #gameContainer.connecting {
+            border-color: #ff9800;
+        }
+
+        #videoCanvas {
+            display: block;
+        }
+
+        #keyboardViz {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--key-border);
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 40px;
+            min-width: 400px;
+        }
+
+        .keyboard-section {
+            flex: 0 0 auto;
+        }
+
+        .mouse-section {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .key-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+            gap: 8px;
+        }
+
+        .key {
+            background: var(--key-bg);
+            border: 2px solid var(--key-border);
+            padding: 8px 12px;
+            font-family: monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--text);
+            min-width: 40px;
+            text-align: center;
+            transition: all 0.1s ease;
+        }
+
+        .key.active {
+            background: var(--key-active);
+            border-color: var(--key-active);
+            color: #000;
+        }
+
+        .key.pressed {
+            transform: scale(0.95);
+        }
+
+        .key.spacebar {
+            min-width: 120px;
+        }
+
+        .key.shift {
+            min-width: 60px;
+        }
+
+        .mouse-area {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-top: 10px;
+        }
+
+        .mouse-delta {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            border: 2px solid var(--key-border);
+            border-radius: 50%;
+            background: var(--key-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mouse-compass {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--brand);
+            border-radius: 50%;
+            transition: all 0.1s ease;
+            transform: translate(-50%, -50%);
+        }
+
+        .mouse-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .mouse-btn {
+            background: var(--key-bg);
+            border: 2px solid var(--key-border);
+            padding: 8px 12px;
+            font-family: monospace;
+            font-size: 10px;
+            font-weight: bold;
+            color: var(--text);
+            transition: all 0.1s ease;
+        }
+
+        .mouse-btn:first-child {
+            border-top-left-radius: 4px;
+            border-bottom-left-radius: 4px;
+        }
+
+        .mouse-btn:last-child {
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+            margin-left: -2px; /* Overlap borders */
+        }
+
+        .mouse-btn.active {
+            background: var(--key-active);
+            border-color: var(--key-active);
+            color: #000;
+        }
+
+        .mouse-btn.pressed {
+            transform: scale(0.95);
+        }
+
+        p { margin-top: 24px; text-align: center; }
     </style>
 </head>
 <body>
-    <h1>🎮 OWL-WMS Game Stream</h1>
-    <div id="status" class="connecting">Connecting to server...</div>
-    <canvas id="gameCanvas" width="256"></canvas>
-    <p>Move your mouse over the canvas to interact with the game world!</p>
-    <script>
-        // Load config and set canvas height
-        fetch('/assets/../../configs/webapp/config.yaml')
-            .then(response => response.text())
-            .then(text => {
-                const config = jsyaml.load(text);
-                return config.stream_config.action_margin_px_height;
-            })
-            .then(config => {
-                const baseHeight = 256;
-                const marginHeight = config.stream_config.action_margin_px_height;
-                const totalHeight = baseHeight + marginHeight;
-                document.getElementById('gameCanvas').height = totalHeight;
-            });
-    </script>
-    
-    <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const statusDiv = document.getElementById('status');
-        
-        // Game state - match action_converter.py BUTTON_NAMES
-        let buttons = {
-            "W": false,
-            "A": false, 
-            "S": false,
-            "D": false,
-            "LSHIFT": false,
-            "SPACE": false,
-            "R": false,
-            "F": false,
-            "E": false,
-            "LMB": false,
-            "RMB": false
-        };
-        
-        // Mouse tracking for deltas with exponential smoothing
-        let lastMouseX = 0;
-        let lastMouseY = 0;
-        let isFirstMove = true;
-        let smoothedDeltaX = 0;
-        let smoothedDeltaY = 0;
-        const DELTA_SCALE = 0.8; // Scale down deltas for smoother movement
-        const DEAD_ZONE = 0.002; // Ignore tiny movements
-        const SMOOTHING_FACTOR = 0.3; // Lower = smoother, higher = more responsive
-        
-        // WebSocket connection
-        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-        const ws = new WebSocket(`${scheme}://${location.hostname}:8000/ws/game`);
+    <h1>🎮 OWL‑WMS Game Stream</h1>
+    <div id="status" class="connecting">Connecting to server…</div>
+    <div id="gameContainer" class="connecting">
+        <canvas id="videoCanvas" width="256" height="256"></canvas>
+    </div>
 
+    <div id="keyboardViz">
+        <div class="keyboard-section">
+            <div class="key-row" style="margin-left: 48px;">
+                <div class="key" data-key="W">W</div>
+                <div class="key" data-key="E">E</div>
+                <div class="key" data-key="R">R</div>
+            </div>
+            <div class="key-row">
+                <div class="key" data-key="A">A</div>
+                <div class="key" data-key="S">S</div>
+                <div class="key" data-key="D">D</div>
+                <div class="key" data-key="F">F</div>
+            </div>
+            <div class="key-row">
+                <div class="key shift" data-key="LSHIFT">SHIFT</div>
+                <div class="key spacebar" data-key="SPACE">SPACE</div>
+            </div>
+        </div>
         
-        ws.onopen = () => {
-            console.log('WebSocket connected');
-            statusDiv.textContent = '✅ Connected to game server';
-            statusDiv.className = 'connected';
+        <div class="mouse-section">
+            <div class="mouse-area">
+                <div class="mouse-delta">
+                    <div class="mouse-compass" id="mouseCompass"></div>
+                </div>
+                <div class="mouse-buttons">
+                    <div class="mouse-btn" data-key="LMB">LMB</div>
+                    <div class="mouse-btn" data-key="RMB">RMB</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <p>Move your mouse over the canvas to interact with the game world!</p>
+
+    <script>
+        /* ----------------------------------
+         *  Constants & state
+         * ---------------------------------- */
+        const gameContainer    = document.getElementById('gameContainer');
+        const videoCanvas      = document.getElementById('videoCanvas');
+        const videoCtx         = videoCanvas.getContext('2d');
+        const statusDiv        = document.getElementById('status');
+        const mouseCompass     = document.getElementById('mouseCompass');
+
+        // Button state – must match action_converter.py BUTTON_NAMES
+        const buttons = {
+            W: false, A: false, S: false, D: false,
+            LSHIFT: false, SPACE: false, R: false, F: false, E: false,
+            LMB: false, RMB: false,
+        };
+
+        // Mouse delta smoothing
+        let lastX = 0, lastY = 0;
+        let firstMove = true;
+        let smoothDX = 0, smoothDY = 0;
+        const DELTA_SCALE      = 0.8;
+        const DEAD_ZONE        = 0.002;
+        const SMOOTH_F         = 0.3;   // 0 → infinite smoothing, 1 → no smoothing
+
+        /* ----------------------------------
+         *  Keyboard visualization
+         * ---------------------------------- */
+        function updateKeyboardViz(serverButtons = null, serverMouse = null) {
+            // Use server data if available, otherwise use local button state for server feedback
+            const buttonState = serverButtons || {};
             
-            // Start sending continuous keyboard updates at 60 FPS
-            startContinuousKeyboardUpdates();
-        };
-        
-        ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            statusDiv.textContent = '❌ Disconnected from server';
-            statusDiv.className = 'disconnected';
-            
-            // Stop continuous updates
-            stopContinuousKeyboardUpdates();
-        };
-        
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            statusDiv.textContent = '⚠️ Connection error';
-            statusDiv.className = 'disconnected';
-        };
-        
-        ws.onmessage = (event) => {
-            try {
-                const frame = JSON.parse(event.data);
-                displayFrame(frame);
-            } catch (error) {
-                console.error('Error parsing frame data:', error);
-            }
-        };
-        
-        let updateInterval = null;
-        
-        function startContinuousKeyboardUpdates() {
-            // Send keyboard state at 60 FPS, but only if keys are pressed
-            // NO MOUSE DATA - only keyboard
-            updateInterval = setInterval(() => {
-                const hasKeysPressed = Object.values(buttons).some(pressed => pressed);
-                if (hasKeysPressed) {
-                    sendAction(0, 0, getCurrentButtons()); // Zero mouse deltas for keyboard-only updates
+            // Update key states with SERVER feedback (green color)
+            document.querySelectorAll('[data-key]').forEach(el => {
+                const key = el.dataset.key;
+                if (buttonState[key]) {
+                    el.classList.add('active');
+                } else {
+                    el.classList.remove('active');
                 }
-            }, 16);
-        }
-        
-        function stopContinuousKeyboardUpdates() {
-            if (updateInterval) {
-                clearInterval(updateInterval);
-                updateInterval = null;
+            });
+
+            // Update mouse delta compass - use server data if available
+            let deltaX, deltaY;
+            if (serverMouse && (serverMouse.mouse_x !== undefined && serverMouse.mouse_y !== undefined)) {
+                deltaX = serverMouse.mouse_x;
+                deltaY = serverMouse.mouse_y;
+            } else {
+                deltaX = smoothDX;
+                deltaY = smoothDY;
+            }
+            
+            const magnitude = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            
+            if (magnitude > 0.01) {
+                // Calculate position within the circle (radius of about 35px from center)
+                const maxRadius = 35;
+                const radius = Math.min(magnitude * 200, maxRadius);
+                const angle = Math.atan2(deltaX, -deltaY); // Negative Y to match screen coordinates
+                
+                const x = Math.sin(angle) * radius;
+                const y = Math.cos(angle) * radius;
+                
+                mouseCompass.style.left = `calc(50% + ${x}px)`;
+                mouseCompass.style.top = `calc(50% + ${y}px)`;
+                mouseCompass.style.opacity = 1;
+                mouseCompass.style.display = 'block';
+            } else {
+                // Return to center when no movement
+                mouseCompass.style.left = '50%';
+                mouseCompass.style.top = '50%';
+                mouseCompass.style.opacity = 0.3;
             }
         }
-        
-        function displayFrame(frameData) {
-            if (frameData.type === 'frame') {
-                const img = new Image();
-                img.onload = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        /* ----------------------------------
+         *  WebSocket setup
+         * ---------------------------------- */
+        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws     = new WebSocket(`${scheme}://${location.hostname}:8000/ws/game`);
+
+        ws.onopen = () => {
+            statusDiv.textContent = '✅ Connected to game server';
+            statusDiv.className   = 'connected';
+            gameContainer.className = 'connected';
+            startKeyboardTicker();
+        };
+        ws.onclose = () => {
+            statusDiv.textContent = '❌ Disconnected from server';
+            statusDiv.className   = 'disconnected';
+            gameContainer.className = 'disconnected';
+            stopKeyboardTicker();
+        };
+        ws.onerror = () => {
+            statusDiv.textContent = '⚠️ Connection error';
+            statusDiv.className   = 'disconnected';
+            gameContainer.className = 'disconnected';
+        };
+        ws.onmessage = ev => {
+            try { renderFrame(JSON.parse(ev.data)); } catch (err) { console.error(err); }
+        };
+
+        /* ----------------------------------
+         *  Frame rendering
+         * ---------------------------------- */
+        let canvasInit = false;
+        function renderFrame(msg) {
+            if (msg.type !== 'frame') return;
+
+            // Handle video frame
+            if (msg.video_data) {
+                const videoImg = new Image();
+                videoImg.onload = () => {
+                    if (!canvasInit) {
+                        videoCanvas.width = videoImg.width;
+                        videoCanvas.height = videoImg.height;
+                        gameContainer.style.width = videoImg.width + 'px';
+                        gameContainer.style.height = videoImg.height + 'px';
+                        canvasInit = true;
+                    }
+                    videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+                    videoCtx.drawImage(videoImg, 0, 0);
                 };
-                img.src = 'data:image/jpeg;base64,' + frameData.data;
+                videoImg.src = `data:image/jpeg;base64,${msg.video_data}`;
+            }
+
+            // Update visualization with server data
+            if (msg.button_data || msg.mouse_data) {
+                updateKeyboardViz(msg.button_data, msg.mouse_data);
             }
         }
-        
-        function getCurrentButtons() {
-            return { ...buttons }; // Return copy of current button state
-        }
-        
-        function sendAction(mouse_x, mouse_y, buttonState) {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    mouse_x, 
-                    mouse_y, 
-                    ...buttonState
-                }));
-            }
-        }
-        
-        // Keyboard event listeners
-        document.addEventListener('keydown', (e) => {
-            const key = e.code;
-            let buttonName = null;
+
+        /* ----------------------------------
+         *  Action helpers
+         * ---------------------------------- */
+        const sendAction = (mx, my) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({ mouse_x: mx, mouse_y: my, ...buttons }));
+            // Don't update visualization here - let server response drive the display
+        };
+
+        /* ----------------------------------
+         *  Mouse position validation
+         * ---------------------------------- */
+        function isMouseInVideoCanvas(e) {
+            const rect = videoCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
             
-            // Map keyboard codes to button names
-            switch(key) {
-                case 'KeyW': buttonName = 'W'; break;
-                case 'KeyA': buttonName = 'A'; break;
-                case 'KeyS': buttonName = 'S'; break;
-                case 'KeyD': buttonName = 'D'; break;
-                case 'ShiftLeft': buttonName = 'LSHIFT'; break;
-                case 'Space': buttonName = 'SPACE'; break;
-                case 'KeyR': buttonName = 'R'; break;
-                case 'KeyF': buttonName = 'F'; break;
-                case 'KeyE': buttonName = 'E'; break;
-            }
-            
-            if (buttonName && !buttons[buttonName]) {
+            // Check if mouse is within the actual video canvas bounds
+            return x >= 0 && x < rect.width && y >= 0 && y < rect.height;
+        }
+
+        /* ----------------------------------
+         *  Keyboard handling
+         * ---------------------------------- */
+        const keyMap = {
+            KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D',
+            ShiftLeft: 'LSHIFT', Space: 'SPACE', KeyR: 'R', KeyF: 'F', KeyE: 'E',
+        };
+
+        document.addEventListener('keydown', e => {
+            const btn = keyMap[e.code];
+            if (btn && !buttons[btn]) {
                 e.preventDefault();
-                buttons[buttonName] = true;
-                console.log(`🔽 Key pressed: ${buttonName}`);
+                buttons[btn] = true;
+                
+                // Add local visual feedback (shrinking)
+                const keyEl = document.querySelector(`[data-key="${btn}"]`);
+                if (keyEl) keyEl.classList.add('pressed');
             }
         });
-        
-        document.addEventListener('keyup', (e) => {
-            const key = e.code;
-            let buttonName = null;
-            
-            // Map keyboard codes to button names
-            switch(key) {
-                case 'KeyW': buttonName = 'W'; break;
-                case 'KeyA': buttonName = 'A'; break;
-                case 'KeyS': buttonName = 'S'; break;
-                case 'KeyD': buttonName = 'D'; break;
-                case 'ShiftLeft': buttonName = 'LSHIFT'; break;
-                case 'Space': buttonName = 'SPACE'; break;
-                case 'KeyR': buttonName = 'R'; break;
-                case 'KeyF': buttonName = 'F'; break;
-                case 'KeyE': buttonName = 'E'; break;
-            }
-            
-            if (buttonName && buttons[buttonName]) {
+        document.addEventListener('keyup', e => {
+            const btn = keyMap[e.code];
+            if (btn && buttons[btn]) {
                 e.preventDefault();
-                buttons[buttonName] = false;
-                console.log(`🔼 Key released: ${buttonName}`);
+                buttons[btn] = false;
+                
+                // Remove local visual feedback (shrinking)
+                const keyEl = document.querySelector(`[data-key="${btn}"]`);
+                if (keyEl) keyEl.classList.remove('pressed');
             }
         });
-        
-        // Mouse event listeners - SMOOTH DELTAS
-        canvas.addEventListener('mousemove', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const currentMouseX = (e.clientX - rect.left) / rect.width * 2 - 1;
-            const currentMouseY = -((e.clientY - rect.top) / rect.height * 2 - 1);
-            
-            if (isFirstMove) {
-                // First move - just set position, don't send
-                lastMouseX = currentMouseX;
-                lastMouseY = currentMouseY;
-                isFirstMove = false;
+
+        let kbTicker = null;
+        function startKeyboardTicker() {
+            kbTicker = setInterval(() => {
+                if (Object.values(buttons).some(Boolean)) sendAction(0, 0);
+            }, 16); // ~60 Hz
+        }
+        function stopKeyboardTicker() { clearInterval(kbTicker); }
+
+        /* ----------------------------------
+         *  Mouse handling
+         * ---------------------------------- */
+        // Use game container for mouse events to capture all mouse movements
+        gameContainer.addEventListener('mousemove', e => {
+            // Only process mouse deltas if mouse is within the video canvas area
+            if (!isMouseInVideoCanvas(e)) {
+                // Reset tracking when mouse leaves video canvas area
+                firstMove = true;
+                smoothDX = smoothDY = 0;
+                // Don't update visualization locally - let server response drive the display
                 return;
             }
-            
-            // Calculate raw deltas
-            let deltaX = (currentMouseX - lastMouseX) * DELTA_SCALE;
-            let deltaY = (currentMouseY - lastMouseY) * DELTA_SCALE;
-            
-            // Apply dead zone - ignore tiny movements
-            if (Math.abs(deltaX) < DEAD_ZONE) deltaX = 0;
-            if (Math.abs(deltaY) < DEAD_ZONE) deltaY = 0;
-            
-            // Calculate smoothed deltas using exponential smoothing
-            smoothedDeltaX = deltaX * SMOOTHING_FACTOR + smoothedDeltaX * (1 - SMOOTHING_FACTOR);
-            smoothedDeltaY = deltaY * SMOOTHING_FACTOR + smoothedDeltaY * (1 - SMOOTHING_FACTOR);
-            
-            // Only send if there's actual movement after smoothing
-            if (smoothedDeltaX !== 0 || smoothedDeltaY !== 0) {
-                sendAction(smoothedDeltaX, smoothedDeltaY, getCurrentButtons());
+
+            const rect = videoCanvas.getBoundingClientRect();
+            const cx = (e.clientX - rect.left) / rect.width  * 2 - 1; // [-1,1]
+            const cy = -((e.clientY - rect.top) / rect.height * 2 - 1); // [-1,1], inverted
+
+            if (firstMove) { 
+                lastX = cx; 
+                lastY = cy; 
+                firstMove = false; 
+                return; 
             }
+
+            let dx = (cx - lastX) * DELTA_SCALE;
+            let dy = (cy - lastY) * DELTA_SCALE;
+
+            if (Math.abs(dx) < DEAD_ZONE) dx = 0;
+            if (Math.abs(dy) < DEAD_ZONE) dy = 0;
+
+            smoothDX = dx * SMOOTH_F + smoothDX * (1 - SMOOTH_F);
+            smoothDY = dy * SMOOTH_F + smoothDY * (1 - SMOOTH_F);
+
+            if (smoothDX || smoothDY) sendAction(smoothDX, smoothDY);
+            lastX = cx; 
+            lastY = cy;
+        });
+
+        // Mouse buttons - only process if within video canvas
+        gameContainer.addEventListener('mousedown', e => {
+            if (!isMouseInVideoCanvas(e)) return;
             
-            // Update last position
-            lastMouseX = currentMouseX;
-            lastMouseY = currentMouseY;
+            if (e.button === 0) {
+                buttons.LMB = true;
+                // Add local visual feedback (shrinking)
+                const lmbEl = document.querySelector('[data-key="LMB"]');
+                if (lmbEl) lmbEl.classList.add('pressed');
+            }
+            if (e.button === 2) {
+                buttons.RMB = true;
+                // Add local visual feedback (shrinking)
+                const rmbEl = document.querySelector('[data-key="RMB"]');
+                if (rmbEl) rmbEl.classList.add('pressed');
+            }
+            sendAction(0, 0);
         });
         
-        canvas.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            if (e.button === 0) buttons["LMB"] = true;  // Left mouse button
-            if (e.button === 2) buttons["RMB"] = true;  // Right mouse button
+        gameContainer.addEventListener('mouseup', e => {
+            if (!isMouseInVideoCanvas(e)) return;
             
-            // Send button state change with zero mouse delta
-            sendAction(0, 0, getCurrentButtons());
+            if (e.button === 0) {
+                buttons.LMB = false;
+                // Remove local visual feedback (shrinking)
+                const lmbEl = document.querySelector('[data-key="LMB"]');
+                if (lmbEl) lmbEl.classList.remove('pressed');
+            }
+            if (e.button === 2) {
+                buttons.RMB = false;
+                // Remove local visual feedback (shrinking)
+                const rmbEl = document.querySelector('[data-key="RMB"]');
+                if (rmbEl) rmbEl.classList.remove('pressed');
+            }
+            sendAction(0, 0);
         });
         
-        canvas.addEventListener('mouseup', (e) => {
-            e.preventDefault();
-            if (e.button === 0) buttons["LMB"] = false; // Left mouse button
-            if (e.button === 2) buttons["RMB"] = false; // Right mouse button
-            
-            // Send button state change with zero mouse delta  
-            sendAction(0, 0, getCurrentButtons());
-        });
-        
-        // Prevent context menu on right click
-        canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-        });
-        
-        // Initial black screen
-        ctx.fillStyle = 'black';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = 'white';
-        ctx.font = '16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Waiting for game stream...', canvas.width/2, canvas.height/2);
+        gameContainer.addEventListener('contextmenu', e => e.preventDefault());
+
+        /* ----------------------------------
+         *  Initial splash
+         * ---------------------------------- */
+        videoCtx.fillStyle = '#000';
+        videoCtx.fillRect(0, 0, videoCanvas.width, videoCanvas.height);
+        videoCtx.fillStyle = '#fff';
+        videoCtx.font = '16px Arial';
+        videoCtx.textAlign = 'center';
+        videoCtx.fillText('Waiting for game stream…', videoCanvas.width / 2, videoCanvas.height / 2);
+
+        // Initialize keyboard visualization (will be updated by server responses)
+        updateKeyboardViz();
     </script>
 </body>
 </html>

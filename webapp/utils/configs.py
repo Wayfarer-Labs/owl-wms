@@ -31,10 +31,12 @@ class WebappConfig:
 @dataclass    
 class SamplingConfig:
     sampling_steps : int = 20
+    vae_scale: float = 1.0
     cfg_scale : float = 1.3
+    window_length : int = 60
     num_frames : int = 60
     noise_prev : float = 0.2
-    window_length : Optional[int] = 60
+
 
 @dataclass
 class StreamingConfig:

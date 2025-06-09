@@ -65,48 +65,45 @@ def zlerp(x, alpha):
 
 
 class WindowCFGSampler:
-    def __init__(self, sampling_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2):
-        self.sampling_steps = sampling_steps
-        self.cfg_scale = cfg_scale
-        self.window_length = window_length
-        self.num_frames = num_frames
-        self.noise_prev = noise_prev
-
     @torch.no_grad()
-    def __call__(self, model, dummy_batch, mouse, btn, decode_fn = None, scale = 1):
+    def __call__(self, model, dummy_batch, mouse, btn,
+                 sampling_steps = 64, decode_fn = None, scale = 1, cfg_scale = 1.3,
+                 window_length = 60, num_frames = 60, noise_prev = 0.2):
         
         x = torch.randn_like(dummy_batch)
         ts = torch.ones(x.shape[0], x.shape[1], device=x.device,dtype=x.dtype)
-        dt = 1. / self.sampling_steps
+        dt = 1. / sampling_steps
 
         clean_history = dummy_batch.clone()
         
         def step_history():
-            new_history = clean_history.clone()[:,-self.window_length:] # last 60 frames
+            new_history = clean_history.clone()[:,-window_length:] # last 60 frames
             b,n,c,h,w = new_history.shape
-
-            new_history[:,:-1] = zlerp(new_history[:,1:],self.noise_prev) # pop off first frame and noise context
+            # Shift over by 1: 
+            #                        [ 0 1 2 3 4 ]
+            # reassigned to ->   zlerp([ 1 2 3 4 ]) + [ randn ]
+            new_history[:,:-1] = zlerp(new_history[:,1:],noise_prev) # pop off first frame and noise context
             new_history[:,-1] = torch.randn(b,1,c,h,w) # Add noise to last
             return new_history
 
-        for _ in range(self.num_frames):
+        for _ in range(num_frames):
             local_history = step_history()
             ts_history = torch.ones(local_history.shape[0], local_history.shape[1], device=x.device,dtype=x.dtype)
-            ts_history[:,-1] = self.noise_prev
+            ts_history[:,-1] = noise_prev
 
-            for _ in range(self.sampling_steps):
+            for _ in range(sampling_steps):
                 # CFG Branches
                 x = local_history.clone()
                 ts = ts_history.clone()
                 cond_pred = model(x, ts, mouse, btn)
                 uncond_pred = model(x, ts, torch.zeros_like(mouse), torch.zeros_like(btn))
-                pred = uncond_pred + self.cfg_scale * (cond_pred - uncond_pred)
+                pred = uncond_pred + cfg_scale * (cond_pred - uncond_pred)
                 
                 x = x - pred*dt
                 ts = ts - dt
 
                 local_history[:,-1] = x[:,-1]
-                ts_history[:,-1] = ts[:,-1]
+                ts_history[:,-1]    = ts[:,-1]
             
             # Frame is entirely cleaned now
             new_frame = local_history[:,-1:]
