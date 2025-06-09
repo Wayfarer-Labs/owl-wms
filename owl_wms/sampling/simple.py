@@ -53,7 +53,7 @@ class InpaintSimpleSampler:
 if __name__ == "__main__":
     model = lambda x,t,m,b: x
 
-    sampler = Sampler()
+    sampler = SimpleSampler()
     x = sampler(model, torch.randn(4, 3, 64, 64), 
                 torch.randn(4, 2), torch.randn(4, 8))
     print(x.shape)

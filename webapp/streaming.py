@@ -4,7 +4,8 @@ import torch
 import asyncio
 import numpy as np
 from torch import nn
-from functools import cache
+from typing import Optional
+from functools import cached_property
 
 from webapp.utils.samplers                  import create_sampler
 from webapp.utils.configs                   import SamplingConfig, StreamingConfig
@@ -71,19 +72,20 @@ class StreamingFrameGenerator:
         # Create WindowCFGSampler for frame generation
         self.sample_window_fn = create_sampler('window', encoder, decoder,
                                              batch_size=1,
-                                             sampling_steps=self.sampling_config.sampling_steps,
+                                             n_steps=self.sampling_config.sampling_steps,
                                              vae_scale=self.sampling_config.vae_scale,
                                              cfg_scale=self.sampling_config.cfg_scale,
                                              window_length=self.sampling_config.window_length,
                                              num_frames=self.sampling_config.num_frames,
-                                             noise_prev=self.sampling_config.noise_prev)
+                                             noise_prev=self.sampling_config.noise_prev,
+                                             only_return_generated=True)
         # Initialize frame history as empty tensor
-        self.latent_history: torch.Tensor = torch.tensor([], device=self.streaming_config.device)
-        self.mouse_history:  torch.Tensor = torch.tensor([], device=self.streaming_config.device)
-        self.button_history: torch.Tensor = torch.tensor([], device=self.streaming_config.device)
+        self.latent_history: Optional[torch.Tensor] = None
+        self.mouse_history:  Optional[torch.Tensor] = None
+        self.button_history: Optional[torch.Tensor] = None
 
     def add_to_history(self, frame_batch: torch.Tensor, mouse_batch: torch.Tensor, button_batch: torch.Tensor):
-        if self.latent_history.equal(torch.tensor([], device=self.streaming_config.device)):
+        if self.latent_history is None:
             self.latent_history = frame_batch
             self.mouse_history  = mouse_batch
             self.button_history = button_batch
@@ -99,13 +101,12 @@ class StreamingFrameGenerator:
             self.button_history  = self.button_history[-self.streaming_config.window_length:]
 
     def get_latent_history_batch(self) -> torch.Tensor:
-        if self.latent_history.equal(torch.tensor([], device=self.streaming_config.device)):
+        if self.latent_history.numel() == 0:
             return self.dummy_batch
         
         return self.latent_history.unsqueeze(0)
 
-    @property
-    @cache
+    @cached_property
     def dummy_batch(self) -> torch.Tensor:
         """Dummy autoencoder latents for the sampler to initialize shapes."""
         tokens_h = tokens_w = int(math.sqrt(self.model_config.tokens_per_frame))
@@ -159,6 +160,9 @@ class StreamingFrameGenerator:
             video_frames: [frames_per_batch, 3, 256, 256] - pure video frames
             overlay_frames: [frames_per_batch, 3, action_margin_px_height, 256] - action overlay frames
         """
+        mouse = mouse.to(self.streaming_config.device)
+        button = button.to(self.streaming_config.device)
+
         if self.debug:
             num_frames  = mouse.shape[0]
             # Create gradient from white to black to white across columns
@@ -175,13 +179,14 @@ class StreamingFrameGenerator:
             # between 0 and 255
             full_frames = (full_frames * 255).to(torch.uint8)
         else:
-            with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            device_type = 'cuda' if self.streaming_config.device.type == 'cuda' else 'cpu'
+            with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 latents, full_frames = self.sample_window_fn(dummy_batch=self.get_latent_history_batch(),
                                                              mouse=mouse.float().unsqueeze(0),
                                                              btn=button.float().unsqueeze(0))  # [1, window_length, 3, 256, 256]
-                # remove batch dimension, then take only the frames we generated, since the WindowCFGSampler appends the history (which is of window_length=60)
-                latents     = latents       [0, -self.sampling_config.num_frames:]
-                full_frames = full_frames   [0, -self.sampling_config.num_frames:]
+                # remove batch dimension, it returns the frames we generated, since we pass in only_return_generated=True
+                latents     = latents       [0, ::]
+                full_frames = full_frames   [0, ::]
                 # then, convert the frames to a pixel-range of [0-255] from [-1,1]
                 full_frames = (full_frames + 1) / 2
                 full_frames = (full_frames * 255).to(torch.uint8)

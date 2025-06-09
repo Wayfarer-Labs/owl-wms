@@ -95,11 +95,11 @@ class WindowCFGSampler:
             extended_mouse = extended_mouse[:,-num_frames:]
             extended_btn = extended_btn[:,-num_frames:]
 
+        pixels = None
         if decode_fn is not None:
-            x = x * scale 
-            x = decode_fn(x)
-    
-        return x, extended_mouse, extended_btn
+            pixels = decode_fn(x * scale)
+
+        return x, pixels, extended_mouse, extended_btn
 
 
 def test_window_cfg_sampler():
