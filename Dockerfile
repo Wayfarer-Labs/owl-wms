@@ -6,20 +6,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Install system dependencies
+# Install system dependencies (without python3.12 first)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
     python3-pip \
-    python3.12 \
-    python3.12-dev \
-    python3.12-distutils \
-    python3.12-venv \
     git \
     software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add deadsnakes PPA and install Python 3.12
+RUN add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update \
-    && apt-get install -y python3.12 python3.12-dev python3.12-distutils \
+    && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.12 as default

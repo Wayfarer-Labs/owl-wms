@@ -68,11 +68,19 @@ class UserGameSession:
     async def _frame_display_loop(self, websocket: WebSocket):
         while True:
             try:
+                # Check if WebSocket is still connected before processing
+                if websocket.client_state.name != 'CONNECTED':
+                    print(termcolor.colored("🔌 WebSocket no longer connected - stopping frame stream", "yellow"))
+                    break
+                
                 video_frame, button, mouse = await self.frame_buffer.get_next_frames()
                 await self._send_frames_to_client(websocket, video_frame, button, mouse)
             except Exception as e:
                 # Check if this is a WebSocket disconnect
-                if "websocket.close" in str(e) or "response already completed" in str(e):
+                if ("websocket.close" in str(e) or 
+                    "response already completed" in str(e) or
+                    "Cannot call \"send\" once a close message has been sent" in str(e) or
+                    "RuntimeError" in str(e)):
                     print(termcolor.colored("🔌 WebSocket disconnected - stopping frame stream", "yellow"))
                     break
                 else:
@@ -86,6 +94,10 @@ class UserGameSession:
                                      button: torch.Tensor,
                                      mouse: torch.Tensor):
         try:
+            # Check WebSocket state before sending
+            if websocket.client_state.name != 'CONNECTED':
+                raise RuntimeError("WebSocket is not connected")
+            
             # TODO Do this more intelligently. I'm sure there's better tech to stream video to a UI.
             # Convert video frame to base64 JPEG
             video_frame_np = video_frame.float().cpu().numpy().transpose(1, 2, 0)  # CHW -> HWC

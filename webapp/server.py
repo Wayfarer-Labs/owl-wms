@@ -12,7 +12,7 @@ from webapp.user_session    import UserGameSession
 from webapp.utils.configs   import WebappConfig
 
 
-DEBUG = True # for funsies
+DEBUG = True 
 
 # -- lifespan
 encoder: nn.Module      = None
@@ -23,7 +23,7 @@ webapp_config_path      = "./configs/webapp/config.yaml" ; assert os.path.exists
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global encoder, decoder, config
+    global encoder, decoder, config, DEBUG
     config = WebappConfig.from_yaml(webapp_config_path)
     if not DEBUG:
         encoder, decoder, _ = load_models(
@@ -36,29 +36,32 @@ async def lifespan(app: FastAPI):
     encoder, decoder, config = None, None, None
 
 
-app = FastAPI(lifespan=lifespan)
-app.mount("/assets", StaticFiles(directory="webapp/static"), name="assets")
-
-
-@app.get("/")
-async def read_root():
-    """Serve the main game page."""
-    return FileResponse("webapp/static/index.html")
-
-
-@app.websocket("/ws/game")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+def run():
+    """Create and configure the FastAPI app with routes."""
+    app = FastAPI(lifespan=lifespan)
     
-    # Create streaming session for this user
-    frame_generator = StreamingFrameGenerator(encoder, decoder,
-                                              streaming_config=config.stream_config,
-                                              model_config=config.run_config.model,
-                                              train_config=config.run_config.train,
-                                              sampling_config=config.sampling_config,
-                                              debug=DEBUG)
-    session = UserGameSession(frame_generator)
-    await session.run_session(websocket)
+    @app.get("/")
+    async def read_root():
+        """Serve the main game page."""
+        return FileResponse("webapp/static/index.html")
+
+    @app.websocket("/ws/game")
+    async def websocket_endpoint(websocket: WebSocket):
+        global DEBUG
+        await websocket.accept()
+        
+        # Create streaming session for this user
+        frame_generator = StreamingFrameGenerator(encoder, decoder,
+                                                  streaming_config=config.stream_config,
+                                                  model_config=config.run_config.model,
+                                                  train_config=config.run_config.train,
+                                                  sampling_config=config.sampling_config,
+                                                  debug=DEBUG)
+        session = UserGameSession(frame_generator)
+        await session.run_session(websocket)
+    
+    app.mount("/assets", StaticFiles(directory="webapp/static"), name="assets")
+    return app
 
 
 def main():
@@ -72,19 +75,31 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     args = parser.parse_args()
     
-    assert not (args.debug and args.no_debug), "Cannot have both debug and no-debug flags"
-    DEBUG = args.debug or not args.no_debug
+    # Fix the DEBUG logic
+    if args.debug and args.no_debug:
+        raise ValueError("Cannot have both --debug and --no-debug flags")
+    
+    if args.debug:
+        DEBUG = True
+    elif args.no_debug:
+        DEBUG = False
+    # Otherwise keep the default value (True)
+
+    # Create app AFTER setting DEBUG
+    app = run()
 
     print("🚀 Starting OWL-WMS FastAPI Server...")
     print("📡 WebSocket endpoint: ws://localhost:8000/ws/game")
     print("🌐 Access via: http://localhost:8000")
     print("🔄 Auto-reload enabled for development")
-    
+    print("🔄 DEBUG is set to:", DEBUG)
+    print("🔄 PORT is set to:", args.port)
+
     uvicorn.run(
-        "webapp.server:app",
+        app,  # Pass the app object directly instead of module string
         host="0.0.0.0",  # Allow external connections
         port=args.port,
-        reload=True,     # Auto-reload on file changes
+        reload=False,    # Can't use reload with app object
         log_level="info"
     )
 
