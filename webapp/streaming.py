@@ -7,7 +7,7 @@ from torch import nn
 from typing import Optional
 from functools import cached_property
 
-from webapp.utils.samplers                  import create_sampler
+from webapp.utils.create_samplers                  import create_sampler
 from webapp.utils.configs                   import SamplingConfig, StreamingConfig
 from owl_wms.configs                        import TrainingConfig, TransformerConfig as ModelConfig
 from webapp.utils.visualize_overlay_actions import _draw_video as _draw_action_overlays
