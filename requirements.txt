@@ -1,5 +1,10 @@
 opencv-python
 wandb
 einops
-rotary-embeddings-pytorch
+rotary-embedding-torch
 ema-pytorch
+omegaconf
+diffusers
+accelerate
+boto3
+python-dotenv

@@ -6,3 +6,6 @@ def get_loader(data_id, batch_size, **data_kwargs):
         return local_cod_data.get_loader(batch_size, **data_kwargs)
     elif data_id == "cod_latent":
         return local_cod_latent.get_loader(batch_size, **data_kwargs)
+    elif data_id == "cod_s3":
+        from . import s3_cod_latent
+        return s3_cod_latent.get_loader(batch_size, **data_kwargs)

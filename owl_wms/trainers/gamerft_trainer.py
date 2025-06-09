@@ -49,7 +49,12 @@ class RFTTrainer(BaseTrainer):
         self.scaler = None
 
         self.total_step_counter = 0
-        self.decoder = get_decoder_only()
+        self.decoder = get_decoder_only(
+            self.train_cfg.vae_id,
+            self.train_cfg.vae_cfg_path,
+            self.train_cfg.vae_ckpt_path
+        )
+
         freeze(self.decoder)
 
     def save(self):
@@ -101,6 +106,7 @@ class RFTTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
+        #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
             if self.world_size > 1:
@@ -134,7 +140,7 @@ class RFTTrainer(BaseTrainer):
         
         # Dataset setup
         loader = get_loader(self.train_cfg.data_id, self.train_cfg.batch_size, **self.train_cfg.data_kwargs)
-        sampler = get_sampler_cls(self.train_cfg.sampler_id)()
+        sampler = get_sampler_cls(self.train_cfg.sampler_id)(**self.train_cfg.sampler_kwargs)
 
         local_step = 0
         for _ in range(self.train_cfg.epochs):
@@ -178,16 +184,15 @@ class RFTTrainer(BaseTrainer):
                         if self.total_step_counter % self.train_cfg.sample_interval == 0:
                             with ctx, torch.no_grad():
                                 n_samples = self.train_cfg.n_samples
-                                samples = sampler(
+                                samples, sample_mouse, sample_button = sampler(
                                     get_ema_core(),
                                     batch_vid[:n_samples],
                                     batch_mouse[:n_samples],
                                     batch_btn[:n_samples],
-                                    sampling_steps=30,
                                     decode_fn = decode_fn,
                                     scale=self.train_cfg.vae_scale
                                 ) # -> [b,n,c,h,w]
-                                wandb_dict['samples'] = to_wandb(samples, batch_mouse[:n_samples], batch_btn[:n_samples])
+                                if self.rank == 0: wandb_dict['samples'] = to_wandb(samples, sample_mouse, sample_button)
                             
 
                         if self.rank == 0:

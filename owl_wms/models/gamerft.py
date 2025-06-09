@@ -29,16 +29,16 @@ class GameRFTCore(nn.Module):
         self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
 
     def forward(self, x, t, mouse, btn):
-        # x is [b,n,m,d]
+        # x is [b,n,c,h,w]
         # t is [b,n]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
 
         ctrl_cond = self.control_embed(mouse, btn)
         t_cond = self.t_embed(t)
+
         cond = ctrl_cond + t_cond # [b,n,d]
         
-        # x is [b,n,c,h,w]
         b,n,c,h,w = x.shape
         x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
 
