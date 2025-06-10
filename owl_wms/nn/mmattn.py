@@ -33,11 +33,12 @@ def create_block_causal_mask_with_mm(tokens, context_tokens, tokens_per_frame):
         end = (i + 1) * tokens_per_frame
         mask[start:end, end:tokens] = True # Can't see future frames
     
-    # Context tokens can attend to everything (no masking needed)
-    # Regular tokens can attend to all context tokens (no masking needed)
-    # The zeros in mask[tokens:, :] allow context to attend to everything
+    # Context tokens can only attend to themselves
+    mask[tokens:, :tokens] = True # Mask out attention to regular tokens
+    
+    # Regular tokens can still attend to all context tokens (no masking needed)
     # The zeros in mask[:, tokens:] allow tokens to attend to all context
-        
+    
     return mask
 
 class MMAttn(nn.Module):
