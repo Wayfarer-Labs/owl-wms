@@ -15,6 +15,7 @@ class KVCache:
         self.should_update = False
 
         self.max_length = config.tokens_per_frame * config.n_frames
+        self.noise_caches = 0.0
 
     def enable_cache_updates(self):
         self.should_update = True
@@ -36,6 +37,9 @@ class KVCache:
     def get(self, layer_ind):
         assert self.cache is not None, "Must reset cache before using"
         k,v = self.cache[layer_ind]
+        if self.noise_caches > 0.0:
+            k = k + torch.randn_like(k) * self.noise_caches
+            v = v + torch.randn_like(v) * self.noise_caches
         return k,v
     
     @torch.no_grad()
@@ -56,6 +60,20 @@ class KVCache:
             return k, v
 
         self.cache[layer_ind] = tuple_truncate(new_k,new_v)
+    
+    @torch.no_grad()
+    def truncate(self, truncate_amt):
+        """
+        Truncate frames from the KV cache
+        """
+        truncate_amt = truncate_amt * self.config.tokens_per_frame
+        def tuple_truncate(k, v):
+            k = k[:,:,truncate_amt:]
+            v = v[:,:,truncate_amt:]
+            return k, v
+
+        for i in range(self.config.n_layers):
+            self.cache[layer_ind] = tuple_truncate(self.cache[layer_ind])
 
     def __len__(self):
         assert self.cache is not None, "Must reset cache before using"
