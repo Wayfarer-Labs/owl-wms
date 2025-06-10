@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+import math
+
 import einops as eo
 from .mlp import MLPCustom
 
@@ -89,11 +91,16 @@ class LearnedPosEnc(nn.Module):
     def __init__(self, n_seq, dim):
         super().__init__()
 
+        self.n_seq = n_seq
         self.p = nn.Parameter(torch.randn(n_seq,dim)*0.02)
 
     def forward(self, x):
         b,n,d = x.shape
-        p = eo.repeat(self.p, 'n d -> b n d', b = b)
+        if n < self.n_seq:
+            # Only add positional embeddings for the last n tokens
+            p = eo.repeat(self.p[-n:], 'n d -> b n d', b=b)
+        else:
+            p = eo.repeat(self.p, 'n d -> b n d', b=b)
         return x + p
 
 class SinCosEmbed(nn.Module):
@@ -151,6 +158,26 @@ class TimestepEmbedding(nn.Module):
         x = self.sincos(x)
         x = self.mlp(x)
         return x
+
+class StepEmbedding(nn.Module):
+    def __init__(self, d_out, d_in=512, max_steps=128):
+        super().__init__()
+
+        self.mlp = MLPCustom(d_in, dim_middle = 4 * d_out, dim_out=d_out)
+        self.max_steps = max_steps
+        mult = 1000 / math.log2(max_steps)
+        self.sincos = SinCosEmbed(d_in, theta=300, mult=mult)
+
+    def forward(self, steps):
+        if not isinstance(steps, torch.Tensor):
+            steps = torch.tensor(steps, device=self.mlp.fc_uv.weight.device, dtype=self.mlp.fc_uv.weight.dtype)
+        if steps.ndim == 0:
+            steps = steps.unsqueeze(0)
+
+        # Map steps to [0, log2(max_steps)]
+        t = (math.log2(self.max_steps) - torch.log2(steps.float())).to(steps.dtype)
+        embs = self.sincos(t)
+        return self.mlp(embs)
 
 class ConditionEmbedding(nn.Module):
     def __init__(self, n_classes, dim):
