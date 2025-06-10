@@ -8,8 +8,7 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-#from .embeddings import FlatVideoRoPE
-from rotary_embedding_torch import RotaryEmbedding
+from .rope import FlatVideoRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -62,6 +61,8 @@ class MMAttn(nn.Module):
         self.config = config
         self.causal = config.causal
 
+        self.rope = FlatVideoRoPE(config)
+
     def split(self, qkv):
         return eo.rearrange(qkv, 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
 
@@ -98,6 +99,8 @@ class MMAttn(nn.Module):
             if kv_cache.should_update:
                 kv_cache.update(new_k, new_v, self.layer_ind)
 
+            q1, new_k = self.rope(q1, new_k)
+
             k = torch.cat([new_k, k2], dim=-2)
             v = torch.cat([new_v, v2], dim=-2)
             q = torch.cat([q1, q2], dim=-2)
@@ -106,10 +109,13 @@ class MMAttn(nn.Module):
             x = x[:,:,-q.shape[2]:] # Only keep latest outputs
             x = self.merge(x)
         else:
+            q1, k1 = self.rope(q1,k1)
+
             q = torch.cat([q1,q2],dim=-2)
             k = torch.cat([k1,k2],dim=-2) 
             v = torch.cat([v1,v2],dim=-2)
 
+            print("====")
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
             x = self.merge(x)
 

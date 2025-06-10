@@ -30,8 +30,6 @@ class ShortcutGameRFTCore(nn.Module):
         self.proj_in = nn.Linear(config.channels, config.d_model, bias = False)
         self.proj_out = FinalLayer(config.sample_size, config.d_model, config.channels)
 
-        self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
-
         self.proj_y_in = nn.Linear(config.channels, config.d_model, bias = False)
         self.pos_enc_y = LearnedPosEnc(config.tokens_per_frame, config.d_model)
 
@@ -75,7 +73,6 @@ class ShortcutGameRFTCore(nn.Module):
         y = eo.rearrange(y, 'b n c h w -> b (n h w) c')
 
         x = self.proj_in(x)
-        x = self.pos_enc(x)
 
         y = self.proj_y_in(y)
         y = self.pos_enc_y(y)

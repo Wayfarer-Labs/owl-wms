@@ -8,8 +8,6 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-#from .embeddings import FlatVideoRoPE
-from rotary_embedding_torch import RotaryEmbedding
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
