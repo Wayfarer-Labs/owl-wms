@@ -55,6 +55,7 @@ class Attn(nn.Module):
             mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
             mask = mask.to(device=x.device,dtype=x.dtype)
             mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
+            mask = mask.unsqueeze(1)
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)

@@ -83,6 +83,7 @@ class MMAttn(nn.Module):
             mask = create_block_causal_mask_with_mm(x_1.shape[1], x_2.shape[1], self.config.tokens_per_frame)
             mask = mask.to(device=x_1.device,dtype=x_1.dtype)
             mask = mask.unsqueeze(0).repeat(x_1.shape[0],1,1)
+            mask = mask.unsqueeze(1) # head dim
 
         if kv_cache is not None:
             if len(kv_cache) > 0:
