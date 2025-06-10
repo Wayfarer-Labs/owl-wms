@@ -35,11 +35,15 @@ class ShortcutGameRFTCore(nn.Module):
         self.proj_y_in = nn.Linear(config.channels, config.d_model, bias = False)
         self.pos_enc_y = LearnedPosEnc(config.tokens_per_frame, config.d_model)
 
-    def sample(self, x, y, mouse, btn, kv_cache = None, d = None, t = None):
+        self.config = config
+
+    def sample(self, x, y, mouse, btn, kv_cache = None, t = None, d = None):
         """
         This is a function that largely abstracts
         away most things for the specific case where
         you are only generating the one next token
+
+        The return is one step sample always
         """
         if x is None:
             x = torch.randn_like(y)
@@ -50,7 +54,7 @@ class ShortcutGameRFTCore(nn.Module):
         if d is None:
             d = torch.ones_like(x[:,:,0,0,0])
 
-        return self.forward(x, t, mouse, btn, d, kv_cache)
+        return x - self.forward(x, t, mouse, btn, d, kv_cache)
 
     def forward(self, x, y, t, mouse, btn, d, kv_cache = None):
         # x is [b,n,c,h,w]
@@ -59,10 +63,6 @@ class ShortcutGameRFTCore(nn.Module):
         # d is [b,n]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
-
-        print(mouse.shape)
-        print(btn.shape)
-        print(x.shape)
 
         ctrl_cond = self.control_embed(mouse, btn)
         t_cond = self.t_embed(t)
@@ -88,8 +88,7 @@ class ShortcutGameRFTCore(nn.Module):
 
 def sample_discrete_timesteps(steps, eps = 1.0e-6):
     # steps is Tensor([1,4,2,64,16]) as an example
-    b = len(steps)
-    n = len(steps[0])
+    b,n = steps.shape
 
     ts_list = []
     ts = torch.rand(b, n, device=steps.device, dtype=steps.dtype) * (steps - eps)
@@ -111,14 +110,17 @@ class ShortcutGameRFT(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.core = GameRFTCore(config)
+        self.core = ShortcutGameRFTCore(config)
         self.cfg_prob = config.cfg_prob
 
         self.ema = None
         self.sc_frac = 0.25
-        self.cfg_strength = 1.3
+        self.sc_max_steps = 128
+        self.cfg_scale = 1.3
+
+        self.config = config
     
-    def set_ema_core(self, ema):
+    def set_ema(self, ema):
         if hasattr(ema.ema_model, 'module'):
             self.ema = ema.ema_model.module.core
         else:
@@ -127,7 +129,7 @@ class ShortcutGameRFT(nn.Module):
     @torch.no_grad()
     @torch.compile()
     def get_sc_targets(self, x, y, mouse, btn):
-        steps_slow = sample_steps(len(x), x.device, x.dtype, min_val = 1)
+        steps_slow = sample_steps(x.shape[0], x.shape[1], x.device, x.dtype, min_val = 1)
         steps_fast = steps_slow / 2
 
         dt_slow = 1./steps_slow
@@ -140,14 +142,14 @@ class ShortcutGameRFT(nn.Module):
             return t[:,:,None,None,None]
 
         ts = sample_discrete_timesteps(steps_fast)
-        cfg_mask = torch.isclose(steps_slow, 128)
+        cfg_mask = torch.isclose(steps_slow, torch.ones_like(steps_slow)*128)
         cfg_mask = expand(cfg_mask) # -> [b,n,1,1,1]
 
         null_mouse = torch.zeros_like(mouse)
         null_btn = torch.zeros_like(btn)
 
         pred_1_uncond = self.ema(x, y, ts, null_mouse, null_btn, steps_slow)
-        pred_1_cond = self.ema(x, y, ts, mouse, btn)
+        pred_1_cond = self.ema(x, y, ts, mouse, btn, steps_slow)
         pred_1_cfg = pred_1_uncond + self.cfg_scale * (pred_1_cond - pred_1_uncond)
         pred_1 = torch.where(cfg_mask, pred_1_cfg, pred_1_cond)
 
@@ -155,7 +157,7 @@ class ShortcutGameRFT(nn.Module):
         ts_new = ts - dt_slow
 
         pred_2_uncond = self.ema(x_new, y, ts_new, null_mouse, null_btn, steps_slow)
-        pred_2_cond = self.ema(x_new, y, ts_new, mouse, btn)
+        pred_2_cond = self.ema(x_new, y, ts_new, mouse, btn, steps_slow)
         pred_2_cfg = pred_2_uncond + self.cfg_scale * (pred_2_cond - pred_2_uncond)
         pred_2 = torch.where(cfg_mask, pred_2_cfg, pred_2_cond)
 
@@ -168,7 +170,7 @@ class ShortcutGameRFT(nn.Module):
         sc_loss = F.mse_loss(pred, target)
         return sc_loss
 
-    def forward(self, x, y, mouse, btn, return_dict = False, cfg_prob = None):
+    def forward(self, x, y, mouse, btn):
         # x is [b,n,c,h,w]
         # y (seed frame) is [b,1,c,h,w]
         # mouse is [b,n,2]
@@ -182,16 +184,8 @@ class ShortcutGameRFT(nn.Module):
         mouse,mouse_sc = mouse[:b], mouse[b:]
         btn,btn_sc = btn[:b], btn[b:]
 
-        # Consistency inputs are not autoregressive
-        n_tok_sc = self.config.n_frames * self.config.tokens_per_frame
-        x_sc = x_sc[:,:self.config.n_frames]
-        mouse_sc = mouse_sc[:,:self.config.n_frames]
-        btn_sc = btn_sc[:,:self.config.n_frames]
-
         # Apply classifier-free guidance dropout
-        if cfg_prob is None:
-            cfg_prob = self.cfg_prob
-        if cfg_prob > 0.0:
+        if self.cfg_prob > 0.0:
             mask = torch.rand(b, device=x.device) <= self.cfg_prob
             null_mouse = torch.zeros_like(mouse)
             null_btn = torch.zeros_like(btn)
@@ -201,7 +195,7 @@ class ShortcutGameRFT(nn.Module):
             btn = torch.where(mask.unsqueeze(-1).unsqueeze(-1), null_btn, btn)
         
         with torch.no_grad():
-            d = torch.ones_like(x[:,:,0,0,0])
+            d = torch.ones_like(x[:,:,0,0,0])*self.sc_max_steps
             ts = sample_discrete_timesteps(d)
             ts = torch.randn(b,n,device=x.device,dtype=x.dtype).sigmoid()
             
@@ -215,18 +209,9 @@ class ShortcutGameRFT(nn.Module):
         diff_loss = F.mse_loss(pred, target)
         sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc)
 
-        if not return_dict:
-            return diff_loss
-        else:
-            return {
-                'diffusion_loss' : diff_loss,
-                'lerpd' : lerpd, 
-                'pred' : pred,
-                'ts': ts,
-                'z': z
-            }
+        return diff_loss, sc_loss
 
-if __name__ == "__main__":
+def test_inference_cache():
     from ..configs import TransformerConfig
     from ..nn.kv_cache import KVCache
 
@@ -285,3 +270,40 @@ if __name__ == "__main__":
         new_out = model(new_x, y, new_t, new_mouse, new_btn, new_d, cache)
         print(f"Final cache length: {len(cache)}")
         print(f"Final cache shape: {cache.cache[0][0].shape}")
+    
+def test_wrapper():
+    from ..configs import TransformerConfig
+    from ema_pytorch import EMA
+    from copy import deepcopy
+
+    cfg = TransformerConfig(
+        None,           # model_id
+        6,             # n_layers
+        6,             # n_heads
+        384,           # d_model
+        1,             # patch_size
+        128,           # channels
+        16,            # sample_size
+        0.1,           # cfg_prob
+        11,            # n_buttons
+        16,            # tokens_per_frame
+        10,            # n_frames
+        True           # causal
+    )
+
+    model = ShortcutGameRFT(cfg).bfloat16().cuda()
+    ema = EMA(model, beta=0.999,update_after_step=0,update_every=1)
+    model.set_ema(ema)
+
+    NUM_FRAMES = 10
+    x = torch.randn(4, NUM_FRAMES, 128, 4, 4).bfloat16().cuda()
+    y = torch.randn(4, 1, 128, 4, 4).bfloat16().cuda()
+    mouse = torch.randn(4, NUM_FRAMES, 2).bfloat16().cuda()
+    btn = torch.randn(4, NUM_FRAMES, 11).bfloat16().cuda()
+
+    with torch.no_grad():
+        loss_1, loss_2 = model(x, y, mouse, btn)
+        print(loss_1, loss_2)
+
+if __name__ == "__main__":
+    test_wrapper()
