@@ -18,6 +18,7 @@ class TransformerConfig:
     cfg_prob : float = 0.1
     n_buttons : int = 8
     tokens_per_frame : int = 16
+    n_frames : int = 120
 
     causal : bool = False
 
