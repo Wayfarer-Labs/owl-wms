@@ -92,7 +92,7 @@ class ModelLoader:
                      device: Optional[Union[str, torch.device]] = None,
                      eval_mode: bool = True,
                      verbose: bool = True) -> nn.Module:
-        decoder = get_decoder_only()
+        decoder = get_decoder_only(vae_id='dcae', cfg_path=str(self.paths.config), ckpt_path=str(self.paths.checkpoint))
         freeze(decoder)
         
         if verbose:

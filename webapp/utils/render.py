@@ -9,7 +9,7 @@ import numpy as np
 import einops as eo
 
 from webapp.utils.models import load_models
-from webapp.utils.samplers import create_sampler
+from webapp.utils.create_samplers import create_sampler, CFG_SCALE
 from webapp.utils.action_builder import ActionSequenceGenerator, ActionConfig, ActionPattern
 
 HEIGHT = 256
@@ -22,7 +22,7 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 OUTPUT_DIR = "generated_videos"
 SAMPLER_TYPE = 'window'
 DEFAULT_PATTERN = ActionPattern.LOOK_AROUND
-
+VAE_SCALE = 2.17
 
 def setup_output_dir(): Path(OUTPUT_DIR).mkdir(exist_ok=True)
 
@@ -59,7 +59,7 @@ def synthesize_video(mouse_actions, button_actions, encoder, decoder, sampler):
     
     # Generate video
     with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-        latents, video = sampler(
+        latents, video, mouse, button = sampler(
             dummy_batch=dummy_batch,
             mouse=mouse_actions,
             btn=button_actions
@@ -124,19 +124,27 @@ def save_video(video_tensor: torch.Tensor, filename="generated_video", fps=30):
     return str(fallback_path)
 
 
-def render_video(pattern=DEFAULT_PATTERN, length=SEQUENCE_LENGTH, verbose=True):
+def render_video(
+        pattern=DEFAULT_PATTERN,
+        length=SEQUENCE_LENGTH,
+        verbose=True,
+        sampler_type=SAMPLER_TYPE,
+        vae_scale=VAE_SCALE,
+        cfg_scale=CFG_SCALE,
+        encoder=None, decoder=None):
     """Simple video rendering - just load, generate, save."""
     if verbose:
         print(f"🎬 Rendering video with pattern: {pattern.value}")
     
     # Load model and create sampler
-    if verbose:
-        print("Loading model...")
-    encoder, decoder, model_config = load_models(device=DEVICE, verbose=verbose)
+    if encoder is None or decoder is None:
+        if verbose:
+            print("Loading model...")
+        encoder, decoder, model_config = load_models(device=DEVICE, verbose=verbose)
     
     if verbose:
         print("Creating sampler...")
-    sampler = create_sampler(SAMPLER_TYPE, encoder, decoder)
+    sampler = create_sampler(sampler_type, encoder, decoder, vae_scale=vae_scale, cfg_scale=cfg_scale)
     
     # Generate actions
     if verbose:
@@ -151,7 +159,7 @@ def render_video(pattern=DEFAULT_PATTERN, length=SEQUENCE_LENGTH, verbose=True):
     # Save video
     if verbose:
         print("Saving video...")
-    path = save_video(video, f"render_{pattern.value}")
+    path = save_video(video, f"{sampler_type}_render_{pattern.value}_{vae_scale=:.2f}_{cfg_scale=:.2f}")
     
     if verbose:
         print(f"✅ Done! Video saved to: {path}")
@@ -165,9 +173,6 @@ if __name__ == "__main__":
     print("🎮 Simple OWL-WMS Video Renderer")
     
     # Render with default settings
-    render_video(verbose=True)
-    
-    # Render with different pattern
-    render_video(ActionPattern.SHOOT, verbose=True)
-    render_video(ActionPattern.LOOK_AROUND, verbose=True)
-    render_video(ActionPattern.CIRCLE_STRAFE, verbose=True)
+    encoder, decoder, model_config = load_models(device=DEVICE, verbose=True)
+    render_video(verbose=True, sampler_type='window', encoder=encoder, decoder=decoder)
+    render_video(verbose=True, sampler_type='cfg', encoder=encoder, decoder=decoder)
