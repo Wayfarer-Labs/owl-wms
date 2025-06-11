@@ -215,7 +215,7 @@ class WindowShortcutSamplerNoKeyframe:
             curr_btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
 
             # Generate new frame
-            pred = model.sample(x, keyframe, curr_mouse, curr_btn, None, ts, d)
+            pred = model.sample(x, curr_mouse, curr_btn, None, ts, d)
             new_frame = pred[:,-1:] # Take only the last frame
             new_frames.append(new_frame)
             
