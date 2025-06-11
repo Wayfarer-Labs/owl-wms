@@ -8,3 +8,4 @@ diffusers
 accelerate
 boto3
 python-dotenv
+wandb[media]

@@ -1,32 +1,32 @@
 # Config for a simple 256 -> 16 autoencoder
 model:
   model_id: shortcut_2
-  sample_size: 5
-  channels: 64
+  sample_size: 4
+  channels: 128
   
   n_layers: 13
-  n_heads: 12
-  d_model: 768
+  n_heads: 16
+  d_model: 1024
 
-  tokens_per_frame: 40
+  tokens_per_frame: 16
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.1
   n_frames: 30
 
-  causal: true
+  causal: false
 
 train:
   trainer_id: shortcut_2
   data_id: cod_s3
   data_kwargs:
     window_length: 30
-    bucket_name: cod-data-latent-360x640to5x8
+    bucket_name: cod-data-latent-360x640to4x4
     include_keyframe: false
 
-  target_batch_size: 16
-  batch_size: 16
+  target_batch_size: 256
+  batch_size: 32
 
   epochs: 200
 
@@ -35,7 +35,7 @@ train:
     lr: 1.0e-3
     momentum: 0.95
     adamw_lr: 1.0e-4
-    adamw_wd: 1.0e-4
+    adamw_wd: 0.1
     adamw_eps: 1.0e-15
     adamw_betas: [0.9, 0.95]
     adamw_keys: [
@@ -60,11 +60,11 @@ train:
 
   vae_id: 720pr3dc
   vae_batch_size: 4
-  vae_scale: 0.35
-  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
-  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+  vae_scale: 0.13
+  vae_cfg_path: configs/owl_vaes/cod_128x.yml
+  vae_ckpt_path: checkpoints/owl_vaes/cod_128x_30k_ema.pt
 
 wandb:
   name: shahbuland
   project: video_models
-  run_name: v2
+  run_name: bidir_shortcut
