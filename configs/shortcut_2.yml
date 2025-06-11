@@ -4,16 +4,16 @@ model:
   sample_size: 5
   channels: 64
   
-  n_layers: 5
-  n_heads: 6
-  d_model: 384
+  n_layers: 13
+  n_heads: 12
+  d_model: 768
 
   tokens_per_frame: 40
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.1
-  n_frames: 60
+  n_frames: 30
 
   causal: true
 
@@ -21,7 +21,7 @@ train:
   trainer_id: shortcut_2
   data_id: cod_s3
   data_kwargs:
-    window_length: 60
+    window_length: 30
     bucket_name: cod-data-latent-360x640to5x8
     include_keyframe: false
 
@@ -52,8 +52,8 @@ train:
 
   sampler_id: shortcut_2
   sampler_kwargs:
-    window_length: 60
-    num_frames: 60
+    window_length: 30
+    num_frames: 120
     only_return_generated: true
 
   n_samples: 8
