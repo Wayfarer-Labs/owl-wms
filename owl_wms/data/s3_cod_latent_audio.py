@@ -168,7 +168,7 @@ def collate_fn(batch):
     buttons = torch.stack(buttons)    # [b,n,n_buttons]
     audios = torch.stack(audios)      # [b,n,d]
     
-    return latents, mouses, buttons, audios
+    return latents, audios, mouses, buttons
 
 def get_loader(batch_size, **data_kwargs):
     if dist.is_initialized():
@@ -178,7 +178,7 @@ def get_loader(batch_size, **data_kwargs):
         rank = 0
         world_size = 1
 
-    ds = S3CoDLatentDataset(rank=rank, world_size=world_size, **data_kwargs)
+    ds = S3CoDLatentAudioDataset(rank=rank, world_size=world_size, **data_kwargs)
     return DataLoader(ds, batch_size=batch_size, collate_fn=collate_fn)
 
 if __name__ == "__main__":

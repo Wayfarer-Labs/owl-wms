@@ -26,7 +26,7 @@ class GameRFTCore(nn.Module):
         self.proj_in = nn.Linear(config.channels, config.d_model, bias = False)
         self.proj_out = FinalLayer(config.sample_size, config.d_model, config.channels)
 
-        self.audio_proj_in = nn.Layer(config.audio_channels, config.d_model, bias=False)
+        self.audio_proj_in = nn.Linear(config.audio_channels, config.d_model, bias=False)
         self.audio_proj_out = FinalLayer(None, config.d_model, config.audio_channels)
 
         self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
@@ -47,7 +47,7 @@ class GameRFTCore(nn.Module):
         x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
 
         x = self.proj_in(x)
-        audio = self.proj_in(audio).unsqueeze(-2) # [b,n,1,d]
+        audio = self.audio_proj_in(audio).unsqueeze(-2) # [b,n,1,d]
 
         x = eo.rearrange(x, 'b (n f) d -> b n f d', n = n)
         x = torch.cat([x, audio], dim = -2)
@@ -111,7 +111,7 @@ class GameRFT(nn.Module):
             z_audio = torch.randn_like(audio)
             lerpd_audio = audio * (1. - ts_exp_audio) + z_audio * ts_exp_audio
             target_audio = z_audio - audio
-        
+            
         pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn)
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)

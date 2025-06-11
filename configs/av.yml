@@ -2,6 +2,7 @@ model:
   model_id: game_rft_audio
   sample_size: 4
   channels: 128
+  audio_channels: 64
   
   n_layers: 13
   n_heads: 16
@@ -22,10 +23,9 @@ train:
   data_kwargs:
     window_length: 30
     bucket_name: cod-data-latent-360x640to4x4
-    include_keyframe: false
 
-  target_batch_size: 256
-  batch_size: 32
+  target_batch_size: 16
+  batch_size: 16
 
   epochs: 200
 
@@ -57,13 +57,19 @@ train:
 
   n_samples: 8
 
-  vae_id: 720pr3dc
+  vae_id: null
   vae_batch_size: 4
   vae_scale: 0.13
+  audio_vae_scale: 0.17
+
   vae_cfg_path: configs/owl_vaes/cod_128x.yml
   vae_ckpt_path: checkpoints/owl_vaes/cod_128x_30k_ema.pt
+
+  audio_vae_id: null
+  audio_vae_cfg_path: configs/owl_vaes/cod_audio.yml
+  audio_vae_ckpt_path: checkpoints/owl_vaes/cod_audio_20k_ema.pt
 
 wandb:
   name: shahbuland
   project: video_models
-  run_name: v3
+  run_name: av

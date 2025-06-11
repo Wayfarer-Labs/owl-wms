@@ -100,7 +100,10 @@ class AVRFTTrainer(BaseTrainer):
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
         self.decoder = self.decoder.cuda().eval().bfloat16()
+        self.audio_decoder = self.audio_decoder.cuda().eval().bfloat16()
+
         decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
+        audio_decode_fn = make_batched_audio_decode_fn(self.audio_decoder, self.train_cfg.vae_batch_size)
 
         self.ema = EMA(
             self.model,
@@ -192,8 +195,10 @@ class AVRFTTrainer(BaseTrainer):
                                     batch_audio[:n_samples],
                                     batch_mouse[:n_samples],
                                     batch_btn[:n_samples],
-                                    decode_fn = decode_fn,
-                                    scale=self.train_cfg.vae_scale
+                                    decode_fn,
+                                    audio_decode_fn,
+                                    self.train_cfg.vae_scale,
+                                    self.train_cfg.audio_vae_scale
                                 ) # -> [b,n,c,h,w]
                                 if self.rank == 0: wandb_dict['samples'] = to_wandb_av(samples, audio, sample_mouse, sample_button)
                             
