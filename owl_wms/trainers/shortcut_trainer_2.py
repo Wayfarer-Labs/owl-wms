@@ -112,8 +112,11 @@ class ShortcutTrainer(BaseTrainer):
             else:
                 return self.ema.ema_model.core
 
-        # No muon pls
-        self.opt = getattr(torch.optim, self.train_cfg.opt)(self.model.parameters(), **self.train_cfg.opt_kwargs)
+        # Set up optimizer and scheduler
+        if self.train_cfg.opt.lower() == "muon":
+            self.opt = init_muon(self.model, rank=self.rank,world_size=self.world_size,**self.train_cfg.opt_kwargs)
+        else:
+            self.opt = getattr(torch.optim, self.train_cfg.opt)(self.model.parameters(), **self.train_cfg.opt_kwargs)
 
         # Grad accum setup and scaler
         accum_steps = self.train_cfg.target_batch_size // self.train_cfg.batch_size // self.world_size
@@ -154,8 +157,10 @@ class ShortcutTrainer(BaseTrainer):
                 local_step += 1
                 if local_step % accum_steps == 0:
                     # Updates
-                    self.scaler.unscale_(self.opt)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    if self.train_cfg.opt.lower() != "muon":
+                        self.scaler.unscale_(self.opt)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
 
                     self.scaler.step(self.opt)
                     self.opt.zero_grad(set_to_none=True)
