@@ -104,6 +104,44 @@ def sample_steps(b, n, device, dtype, min_val = 0):
     steps = valid[inds].to(device=device,dtype=dtype)
     return steps
 
+#@torch.compile()
+@torch.no_grad()
+def get_sc_targets(ema, x, y, mouse, btn, cfg_scale):
+    steps_slow = sample_steps(x.shape[0], x.shape[1], x.device, x.dtype, min_val = 1)
+    steps_fast = steps_slow / 2
+
+    dt_slow = 1./steps_slow
+    dt_fast = 1./steps_fast
+
+    def expand(t):
+        #b,c,h,w = x.shape
+        #t = eo.repeat(t,'b -> b c h w',c=c,h=h,w=w)
+        #return t
+        return t[:,:,None,None,None]
+
+    ts = sample_discrete_timesteps(steps_fast)
+    cfg_mask = torch.isclose(steps_slow, torch.ones_like(steps_slow)*128)
+    cfg_mask = expand(cfg_mask) # -> [b,n,1,1,1]
+
+    null_mouse = torch.zeros_like(mouse)
+    null_btn = torch.zeros_like(btn)
+
+    pred_1_uncond = ema(x, y, ts, null_mouse, null_btn, steps_slow)
+    pred_1_cond = ema(x, y, ts, mouse, btn, steps_slow)
+    pred_1_cfg = pred_1_uncond + cfg_scale * (pred_1_cond - pred_1_uncond)
+    pred_1 = torch.where(cfg_mask, pred_1_cfg, pred_1_cond)
+
+    x_new = x - pred_1 * expand(dt_slow)
+    ts_new = ts - dt_slow
+
+    pred_2_uncond = ema(x_new, y, ts_new, null_mouse, null_btn, steps_slow)
+    pred_2_cond = ema(x_new, y, ts_new, mouse, btn, steps_slow)
+    pred_2_cfg = pred_2_uncond + cfg_scale * (pred_2_cond - pred_2_uncond)
+    pred_2 = torch.where(cfg_mask, pred_2_cfg, pred_2_cond)
+
+    pred = 0.5 * (pred_1 + pred_2)
+    return pred, steps_fast, ts
+
 class ShortcutGameRFT(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -116,61 +154,14 @@ class ShortcutGameRFT(nn.Module):
         self.cfg_scale = 1.3
 
         self.config = config
-    
-    def set_ema(self, ema):
-        if hasattr(ema.ema_model, 'module'):
-            ema = ema.ema_model.module.core
-        else:
-            ema = ema.ema_model.core
-            
-        self.ema = ema
-        freeze(self.ema)
         
-    #@torch.compile()
-    @torch.no_grad()
-    def get_sc_targets(self, x, y, mouse, btn):
-        steps_slow = sample_steps(x.shape[0], x.shape[1], x.device, x.dtype, min_val = 1)
-        steps_fast = steps_slow / 2
-
-        dt_slow = 1./steps_slow
-        dt_fast = 1./steps_fast
-
-        def expand(t):
-            #b,c,h,w = x.shape
-            #t = eo.repeat(t,'b -> b c h w',c=c,h=h,w=w)
-            #return t
-            return t[:,:,None,None,None]
-
-        ts = sample_discrete_timesteps(steps_fast)
-        cfg_mask = torch.isclose(steps_slow, torch.ones_like(steps_slow)*128)
-        cfg_mask = expand(cfg_mask) # -> [b,n,1,1,1]
-
-        null_mouse = torch.zeros_like(mouse)
-        null_btn = torch.zeros_like(btn)
-
-        pred_1_uncond = self.ema(x, y, ts, null_mouse, null_btn, steps_slow)
-        pred_1_cond = self.ema(x, y, ts, mouse, btn, steps_slow)
-        pred_1_cfg = pred_1_uncond + self.cfg_scale * (pred_1_cond - pred_1_uncond)
-        pred_1 = torch.where(cfg_mask, pred_1_cfg, pred_1_cond)
-
-        x_new = x - pred_1 * expand(dt_slow)
-        ts_new = ts - dt_slow
-
-        pred_2_uncond = self.ema(x_new, y, ts_new, null_mouse, null_btn, steps_slow)
-        pred_2_cond = self.ema(x_new, y, ts_new, mouse, btn, steps_slow)
-        pred_2_cfg = pred_2_uncond + self.cfg_scale * (pred_2_cond - pred_2_uncond)
-        pred_2 = torch.where(cfg_mask, pred_2_cfg, pred_2_cond)
-
-        pred = 0.5 * (pred_1 + pred_2)
-        return pred, steps_fast, ts
-    
-    def get_sc_loss(self, x, y, mouse, btn):
-        target, steps, ts = self.get_sc_targets(x, y, mouse, btn)
+    def get_sc_loss(self, x, y, mouse, btn, ema):
+        target, steps, ts = self.get_sc_targets(ema, x, y, mouse, btn)
         pred = self.core(x, y, ts, mouse, btn, steps)
         sc_loss = F.mse_loss(pred, target)
         return sc_loss
 
-    def forward(self, x, y, mouse, btn):
+    def forward(self, x, y, mouse, btn, ema):
         # x is [b,n,c,h,w]
         # y (seed frame) is [b,1,c,h,w]
         # mouse is [b,n,2]
@@ -207,7 +198,7 @@ class ShortcutGameRFT(nn.Module):
         
         pred = self.core(lerpd, y, ts, mouse, btn, d)
         diff_loss = F.mse_loss(pred, target)
-        sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc)
+        sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc, ema)
 
         return diff_loss, sc_loss
 

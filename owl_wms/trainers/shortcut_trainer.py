@@ -102,6 +102,7 @@ class ShortcutTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
+        freeze(self.ema)
         #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
@@ -113,14 +114,6 @@ class ShortcutTrainer(BaseTrainer):
         # No muon pls
         self.opt = getattr(torch.optim, self.train_cfg.opt)(self.model.parameters(), **self.train_cfg.opt_kwargs)
 
-        if self.train_cfg.scheduler is not None:
-            self.scheduler = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
-
-        if self.world_size > 1:
-            self.model.module.set_ema(self.ema)
-        else:
-            self.model.set_ema(self.ema)
-        
         # Grad accum setup and scaler
         accum_steps = self.train_cfg.target_batch_size // self.train_cfg.batch_size // self.world_size
         accum_steps = max(1, accum_steps)
@@ -149,7 +142,7 @@ class ShortcutTrainer(BaseTrainer):
                 batch_btn = batch_btn.cuda().bfloat16()
 
                 with ctx:
-                    diff_loss, sc_loss = self.model(batch_vid,batch_keyframe,batch_mouse,batch_btn)
+                    diff_loss, sc_loss = self.model(batch_vid,batch_keyframe,batch_mouse,batch_btn, get_ema_core())
                     loss = diff_loss + sc_loss
                     loss = loss / accum_steps
 
