@@ -56,7 +56,8 @@ def make_batched_decode_fn(decoder, batch_size = 8):
 @torch.no_grad()
 def make_batched_audio_decode_fn(decoder, batch_size = 8):
     def decode(x):
-        # x is [b,c,n] audio samples
+        # x is [b,n,c] audio samples
+        x = x.transpose(1,2)
         b,c,n = x.shape
 
         batches = x.contiguous().split(batch_size)

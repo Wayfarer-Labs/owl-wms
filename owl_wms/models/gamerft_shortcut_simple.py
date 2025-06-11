@@ -32,6 +32,8 @@ class ShortcutGameRFTCore(nn.Module):
         self.proj_out = FinalLayer(config.sample_size, config.d_model, config.channels)
 
         self.config = config
+        if config.audio_tokens > 0:
+            self.audio_proj = nn.Linear(config.audio_channels, config.d_model, bias = False)
 
     def sample(self, x, mouse, btn, kv_cache = None, t = None, d = None):
         """
