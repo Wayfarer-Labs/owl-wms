@@ -4,6 +4,7 @@ def get_model_cls(model_id):
         return GameRFT
     if model_id == "game_rft_shortcut":
         from .gamerft_shortcut import ShortcutGameRFT
+        return ShortcutGameRFT
 
 
 
