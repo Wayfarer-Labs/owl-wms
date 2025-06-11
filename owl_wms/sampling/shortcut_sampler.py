@@ -15,6 +15,7 @@ def zlerp(x, alpha):
     z = torch.randn_like(x)
     return x * (1. - alpha) + z * alpha
 
+# TODO Test
 def load_mp4_as_tensor(mp4_path: pathlib.Path) -> torch.Tensor:
     """Load MP4 as tensor in format [N, C=3, H, W] with values in [-1, 1]"""
     video = cv2.VideoCapture(str(mp4_path))
