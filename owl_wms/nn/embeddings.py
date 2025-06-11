@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+import math
+
 import einops as eo
 from .mlp import MLPCustom
 
@@ -11,89 +13,20 @@ from rotary_embedding_torch import (
 )
 import einops as eo
 
-class VideoRoPE(nn.Module):
-    """
-    Video RoPE embedding for when latents are 3D [n,h,w]
-    """
-    def __init__(self, config : 'TransformerConfig'):
-        super().__init__()
-
-        dim_head = config.d_model // config.n_heads
-        self.pos_emb = RotaryEmbedding(
-            dim = dim_head//8,
-            freqs_for = 'pixel',
-            max_freq = 256
-        )
-        n_patches = config.sample_size // config.patch_size
-        self.tokens_per_frame = n_patches**2
-
-        self.rearrange_in = lambda x: eo.rearrange(x, 'b h (n_t n_y n_x) d -> b h n_t n_y n_x d', n_y = n_patches)
-        self.rearrange_out = lambda x: eo.rearrange(x, 'b h n_t n_y n_x d -> b h (n_t n_y n_x) d')
-        self.get_freqs = lambda n_t: self.pos_emb.get_axial_freqs(n_t, n_patches, n_patches)
-
-    def forward(self, q, k):
-        # q k both [b,h,n,d]
-        q = self.rearrange_in(q)
-        k = self.rearrange_in(k)
-
-        n_t = q.shape[2]
-        freqs = self.get_freqs(n_t)
-
-        q = apply_rotary_emb(freqs.float(), q.float()).to(q.dtype)
-        k = apply_rotary_emb(freqs.float(), k.float()).to(k.dtype)
-
-        q = self.rearrange_out(q)
-        k = self.rearrange_out(k)
-        
-        return q, k
-
-class FlatVideoRoPE(nn.Module):
-    """
-    Video RoPE embedding for when latents are 2d [n,m] (1D Frame Tokenization)
-    """
-    def __init__(self, config : 'TransformerConfig'):
-        super().__init__()
-
-        dim_head = config.d_model // config.n_heads
-        self.pos_emb = RotaryEmbedding(
-            dim = dim_head//4,
-            freqs_for = 'pixel',
-            max_freq = 256
-        )
-        self.pos_emb.freqs.requires_grad = False
-        self.tokens_per_frame = config.sample_size
-
-        self.rearrange_in = lambda x: eo.rearrange(x, 'b h (n_t m) d -> b h n_t m d', m = self.tokens_per_frame)
-        self.rearrange_out = lambda x: eo.rearrange(x, 'b h n_t m d -> b h (n_t m) d')
-        self.get_freqs = lambda n_t: self.pos_emb.get_axial_freqs(n_t, self.tokens_per_frame)
-
-    def forward(self, q, k):
-        # q k both [b,h,n,d]
-        q = self.rearrange_in(q)
-        k = self.rearrange_in(k)
-
-        n_t = q.shape[2]
-        with torch.no_grad():
-            freqs = self.get_freqs(n_t)
-
-        q = apply_rotary_emb(freqs.float(), q.float()).to(q.dtype)
-        k = apply_rotary_emb(freqs.float(), k.float()).to(k.dtype)
-
-        q = self.rearrange_out(q)
-        k = self.rearrange_out(k)
-        
-        return q, k
-
-
 class LearnedPosEnc(nn.Module):
     def __init__(self, n_seq, dim):
         super().__init__()
-        # n_seq is tokens_per_frame * n_frames, dim is d_model
+
+        self.n_seq = n_seq
         self.p = nn.Parameter(torch.randn(n_seq,dim)*0.02)
 
     def forward(self, x):
         b,n,d = x.shape
-        p = eo.repeat(self.p, 'n d -> b n d', b = b)
+        if n < self.n_seq:
+            # Only add positional embeddings for the last n tokens
+            p = eo.repeat(self.p[-n:], 'n d -> b n d', b=b)
+        else:
+            p = eo.repeat(self.p, 'n d -> b n d', b=b)
         return x + p
 
 class SinCosEmbed(nn.Module):
@@ -151,6 +84,26 @@ class TimestepEmbedding(nn.Module):
         x = self.sincos(x)
         x = self.mlp(x)
         return x
+
+class StepEmbedding(nn.Module):
+    def __init__(self, d_out, d_in=512, max_steps=128):
+        super().__init__()
+
+        self.mlp = MLPCustom(d_in, dim_middle = 4 * d_out, dim_out=d_out)
+        self.max_steps = max_steps
+        mult = 1000 / math.log2(max_steps)
+        self.sincos = SinCosEmbed(d_in, theta=300, mult=mult)
+
+    def forward(self, steps):
+        if not isinstance(steps, torch.Tensor):
+            steps = torch.tensor(steps, device=self.mlp.fc_uv.weight.device, dtype=self.mlp.fc_uv.weight.dtype)
+        if steps.ndim == 0:
+            steps = steps.unsqueeze(0)
+
+        # Map steps to [0, log2(max_steps)]
+        t = (math.log2(self.max_steps) - torch.log2(steps.float())).to(steps.dtype)
+        embs = self.sincos(t)
+        return self.mlp(embs)
 
 class ConditionEmbedding(nn.Module):
     def __init__(self, n_classes, dim):
