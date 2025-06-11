@@ -156,7 +156,8 @@ class ShortcutGameRFT(nn.Module):
         self.config = config
         
     def get_sc_loss(self, x, y, mouse, btn, ema):
-        target, steps, ts = self.get_sc_targets(ema, x, y, mouse, btn)
+        with torch.no_grad():
+            target, steps, ts = get_sc_targets(ema, x, y, mouse, btn, self.cfg_scale)
         pred = self.core(x, y, ts, mouse, btn, steps)
         sc_loss = F.mse_loss(pred, target)
         return sc_loss
