@@ -33,7 +33,7 @@ NUM_TARS=9
 BUCKET_NAME="cod-data-latent-360x640to5x8"
 
 class S3CoDLatentDataset(IterableDataset):
-    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1, include_keyframe = False):
+    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1, bucket_name = BUCKET_NAME, include_keyframe = False):
         super().__init__()
         
         self.window = window_length
@@ -41,6 +41,7 @@ class S3CoDLatentDataset(IterableDataset):
         self.rank = rank
         self.world_size = world_size
         self.include_keyframe = include_keyframe
+        self.bucket_name = bucket_name
 
         # Queue parameters
         self.max_tars = 2
@@ -80,7 +81,7 @@ class S3CoDLatentDataset(IterableDataset):
                 tar_path = self.random_sample_prefix()
                 try:
                     # Download tar directly to memory
-                    response = self.s3_client.get_object(Bucket=BUCKET_NAME, Key=tar_path)
+                    response = self.s3_client.get_object(Bucket=self.bucket_name, Key=tar_path)
                     tar_data = response['Body'].read()
                     self.tar_queue.add(tar_data)
                 except Exception as e:

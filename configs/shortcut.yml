@@ -22,7 +22,7 @@ train:
   data_id: cod_s3
   data_kwargs:
     window_length: 120
-    root: ../cod_data/BlackOpsColdWar
+    bucket_name: cod-data-latent-360x640to5x8
     include_keyframe: true
 
   target_batch_size: 256
@@ -44,7 +44,7 @@ train:
   sample_interval: 1000
   save_interval: 5000
 
-  sampler_id: shortcut_sampler
+  sampler_id: shortcut
   sampler_kwargs:
     window_length: 120
     num_frames: 120
