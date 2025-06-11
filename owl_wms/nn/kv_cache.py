@@ -46,7 +46,27 @@ class KVCache:
     @torch.no_grad()
     def update(self, new_k, new_v, layer_ind):
         assert self.cache is not None, "Must reset cache before using"
-        self.cache[layer_ind] = (new_k,new_v)
+
+        def tuple_truncate(k, v):
+            k = k[:,:,-self.max_length:]
+            v = v[:,:,-self.max_length:]
+            return k, v
+
+        self.cache[layer_ind] = tuple_truncate(new_k,new_v)
+    
+    @torch.no_grad()
+    def truncate(self, truncate_amt):
+        """
+        Truncate frames from the KV cache
+        """
+        truncate_amt = truncate_amt * self.config.tokens_per_frame
+        def tuple_truncate(k, v):
+            k = k[:,:,truncate_amt:]
+            v = v[:,:,truncate_amt:]
+            return k, v
+
+        for i in range(self.config.n_layers):
+            self.cache[i] = tuple_truncate(self.cache[i])
 
     def __len__(self):
         assert self.cache is not None, "Must reset cache before using"
