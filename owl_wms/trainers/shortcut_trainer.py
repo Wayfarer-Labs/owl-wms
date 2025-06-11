@@ -16,6 +16,7 @@ from ..data import get_loader
 from ..utils.logging import LogHelper, to_wandb
 from ..muon import init_muon
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
+from ..models.gamerft_shortcut import get_sc_targets
 
 class ShortcutTrainer(BaseTrainer):
     """
@@ -93,6 +94,7 @@ class ShortcutTrainer(BaseTrainer):
         self.model = self.model.cuda().train()
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
+
         self.decoder = self.decoder.cuda().eval().bfloat16()
         decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
@@ -145,10 +147,9 @@ class ShortcutTrainer(BaseTrainer):
                     loss = diff_loss + sc_loss
                     loss = loss / accum_steps
                 
-                find_unused_params(self.model)
-                exit()
                 self.scaler.scale(loss).backward()
-                    
+                find_unused_params(self.model)
+                exit()    
                 metrics.log('diffusion_loss', diff_loss)
                 metrics.log('shortcut_loss', sc_loss)
 

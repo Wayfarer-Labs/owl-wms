@@ -1,19 +1,19 @@
 # Config for a simple 256 -> 16 autoencoder
 model:
   model_id: game_rft_shortcut
-  sample_size: 4
-  channels: 128
+  sample_size: 5
+  channels: 64
   
-  n_layers: 17
-  n_heads: 16
-  d_model: 1024
+  n_layers: 5
+  n_heads: 6
+  d_model: 384
 
-  tokens_per_frame: 16
+  tokens_per_frame: 40
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.1
-  n_frames: 120
+  n_frames: 60
 
   causal: false
 
@@ -21,11 +21,11 @@ train:
   trainer_id: shortcut
   data_id: cod_s3
   data_kwargs:
-    window_length: 120
+    window_length: 60
     bucket_name: cod-data-latent-360x640to5x8
     include_keyframe: true
 
-  target_batch_size: 256
+  target_batch_size: 16
   batch_size: 16
 
   epochs: 200
@@ -46,8 +46,8 @@ train:
 
   sampler_id: shortcut
   sampler_kwargs:
-    window_length: 120
-    num_frames: 120
+    window_length: 60
+    num_frames: 60
     only_return_generated: true
 
   n_samples: 8

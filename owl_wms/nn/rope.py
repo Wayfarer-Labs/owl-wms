@@ -80,9 +80,10 @@ class FlatVideoRoPE(nn.Module):
         q = eo.rearrange(q, 'b h (n m) d -> b h n m d', n=q.shape[2]//m,m=m)
         k = eo.rearrange(k, 'b h (n m) d -> b h n m d', n=n,m=m)
 
-        freqs = self.pos_emb.get_axial_freqs(n,m)
-        q = apply_rotary_emb(freqs[-truncate:], q)
-        k = apply_rotary_emb(freqs, k)
+        with torch.no_grad():
+            freqs = self.pos_emb.get_axial_freqs(n,m)
+        q = apply_rotary_emb(freqs[-truncate:].detach(), q)
+        k = apply_rotary_emb(freqs.detach(), k)
 
         q = eo.rearrange(q, 'b h n m d -> b h (n m) d')
         k = eo.rearrange(k, 'b h n m d -> b h (n m) d')
