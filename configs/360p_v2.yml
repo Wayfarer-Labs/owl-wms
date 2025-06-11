@@ -54,7 +54,7 @@ train:
     window_length: 30
     num_frames: 60
     noise_prev: 0.2
-    only_return_generated: true
+    only_return_generated: false
 
   n_samples: 8
 
