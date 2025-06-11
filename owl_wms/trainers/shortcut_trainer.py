@@ -148,8 +148,7 @@ class ShortcutTrainer(BaseTrainer):
                     loss = loss / accum_steps
                 
                 self.scaler.scale(loss).backward()
-                find_unused_params(self.model)
-                exit()    
+                
                 metrics.log('diffusion_loss', diff_loss)
                 metrics.log('shortcut_loss', sc_loss)
 
