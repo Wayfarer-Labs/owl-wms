@@ -5,7 +5,9 @@ def get_model_cls(model_id):
     if model_id == "game_rft_shortcut":
         from .gamerft_shortcut import ShortcutGameRFT
         return ShortcutGameRFT
-
+    if model_id == "causal_game_rft":
+        from .causal_gamerft import CausalGameRFT
+        return CausalGameRFT
 
 
 

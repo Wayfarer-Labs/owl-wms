@@ -9,3 +9,9 @@ def get_trainer_cls(trainer_id):
     if trainer_id == "shortcut":
         from .shortcut_trainer import ShortcutTrainer
         return ShortcutTrainer
+    if trainer_id == "self_forcing":  # Add this case
+        from .self_forcing import SelfForcingTrainer  # Add this import
+        return SelfForcingTrainer
+
+
+

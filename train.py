@@ -6,6 +6,9 @@ from owl_wms.trainers import get_trainer_cls
 from owl_wms.utils.ddp import cleanup, setup
 
 if __name__ == "__main__":
+    import sys
+    sys.argv[1:] = ["--config_path", "configs/self_forcing.yaml"]
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--config_path", type=str, help="Path to config YAML file")
