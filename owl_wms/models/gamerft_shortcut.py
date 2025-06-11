@@ -158,8 +158,8 @@ class ShortcutGameRFT(nn.Module):
     def get_sc_loss(self, x, y, mouse, btn, ema):
         with torch.no_grad():
             target, steps, ts = get_sc_targets(ema, x, y, mouse, btn, self.cfg_scale)
-        pred = self.core(x, y, ts, mouse, btn, steps)
-        sc_loss = F.mse_loss(pred, target)
+        pred = self.core(x.detach(), y.detach(), ts.detach(), mouse.detach(), btn.detach(), steps.detach())
+        sc_loss = F.mse_loss(pred, target.detach())
         return sc_loss
 
     def forward(self, x, y, mouse, btn, ema):
@@ -197,9 +197,9 @@ class ShortcutGameRFT(nn.Module):
             lerpd = x * (1. - ts_exp) + z * ts_exp
             target = z - x
         
-        pred = self.core(lerpd, y, ts, mouse, btn, d)
-        diff_loss = F.mse_loss(pred, target)
-        sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc, ema)
+        pred = self.core(lerpd.detach(), y.detach(), ts.detach(), mouse.detach(), btn.detach(), d.detach())
+        diff_loss = F.mse_loss(pred, target.detach())
+        sc_loss = self.get_sc_loss(x_sc.detach(), y_sc.detach(), mouse_sc.detach(), btn_sc.detach(), ema)
 
         return diff_loss, sc_loss
 
