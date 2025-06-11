@@ -198,8 +198,9 @@ class ShortcutGameRFT(nn.Module):
         
         pred = self.core(lerpd, y, ts, mouse, btn, d)
         diff_loss = F.mse_loss(pred, target)
-        sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc, ema)
-        
+        #sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc, ema)
+        sc_loss = diff_loss
+
         return diff_loss, sc_loss
 
 def test_inference_cache():

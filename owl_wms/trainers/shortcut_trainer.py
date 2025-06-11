@@ -102,7 +102,6 @@ class ShortcutTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
-        freeze(self.ema)
         #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
@@ -145,7 +144,9 @@ class ShortcutTrainer(BaseTrainer):
                     diff_loss, sc_loss = self.model(batch_vid,batch_keyframe,batch_mouse,batch_btn, get_ema_core())
                     loss = diff_loss + sc_loss
                     loss = loss / accum_steps
-
+                
+                find_unused_params(self.model)
+                exit()
                 self.scaler.scale(loss).backward()
                     
                 metrics.log('diffusion_loss', diff_loss)
