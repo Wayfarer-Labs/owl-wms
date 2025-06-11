@@ -1,19 +1,51 @@
+import cv2
 import math
 import pathlib
 import torch
 from torch import Module
-import torch.nn.functional
-
 from tqdm import tqdm
 from typing import Optional
 
-from ..utils import batch_permute_to_length
 from ..nn.kv_cache import KVCache
+from ..utils import batch_permute_to_length
 from ..models.gamerft_shortcut import ShortcutGameRFT
+
 
 def zlerp(x, alpha):
     z = torch.randn_like(x)
     return x * (1. - alpha) + z * alpha
+
+def load_mp4_as_tensor(mp4_path: pathlib.Path) -> torch.Tensor:
+    """Load MP4 as tensor in format [N, C=3, H, W] with values in [-1, 1]"""
+    video = cv2.VideoCapture(str(mp4_path))
+    
+    if not video.isOpened():
+        raise ValueError(f"Could not open video file: {mp4_path}")
+    
+    frames = []
+    while True:
+        ret, frame = video.read()
+        if not ret: 
+            break
+        
+        # Convert BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Convert to torch tensor and normalize to [-1, 1]
+        frame = torch.from_numpy(frame).float() / 127.5 - 1.0
+        
+        # Rearrange from [H, W, C] to [C, H, W]
+        frame = frame.permute(2, 0, 1)
+        
+        frames.append(frame)
+    
+    video.release()
+    
+    if not frames:
+        raise ValueError(f"No frames found in video: {mp4_path}")
+    
+    # Stack to [N, C, H, W]
+    return torch.stack(frames)
 
 
 class InferenceCachedShortcutSampler:
@@ -22,12 +54,14 @@ class InferenceCachedShortcutSampler:
 
     def __init__(self,
                  model: ShortcutGameRFT,
-                 window_length  = 60,    # TODO  What's the difference between this and num_frames?
-                 num_frames     =  1,    # TODO   I am assuming num_frames is how many we generate at once, window_length is history temporal dim.
-                 only_return_generated = False,  # When true, don't return the history alongside the frame latents.
-                 vae_scale=2.17,         # TODO Double-check
+                 window_length  = 60,
+                 num_frames     =  1,
+                 only_return_generated = False,
+                 vae_scale = 2.17,
                  decode_fn: Optional[Module] = None,
-                 initial_history_path: Optional[pathlib.Path] = None):
+                 initial_history_pt_path: Optional[pathlib.Path] = None,
+                 initial_history_mp4_path: Optional[pathlib.Path] = None,
+                 encoder: Optional[Module] = None):
         # -- 
         self.model: ShortcutGameRFT = model
         self.window_length          = window_length
@@ -40,24 +74,46 @@ class InferenceCachedShortcutSampler:
         self._cache_built = False
         self.cache = KVCache(model.config)
         self.decode_fn = decode_fn
-        self.initial_history_path = initial_history_path
-        self.initial_history_bWchw = self.load_cached_history(self.initial_history_path)
+        self.initial_history_pt_path = initial_history_pt_path
+        self.initial_history_mp4_path = initial_history_mp4_path
+        self.encoder = encoder
+        
+        assert initial_history_pt_path is not None or initial_history_mp4_path is not None, \
+            'Either initial_history_pt_path or initial_history_mp4_path must be provided'
+        
+        if initial_history_mp4_path is not None:
+            assert encoder is not None, \
+                'Encoder must be provided if initial_history_mp4_path is provided'
+
+        self.initial_history_bWchw = self.init_history(self.initial_history_pt_path, self.initial_history_mp4_path)
+        self.keyframe_b1chw        = self.initial_history_bWchw[:,0]
+
+    def init_history(self,
+                     initial_history_pt_path: pathlib.Path | None,
+                     initial_history_mp4_path: pathlib.Path | None) -> torch.Tensor:
+
+        if initial_history_pt_path is not None:
+            history_wchw = torch.load(initial_history_pt_path)
+        else:
+            history_wrgb = load_mp4_as_tensor(initial_history_mp4_path).unsqueeze(0) # add batch dim
+            history_wchw = self.encoder(history_wrgb)
+            # NOTE This is so we avoid generating the history with a compiled model.
+            torch.save(history_wchw, initial_history_mp4_path.absolute().replace('.mp4', '.pt'))
 
         N = self.window_length
         C = self.model.config.channels
         H = W = int(math.sqrt(self.model.config.tokens_per_frame))
         
-        if self.initial_history_bWchw.ndim == 4:
-            self.initial_history_bWchw = self.initial_history_bWchw.unsqueeze(1)
-        
-        # NOTE Should batch-size be checked to be 1?
-        assert tuple(self.initial_history_bWchw.shape) == (1, N, C, H, W), \
+        assert tuple(history_wchw.shape) == (1, N, C, H, W), \
             f'Initial history must have shape (B=1, {N=}, {C=}, {H=}, {W=}), ' \
-            f'but got {tuple(self.initial_history_bWchw.shape)}'
+            f'but got {tuple(history_wchw.shape)}'
+        
+        return history_wchw
+
 
     def init_cache(self,
                    frames_bWchw,   # [B, W, c, h, w] - NOTE history of frames
-                   keyframe_b1chw, # [B, 1, c, h, w] - NOTE 
+                   keyframe_b1chw, # [B, 1, c, h, w] - NOTE keyframe conditioning
                    mouse_bW2,      # [B, W, 2]
                    button_bW11,    # [B, W, 11]
                    ts_bW,          # [B, W]
@@ -83,33 +139,19 @@ class InferenceCachedShortcutSampler:
                                                             for elt in self.cache.cache]}')
         return self.cache
 
-
-    def load_cached_history(self, initial_history_path: pathlib.Path | None):
-        if initial_history_path is not None:
-            return torch.load(initial_history_path)
-
-        # NOTE Generate history, then save it & return it.
-        history = ...
-        # NOTE This is so we avoid generating the history with a compiled model.
-        torch.save(history, initial_history_path)
-        return history
-
-
     def __call__(self,
-            ctxt_frame_b1chw, # [B, 1, c, h, w] - NOTE Keyframe
-            mouse_b1_2,        # [B, 1, 2]
-            button_b1_11,     # [B, 1, 11]
-            ts_alpha_b1,      # [B, 1] - overall denoising timestamp (e.g. 128)
-            d_alpha_b1,       # [B, 1] - denoising step budget (e.g. 4)
+            ctxt_frame_b1chw, # [B, 1, c, h, w] - NOTE Keyframe conditioning
+            mouse_b1_2,      # [B, 1, 2] - NOTE mouse actions
+            button_b1_11,    # [B, 1, 11] - NOTE button actions
+            ts_alpha_b1,     # [B, 1] - NOTE overall denoising timestamp (e.g. 128)
+            d_alpha_b1,      # [B, 1] - NOTE denoising step budget (e.g. 4)
         ) -> torch.Tensor:  # [B, 1, c, h, w]
         # 1. ---- generate next frame ----
         self.cache.disable_cache_updates()
-        # 1.A) -- use the full context, including entire action history, to generate the next frame given
-        #      -- cache. 
+        # 1.A) -- use the full context, including entire action history, to generate the next frame given cache. 
         frame           = self.model.core.sample(None, ctxt_frame_b1chw,
                                                 mouse_b1_2, button_b1_11,
                                                 self.cache, ts=None, d=None)  # NOTE simulating one-step sampling
-        # 1.B) -- add frame latent to display
         # 2. ---- repopulate cache ----
         self.cache.enable_cache_updates() ; self.cache.truncate(1)
         self.model.core.sample( x=zlerp(frame, self.ALPHA),  # diffuse with noised frame to repopulate cache
@@ -121,21 +163,16 @@ class InferenceCachedShortcutSampler:
         self.cache.disable_cache_updates()
         return frame
 
-    # NOTE NOTE NOTE NOTE NOTE NOTE NOTE 
-    # NOTE W = window_size N = num_frames 
-    # NOTE T = window_size + num_frames
-    # NOTE NOTE NOTE NOTE NOTE NOTE NOTE 
     @torch.no_grad()
     def generate_frames(self,
-            history_bWchw,  # [B, window_size, c, h, w] - TODO: MP4 from CoD initially, and after that it's just KV cache. 
-            keyframe_b1chw, # [B, 1,           c, h, w] - NOTE: Keyframe is just a png from CoD that is encoded.
-            mouse_bT2,      # [B, T, 2] - Actions taken by the user.
-            button_bT11,    # [B, T, 11] - Actions taken by the user.
-        ) -> torch.Tensor:  # [B, T, c, h, w] - either latent or rgb.
+            history_bWchw,  # [B, W, c, h, w] - NOTE: MP4 from CoD initially, and after that it's just KV cache. 
+            mouse_bT2,      # [B, W+N, 2] - Actions taken by the user.
+            button_bT11,    # [B, W+N, 11] - Actions taken by the user.
+        ) -> torch.Tensor:  # [B, W+N, c, h, w] - either latent or rgb.
 
         if not self._cache_built:
             print(f'WARNING: Cache not built, but called `generate_frames` - initializing cache.')
-            self.init_cache(history_bWchw, keyframe_b1chw, mouse_bT2, button_bT11)
+            self.init_cache(history_bWchw, self.keyframe_b1chw, mouse_bT2, button_bT11)
 
         # If does not have batch-size, add it. This sampler is going to be used for single-user inference so batch-size is always 1.
         # The caller might not specify the batch-size, so we have this here.
@@ -157,7 +194,7 @@ class InferenceCachedShortcutSampler:
         for frame_idx in range(self.num_frames):
             btn_atom        = button_bT11[:, self.window_length+frame_idx].unsqueeze(1)
             mouse_atom      = mouse_bT2  [:, self.window_length+frame_idx].unsqueeze(1)
-            frame           = self.__call__(ctxt_frame_b1chw=keyframe_b1chw,
+            frame           = self.__call__(ctxt_frame_b1chw=self.keyframe_b1chw,
                                            mouse_b1_2=mouse_atom, button_b1_11=btn_atom,
                                            ts_alpha_b1=ts_alpha_b1, d_alpha_b1=d_alpha_b1)
             frames_latent += [frame]
