@@ -78,6 +78,7 @@ def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):
 @torch.no_grad()
 def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
     # x is [b,n,c,h,w]
+    # audio is [b,n,2]
     x = x.clamp(-1, 1)
     x = x[:max_samples]
     audio = audio[:max_samples]
@@ -96,12 +97,12 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     # Convert audio to numpy float32 [-1,1]
     audio = audio.cpu().float().numpy()
 
-    # Create list of video/audio pairs
-    samples = []
-    for i in range(len(x)):
-        video = wandb.Video(x[i], format='gif', fps=60)
-        # Sample rate assumed to be 48kHz based on common audio standards
-        audio_sample = wandb.Audio(audio[i].T, sample_rate=48000) 
-        samples.append((video, audio_sample))
+    # Create grid of videos like in to_wandb
+    if max_samples == 8:
+        x = eo.rearrange(x, '(r c) n d h w -> n d (r h) (c w)', r = 2, c = 4)
 
-    return samples
+    # Create video and audio objects
+    video = wandb.Video(x, format='gif', fps=60)
+    audio_samples = [wandb.Audio(audio[i], sample_rate=44100) for i in range(len(audio))]
+
+    return video, audio_samples

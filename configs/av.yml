@@ -24,8 +24,8 @@ train:
     window_length: 30
     bucket_name: cod-data-latent-360x640to4x4
 
-  target_batch_size: 16
-  batch_size: 16
+  target_batch_size: 256
+  batch_size: 32
 
   epochs: 200
 

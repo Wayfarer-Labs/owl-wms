@@ -200,7 +200,10 @@ class AVRFTTrainer(BaseTrainer):
                                     self.train_cfg.vae_scale,
                                     self.train_cfg.audio_vae_scale
                                 ) # -> [b,n,c,h,w]
-                                if self.rank == 0: wandb_dict['samples'] = to_wandb_av(samples, audio, sample_mouse, sample_button)
+                                if self.rank == 0:
+                                    video, audio = to_wandb_av(samples, audio, sample_mouse, sample_button)
+                                    wandb_dict['samples'] = video
+                                    wandb_dict['audio_samples'] = audio
                             
 
                         if self.rank == 0:
