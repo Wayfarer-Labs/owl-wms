@@ -25,8 +25,6 @@ class CacheShortcutSampler:
     :param only_return_generated: Whether to only return the generated frames
     """
     def __init__(self, window_length = 60, num_frames = 60, only_return_generated = False):
-        self.n_steps = n_steps
-        self.cfg_scale = cfg_scale
         self.window_length = window_length
         self.num_frames = num_frames
         self.only_return_generated = only_return_generated
