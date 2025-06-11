@@ -1,0 +1,64 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: shortcut_2
+  sample_size: 5
+  channels: 64
+  
+  n_layers: 5
+  n_heads: 6
+  d_model: 384
+
+  tokens_per_frame: 40
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+  n_frames: 60
+
+  causal: true
+
+train:
+  trainer_id: shortcut_2
+  data_id: cod_s3
+  data_kwargs:
+    window_length: 60
+    bucket_name: cod-data-latent-360x640to5x8
+    include_keyframe: false
+
+  target_batch_size: 16
+  batch_size: 16
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-4
+    weight_decay: 0.1
+    eps: 1.0e-15
+    betas: [0.9, 0.95]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/360p
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  sampler_id: shortcut_2
+  sampler_kwargs:
+    window_length: 60
+    num_frames: 60
+    only_return_generated: true
+
+  n_samples: 8
+
+  vae_id: 720pr3dc
+  vae_batch_size: 4
+  vae_scale: 0.35
+  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
+  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+
+wandb:
+  name: shahbuland
+  project: video_models
+  run_name: v2
