@@ -1,5 +1,5 @@
-model_checkpoint_path: "checkpoints/wm/dcae_hf_cod/ckpt_165k_ema.pt"
-run_config_path: "checkpoints/wm/dcae_hf_cod/basic.yml"
+model_checkpoint_path: "webapp/checkpoints/shortcut/step_165000.pt"
+run_config_path: "webapp/checkpoints/shortcut.yaml"
 device: "cuda"
 
 stream_config:
@@ -17,8 +17,8 @@ sampling_config:
   vae_scale: 1.0
   cfg_scale: 1.3
   window_length: 60
-  num_frames: 60
-  noise_prev: 0.2
+  num_frames: 1
+  noise_prev: 0.25
 
 run_config: null # loaded at runtime from model_config_path, and used to access model and train config
 

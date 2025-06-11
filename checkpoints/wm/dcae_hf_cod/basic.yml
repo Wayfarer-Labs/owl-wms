@@ -1,0 +1,67 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: game_rft_core
+  sample_size: 4
+  channels: 128
+  
+  n_layers: 17
+  n_heads: 16
+  d_model: 1024
+
+  tokens_per_frame: 16
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+  n_frames: 60
+
+  causal: false
+
+train:
+  trainer_id: rft
+  data_id: cod_latent
+  data_kwargs:
+    window_length: 60
+    root: ../cod_data/BlackOpsColdWar
+    add_optical_flow: false
+
+  target_batch_size: 320
+  batch_size: 40
+
+  epochs: 200
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [core.proj_in, core.proj_out.proj]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/v2
+  resume_ckpt: checkpoints/v2/step_165000.pt
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  sampler_id: window
+  sampler_kwargs:
+    n_steps: 32
+    cfg_scale: 1.3
+    window_length: 60
+    num_frames: 120
+    noise_prev: 0.2
+    only_return_generated: true
+
+  vae_batch_size: 16
+  vae_scale: 2.17
+  n_samples: 8
+
+wandb:
+  name: shahbuland
+  project: video_models
+  run_name: v2

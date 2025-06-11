@@ -32,8 +32,8 @@ class ModelPaths:
 
 class ModelLoader:    
     DEFAULT_PATHS = ModelPaths.from_strings(
-        config_path='/home/sami/owl-wms/checkpoints/wm/dcae_hf_cod/basic.yml',
-        checkpoint_path='/home/sami/owl-wms/checkpoints/wm/dcae_hf_cod/ckpt_165k_ema.pt'
+        config_path='webapp/checkpoints/shortcut.yaml',
+        checkpoint_path='webapp/checkpoints/shortcut/step_165000.pt'
     )
     
     def __init__(self, paths: Optional[ModelPaths] = None):

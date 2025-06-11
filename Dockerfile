@@ -5,6 +5,7 @@ FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
 
 # Install system dependencies (without python3.12 first)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,6 +44,8 @@ RUN uv pip install --system torch torchvision --index-url https://download.pytor
 
 # Install other requirements from requirements.txt
 RUN uv pip install --system -r requirements.txt
+
+RUN git submodule update --init --recursive
 
 # Copy the entire application
 COPY . /app
