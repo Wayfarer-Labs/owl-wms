@@ -156,10 +156,9 @@ class ShortcutGameRFT(nn.Module):
         self.config = config
         
     def get_sc_loss(self, x, y, mouse, btn, ema):
-        with torch.no_grad():
-            target, steps, ts = get_sc_targets(ema, x, y, mouse, btn, self.cfg_scale)
-        pred = self.core(x.detach(), y.detach(), ts.detach(), mouse.detach(), btn.detach(), steps.detach())
-        sc_loss = F.mse_loss(pred, target.detach())
+        target, steps, ts = get_sc_targets(ema, x, y, mouse, btn, self.cfg_scale)
+        pred = self.core(x, y, ts, mouse, btn, steps)
+        sc_loss = F.mse_loss(pred, target)
         return sc_loss
 
     def forward(self, x, y, mouse, btn, ema):
@@ -167,18 +166,19 @@ class ShortcutGameRFT(nn.Module):
         # y (seed frame) is [b,1,c,h,w]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
-        _,n,c,h,w = x.shape
+        with torch.no_grad():
+            _,n,c,h,w = x.shape
 
-        # Split batches between consistency/rf 
-        b = int(len(x) * (1 - self.sc_frac))
-        x,x_sc = x[:b], x[b:]
-        y,y_sc = y[:b], y[b:]
-        mouse,mouse_sc = mouse[:b], mouse[b:]
-        btn,btn_sc = btn[:b], btn[b:]
+            # Split batches between consistency/rf 
+            b = int(len(x) * (1 - self.sc_frac))
+            x,x_sc = x[:b], x[b:]
+            y,y_sc = y[:b], y[b:]
+            mouse,mouse_sc = mouse[:b], mouse[b:]
+            btn,btn_sc = btn[:b], btn[b:]
 
-        # Apply classifier-free guidance dropout
-        if self.cfg_prob > 0.0:
-            mask = torch.rand(b, device=x.device) <= self.cfg_prob
+            # Apply classifier-free guidance dropout
+            if self.cfg_prob > 0.0:
+                mask = torch.rand(b, device=x.device) <= self.cfg_prob
             null_mouse = torch.zeros_like(mouse)
             null_btn = torch.zeros_like(btn)
             
@@ -186,7 +186,6 @@ class ShortcutGameRFT(nn.Module):
             mouse = torch.where(mask.unsqueeze(-1).unsqueeze(-1), null_mouse, mouse)
             btn = torch.where(mask.unsqueeze(-1).unsqueeze(-1), null_btn, btn)
         
-        with torch.no_grad():
             d = torch.ones_like(x[:,:,0,0,0])*self.sc_max_steps
             ts = sample_discrete_timesteps(d)
             ts = torch.randn(b,n,device=x.device,dtype=x.dtype).sigmoid()
@@ -197,10 +196,10 @@ class ShortcutGameRFT(nn.Module):
             lerpd = x * (1. - ts_exp) + z * ts_exp
             target = z - x
         
-        pred = self.core(lerpd.detach(), y.detach(), ts.detach(), mouse.detach(), btn.detach(), d.detach())
-        diff_loss = F.mse_loss(pred, target.detach())
-        sc_loss = self.get_sc_loss(x_sc.detach(), y_sc.detach(), mouse_sc.detach(), btn_sc.detach(), ema)
-
+        pred = self.core(lerpd, y, ts, mouse, btn, d)
+        diff_loss = F.mse_loss(pred, target)
+        sc_loss = self.get_sc_loss(x_sc, y_sc, mouse_sc, btn_sc, ema)
+        
         return diff_loss, sc_loss
 
 def test_inference_cache():
