@@ -362,75 +362,166 @@ class WindowShortcutSampler:
 
         return x, extended_mouse, extended_btn
 
-class WindowShortcutSamplerNoKeyframe:
-    """
-    Same as above but with no cache
 
-    :param window_length: Number of frames to use for each frame generation step
-    :param num_frames: Number of new frames to sample
-    :param only_return_generated: Whether to only return the generated frames
+class InferenceWindowShortcutSamplerNoKeyframe:
     """
-    def __init__(self, window_length = 60, num_frames = 60, only_return_generated = False):
+    Window-based shortcut sampler without keyframe conditioning or KV cache.
+    Generates frames using sliding window approach with diffusion forcing.
+    
+    :param model: The shortcut diffusion model
+    :param window_length: Number of frames to use for each frame generation step
+    :param num_frames: Number of new frames to sample per generate_frames call
+    :param only_return_generated: Whether to only return the generated frames
+    :param vae_scale: Scale factor for VAE decoding
+    :param decode_fn: Optional decoder function
+    :param initial_history_pt_path: Path to pre-encoded initial history tensor
+    :param initial_history_mp4_path: Path to MP4 file for initial history
+    :param encoder: Encoder module (required if using MP4 path)
+    """
+    
+    ALPHA = 0.25  # Noise level for context frames (step 3 of 4-step diffusion)
+
+    def __init__(self,
+                 model,
+                 window_length = 60,
+                 num_frames = 1,
+                 only_return_generated = False,
+                 vae_scale = 2.17,  # TODO Shab trained a new VAE so this needs to be updated.
+                 decode_fn: Optional[Module] = None,
+                 initial_history_pt_path: Optional[pathlib.Path] = None,
+                 initial_history_mp4_path: Optional[pathlib.Path] = None,
+                 encoder: Optional[Module] = None):
+        
+        self.model = model
         self.window_length = window_length
         self.num_frames = num_frames
+        self.vae_scale = vae_scale
         self.only_return_generated = only_return_generated
+        self.decode_fn = decode_fn
+        
+        self.initial_history_pt_path = initial_history_pt_path
+        self.initial_history_mp4_path = initial_history_mp4_path
+        self.encoder = encoder
+        
+        assert initial_history_pt_path is not None or initial_history_mp4_path is not None, \
+            'Either initial_history_pt_path or initial_history_mp4_path must be provided'
+        
+        if initial_history_mp4_path is not None:
+            assert encoder is not None, \
+                'Encoder must be provided if initial_history_mp4_path is provided'
+
+        self.initial_history_bWchw = self.init_history(self.initial_history_pt_path, self.initial_history_mp4_path)
+
+    def init_history(self,
+                     initial_history_pt_path: pathlib.Path | None,
+                     initial_history_mp4_path: pathlib.Path | None) -> torch.Tensor:
+        """Initialize history from either .pt file or MP4 file"""
+        
+        if initial_history_pt_path is not None:
+            history_wchw = torch.load(initial_history_pt_path)
+        else:
+            history_wrgb = load_mp4_as_tensor(initial_history_mp4_path).unsqueeze(0)  # add batch dim
+            history_wchw = self.encoder(history_wrgb)
+            # Save encoded version to avoid re-encoding
+            torch.save(history_wchw, initial_history_mp4_path.absolute().replace('.mp4', '.pt'))
+
+        N = self.window_length
+        C = self.model.config.channels if hasattr(self.model, 'config') else history_wchw.shape[2]
+        H = W = int(math.sqrt(self.model.config.tokens_per_frame)) if hasattr(self.model, 'config') else history_wchw.shape[3]
+        
+        assert tuple(history_wchw.shape) == (1, N, C, H, W), \
+            f'Initial history must have shape (B=1, {N=}, {C=}, {H=}, {W=}), ' \
+            f'but got {tuple(history_wchw.shape)}'
+        
+        return history_wchw
+
+    def __call__(self,
+                 window_history_bWchw,  # [B, W, c, h, w] - Current window of frames
+                 mouse_bW2,             # [B, W, 2] - Mouse actions for window
+                 button_bW11,           # [B, W, 11] - Button actions for window
+                 ) -> torch.Tensor:     # [B, 1, c, h, w] - Generated frame
+        """Generate a single frame given current window history"""
+        
+        # Setup window for generation
+        x = window_history_bWchw[:, -self.window_length:].clone()
+        
+        # Noise all but last frame to alpha level (diffusion forcing)
+        x[:, :-1] = zlerp(x[:, :-1], self.ALPHA)
+        # Last frame starts as random noise
+        x[:, -1] = torch.randn_like(x[:, -1])
+
+        # Setup timesteps - ALPHA for context frames, 1.0 for generated frame
+        ts = torch.ones_like(x[:, :, 0, 0, 0])
+        ts[:, :-1] = self.ALPHA
+        
+        # Setup diffusion steps - 4 for context frames, 1 for generated frame
+        d = torch.ones_like(x[:, :, 0, 0, 0])
+        d[:, :-1] = 4  # Context frames use 4-step budget
+        
+        # Generate new frame using window
+        pred = self.model.sample(x, mouse_bW2, button_bW11, None, ts, d)
+        new_frame = pred[:, -1:]  # Take only the last (generated) frame
+        
+        return new_frame
 
     @torch.no_grad()
-    def __call__(self, model, history, mouse, btn, decode_fn = None, scale = 1):
-        # history is [b,n,c,h,w]
-        # mouse is [b,n,2]
-        # btn is [b,n,n_button]
+    def generate_frames(self,
+                        history_bWchw,  # [B, W, c, h, w] - Initial history
+                        mouse_bT2,      # [B, W+N, 2] - Mouse actions for entire sequence
+                        button_bT11,    # [B, W+N, 11] - Button actions for entire sequence
+                        ) -> torch.Tensor:  # [B, W+N, c, h, w] - Generated sequence
+        """Generate multiple frames using sliding window approach"""
+        
+        # Handle batch dimension
+        if history_bWchw.ndim == 4:
+            history_bWchw = history_bWchw.unsqueeze(0)
 
-        # output will be [b,n+self.num_frames,c,h,w]
-        history = history[:,:self.window_length]
-        new_frames = []
-        alpha = 0.25 # This number is special for our sampler
+        history_bWchw = history_bWchw[:, -self.window_length:]
+        
+        assert history_bWchw.shape[1] == self.window_length, \
+            f'History must be exactly {self.window_length} frames long, but got {history_bWchw.shape[1]}'
 
-        # Extended fake controls to use during sampling
-        extended_mouse, extended_btn = batch_permute_to_length(mouse, btn, self.num_frames + self.window_length)
+        # Extended controls for generation
+        extended_mouse, extended_btn = batch_permute_to_length(
+            mouse_bT2[:, :self.window_length], 
+            button_bT11[:, :self.window_length], 
+            self.num_frames + self.window_length
+        )
 
         # Initialize window history
-        window_history = history.clone()
+        window_history = history_bWchw.clone()
+        frames_latent = []
 
-        for frame_idx in tqdm(range(self.num_frames)):
-            # Setup window history
-            x = window_history[:,-self.window_length:].clone()
+        for frame_idx in range(self.num_frames):
+            # Get current window controls
+            curr_mouse = extended_mouse[:, frame_idx:frame_idx + self.window_length]
+            curr_btn = extended_btn[:, frame_idx:frame_idx + self.window_length]
             
-            # Noise all but last frame to alpha
-            x[:,:-1] = zlerp(x[:,:-1], alpha)
-            # Last frame starts as random noise
-            x[:,-1] = torch.randn_like(x[:,-1])
-
-            # Setup timesteps - alpha for context, 1.0 for generated
-            ts = torch.ones_like(x[:,:,0,0,0])
-            ts[:,:-1] = alpha
+            # Generate single frame
+            new_frame = self.__call__(
+                window_history_bWchw=window_history,
+                mouse_bW2=curr_mouse,
+                button_bW11=curr_btn
+            )
             
-            # Setup diffusion steps - 4 for context, 1 for generated
-            d = torch.ones_like(x[:,:,0,0,0])
-            d[:,:-1] = 4
-
-            # Get current controls
-            curr_mouse = extended_mouse[:,frame_idx:frame_idx+self.window_length]
-            curr_btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
-
-            # Generate new frame
-            pred = model.sample(x, keyframe, curr_mouse, curr_btn, None, ts, d)
-            new_frame = pred[:,-1:] # Take only the last frame
-            new_frames.append(new_frame)
+            frames_latent.append(new_frame)
             
-            # Add new frame to window history
+            # Add new frame to window history for next iteration
             window_history = torch.cat([window_history, new_frame], dim=1)
 
-        new_frames = torch.cat(new_frames, dim=1)
-        x = torch.cat([history, new_frames], dim=1)
+        # Combine all generated frames
+        frames_latent = torch.cat(frames_latent, dim=1)
+        
+        # Combine with original history
+        full_sequence = torch.cat([history_bWchw, frames_latent], dim=1)
 
         if self.only_return_generated:
-            x = x[:,-self.num_frames:]
-            extended_mouse = extended_mouse[:,-self.num_frames:]
-            extended_btn = extended_btn[:,-self.num_frames:]
+            full_sequence = full_sequence[:, -self.num_frames:]
+            extended_mouse = extended_mouse[:, -self.num_frames:]
+            extended_btn = extended_btn[:, -self.num_frames:]
 
-        if decode_fn is not None:
-            x = x * scale
-            x = decode_fn(x)
+        if self.decode_fn is not None:
+            frames_rgb = self.decode_fn(full_sequence * self.vae_scale)
+            return frames_rgb, extended_mouse, extended_btn
 
-        return x, extended_mouse, extended_btn
+        return full_sequence, extended_mouse, extended_btn
