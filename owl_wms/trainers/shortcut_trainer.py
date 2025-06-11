@@ -93,7 +93,7 @@ class ShortcutTrainer(BaseTrainer):
         # Prepare model and ema
         self.model = self.model.cuda().train()
         if self.world_size > 1:
-            self.model = DDP(self.model, device_ids=[self.local_rank])
+            self.model = DDP(self.model, find_unused_parameters=True)
 
         self.decoder = self.decoder.cuda().eval().bfloat16()
         decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
