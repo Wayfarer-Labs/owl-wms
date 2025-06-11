@@ -116,7 +116,6 @@ class MMAttn(nn.Module):
             k = torch.cat([k1,k2],dim=-2) 
             v = torch.cat([v1,v2],dim=-2)
 
-            print("====")
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
             x = self.merge(x)
 

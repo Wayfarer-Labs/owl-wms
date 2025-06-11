@@ -102,6 +102,10 @@ class ShortcutTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
+        if self.world_size > 1:
+            self.model.module.set_ema(self.ema)
+        else:
+            self.model.set_ema(self.ema)
         #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
@@ -144,8 +148,9 @@ class ShortcutTrainer(BaseTrainer):
                 batch_btn = batch_btn.cuda().bfloat16()
 
                 with ctx:
-                    diff_loss, sc_loss = self.model(batch_vid,batch_mouse,batch_btn) / accum_steps
+                    diff_loss, sc_loss = self.model(batch_vid,batch_keyframe,batch_mouse,batch_btn)
                     loss = diff_loss + sc_loss
+                    loss = loss / accum_steps
 
                 self.scaler.scale(loss).backward()
                 #find_unused_params(self.model)

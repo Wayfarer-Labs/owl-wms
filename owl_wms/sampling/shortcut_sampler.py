@@ -34,6 +34,7 @@ class CacheShortcutSampler:
         # dummy_batch is [b,n,c,h,w]
         # mouse is [b,n,2]
         # btn is [b,n,n_button]
+        num_frames = self.num_frames
 
         # output will be [b,n+self.num_frames,c,h,w]
         history = history[:,:self.window_length]
@@ -52,8 +53,9 @@ class CacheShortcutSampler:
 
         cache = KVCache(model.config)
         cache.reset(history.shape[0])
-
+        
         cache.enable_cache_updates()
+
         _ = model.sample(noisy_history, keyframe, mouse, btn, cache, ts, d)
         cache.disable_cache_updates()
 

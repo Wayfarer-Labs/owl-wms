@@ -52,7 +52,7 @@ class ShortcutGameRFTCore(nn.Module):
         if d is None:
             d = torch.ones_like(x[:,:,0,0,0])
 
-        return x - self.forward(x, t, mouse, btn, d, kv_cache)
+        return x - self.forward(x, y, t, mouse, btn, d, kv_cache)
 
     def forward(self, x, y, t, mouse, btn, d, kv_cache = None):
         # x is [b,n,c,h,w]
@@ -123,8 +123,8 @@ class ShortcutGameRFT(nn.Module):
         else:
             self.ema = ema.ema_model.core
 
+    #@torch.compile()
     @torch.no_grad()
-    @torch.compile()
     def get_sc_targets(self, x, y, mouse, btn):
         steps_slow = sample_steps(x.shape[0], x.shape[1], x.device, x.dtype, min_val = 1)
         steps_fast = steps_slow / 2

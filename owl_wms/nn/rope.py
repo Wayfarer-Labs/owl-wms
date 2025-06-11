@@ -77,7 +77,7 @@ class FlatVideoRoPE(nn.Module):
         if q.shape[2] < n * m:
             truncate = q.shape[2]//m # How many frames is q?
 
-        q = eo.rearrange(q, 'b h (n m) d -> b h n m d', n=n,m=m)
+        q = eo.rearrange(q, 'b h (n m) d -> b h n m d', n=q.shape[2]//m,m=m)
         k = eo.rearrange(k, 'b h (n m) d -> b h n m d', n=n,m=m)
 
         freqs = self.pos_emb.get_axial_freqs(n,m)

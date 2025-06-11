@@ -73,7 +73,7 @@ class KVCache:
             return k, v
 
         for i in range(self.config.n_layers):
-            self.cache[layer_ind] = tuple_truncate(self.cache[layer_ind])
+            self.cache[i] = tuple_truncate(*self.cache[i])
 
     def __len__(self):
         assert self.cache is not None, "Must reset cache before using"
