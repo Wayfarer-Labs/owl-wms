@@ -47,7 +47,7 @@ class Attn(nn.Module):
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
 
-        if not self.causal or len(kv_cache) > 0:
+        if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
             mask = None
         else:
             mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)

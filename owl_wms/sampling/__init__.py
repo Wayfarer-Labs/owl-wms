@@ -12,3 +12,6 @@ def get_sampler_cls(sampler_id):
     elif sampler_id == "shortcut":
         from .shortcut_sampler import CacheShortcutSampler
         return CacheShortcutSampler
+    elif sampler_id == "shortcut_2":
+        from .shortcut_sampler import WindowShortcutSamplerNoKeyframe
+        return WindowShortcutSamplerNoKeyframe

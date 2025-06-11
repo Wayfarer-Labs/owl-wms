@@ -99,14 +99,85 @@ class WindowShortcutSampler:
     :param only_return_generated: Whether to only return the generated frames
     """
     def __init__(self, window_length = 60, num_frames = 60, only_return_generated = False):
-        self.n_steps = n_steps
-        self.cfg_scale = cfg_scale
         self.window_length = window_length
         self.num_frames = num_frames
         self.only_return_generated = only_return_generated
 
     @torch.no_grad()
     def __call__(self, model, history, keyframe, mouse, btn, decode_fn = None, scale = 1):
+        # history is [b,n,c,h,w]
+        # mouse is [b,n,2]
+        # btn is [b,n,n_button]
+
+        # output will be [b,n+self.num_frames,c,h,w]
+        history = history[:,:self.window_length]
+        new_frames = []
+        alpha = 0.25 # This number is special for our sampler
+
+        # Extended fake controls to use during sampling
+        extended_mouse, extended_btn = batch_permute_to_length(mouse, btn, self.num_frames + self.window_length)
+
+        # Initialize window history
+        window_history = history.clone()
+
+        for frame_idx in tqdm(range(self.num_frames)):
+            # Setup window history
+            x = window_history[:,-self.window_length:].clone()
+            
+            # Noise all but last frame to alpha
+            x[:,:-1] = zlerp(x[:,:-1], alpha)
+            # Last frame starts as random noise
+            x[:,-1] = torch.randn_like(x[:,-1])
+
+            # Setup timesteps - alpha for context, 1.0 for generated
+            ts = torch.ones_like(x[:,:,0,0,0])
+            ts[:,:-1] = alpha
+            
+            # Setup diffusion steps - 4 for context, 1 for generated
+            d = torch.ones_like(x[:,:,0,0,0])
+            d[:,:-1] = 4
+
+            # Get current controls
+            curr_mouse = extended_mouse[:,frame_idx:frame_idx+self.window_length]
+            curr_btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
+
+            # Generate new frame
+            pred = model.sample(x, keyframe, curr_mouse, curr_btn, None, ts, d)
+            new_frame = pred[:,-1:] # Take only the last frame
+            new_frames.append(new_frame)
+            
+            # Add new frame to window history
+            window_history = torch.cat([window_history, new_frame], dim=1)
+
+        new_frames = torch.cat(new_frames, dim=1)
+        x = torch.cat([history, new_frames], dim=1)
+
+        if self.only_return_generated:
+            x = x[:,-self.num_frames:]
+            extended_mouse = extended_mouse[:,-self.num_frames:]
+            extended_btn = extended_btn[:,-self.num_frames:]
+
+        if decode_fn is not None:
+            x = x * scale
+            x = decode_fn(x)
+
+        return x, extended_mouse, extended_btn
+
+class WindowShortcutSamplerNoKeyframe:
+    """
+    Same as above but with no cache
+
+    :param window_length: Number of frames to use for each frame generation step
+    :param num_frames: Number of new frames to sample
+    :param only_return_generated: Whether to only return the generated frames
+    """
+    def __init__(self, window_length = 60, num_frames = 60, only_return_generated = False):
+        self.window_length = window_length
+        self.num_frames = num_frames
+        self.only_return_generated = only_return_generated
+
+    @torch.no_grad()
+    def __call__(self, model, history, mouse, btn, decode_fn = None, scale = 1):
         # history is [b,n,c,h,w]
         # mouse is [b,n,2]
         # btn is [b,n,n_button]
