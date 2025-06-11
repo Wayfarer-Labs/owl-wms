@@ -16,6 +16,7 @@ from ..nn.embeddings import (
 )
 from ..nn.attn import UViT, FinalLayer
 from ..nn.mmattn import MMUViT
+from ..utils import freeze
 
 class ShortcutGameRFTCore(nn.Module):
     def __init__(self, config):
@@ -110,7 +111,6 @@ class ShortcutGameRFT(nn.Module):
         self.core = ShortcutGameRFTCore(config)
         self.cfg_prob = config.cfg_prob
 
-        self.ema = None
         self.sc_frac = 0.25
         self.sc_max_steps = 128
         self.cfg_scale = 1.3
@@ -119,10 +119,13 @@ class ShortcutGameRFT(nn.Module):
     
     def set_ema(self, ema):
         if hasattr(ema.ema_model, 'module'):
-            self.ema = ema.ema_model.module.core
+            ema = ema.ema_model.module.core
         else:
-            self.ema = ema.ema_model.core
-
+            ema = ema.ema_model.core
+            
+        self.ema = ema
+        freeze(self.ema)
+        
     #@torch.compile()
     @torch.no_grad()
     def get_sc_targets(self, x, y, mouse, btn):

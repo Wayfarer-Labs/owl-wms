@@ -102,10 +102,6 @@ class ShortcutTrainer(BaseTrainer):
             update_after_step = 0,
             update_every = 1
         )
-        if self.world_size > 1:
-            self.model.module.set_ema(self.ema)
-        else:
-            self.model.set_ema(self.ema)
         #torch.compile(self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core, dynamic=False, fullgraph=True)
 
         def get_ema_core():
@@ -120,6 +116,11 @@ class ShortcutTrainer(BaseTrainer):
         if self.train_cfg.scheduler is not None:
             self.scheduler = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
 
+        if self.world_size > 1:
+            self.model.module.set_ema(self.ema)
+        else:
+            self.model.set_ema(self.ema)
+        
         # Grad accum setup and scaler
         accum_steps = self.train_cfg.target_batch_size // self.train_cfg.batch_size // self.world_size
         accum_steps = max(1, accum_steps)
@@ -153,8 +154,7 @@ class ShortcutTrainer(BaseTrainer):
                     loss = loss / accum_steps
 
                 self.scaler.scale(loss).backward()
-                #find_unused_params(self.model)
-
+                    
                 metrics.log('diffusion_loss', diff_loss)
                 metrics.log('shortcut_loss', sc_loss)
 
