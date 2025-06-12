@@ -188,11 +188,14 @@ if __name__ == "__main__":
     start = time.time()
     batch = next(iter(loader))
     video_latent, audio_latent, mouse, button = batch
-    BASE_IDX=1
-    torch.save(video_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/video_latent.pt")
-    torch.save(audio_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/audio_latent.pt")
-    torch.save(mouse,        f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/mouse.pt")
-    torch.save(button,       f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/buttons.pt")
+    for i in range(2, 6):
+        BASE_IDX=i
+        basedir = f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}"
+        os.makedirs(basedir, exist_ok=True)
+        torch.save(video_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/video_latent.pt")
+        torch.save(audio_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/audio_latent.pt")
+        torch.save(mouse,        f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/mouse.pt")
+        torch.save(button,       f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/buttons.pt")
     end = time.time()
     first_time = end - start
     
