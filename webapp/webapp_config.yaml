@@ -1,18 +1,18 @@
-model_checkpoint_path: "webapp/checkpoints/av_dfot_35k_ema_200m.pt"
-run_config_path: "webapp/checkpoints/av.yml"
+run_config_path: "webapp/checkpoints/configs/av.yml"
 device: "cuda"
 
 stream_config:
-  fps: 20
+  fps: 10
   frames_per_batch: 1
   device: "cuda"
   n_buttons: 11
   n_mouse_axes: 2
   mouse_range: [-1.0, 1.0]
-  video_latent_history_path: "webapp/static/histories/base/video_latent.pt"
-  audio_latent_history_path: "webapp/static/histories/base/audio_latent.pt"
-  mouse_history_path: "webapp/static/histories/base/mouse.pt"
-  button_history_path: "webapp/static/histories/base/button.pt"
+  video_latent_history_path: "webapp/static/histories/base1/video_latent.pt"
+  audio_latent_history_path: "webapp/static/histories/base1/audio_latent.pt"
+  mouse_history_path: "webapp/static/histories/base1/mouse.pt"
+  button_history_path: "webapp/static/histories/base1/buttons.pt"
+  model_checkpoint_path: "webapp/checkpoints/models/av_dfot_35k_ema_200m.pt"
 
 sampling_config:
   sampling_steps: 20

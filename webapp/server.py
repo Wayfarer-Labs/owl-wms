@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv ; load_dotenv()
 
 from contextlib             import asynccontextmanager
 from fastapi                import FastAPI, WebSocket
@@ -10,7 +10,6 @@ from webapp.streaming       import StreamingFrameGenerator
 from webapp.user_session    import UserGameSession
 from webapp.utils.configs   import WebappConfig
 
-load_dotenv()
 
 DEBUG = True 
 

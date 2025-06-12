@@ -9,7 +9,6 @@ from owl_wms.configs import Config as RunConfig
 
 @dataclass
 class WebappConfig:
-    model_checkpoint_path : os.PathLike
     run_config : RunConfig
     stream_config : StreamingConfig
     sampling_config : SamplingConfig
@@ -40,6 +39,7 @@ class SamplingConfig:
 
 @dataclass
 class StreamingConfig:
+    model_checkpoint_path : os.PathLike
     fps: int = 20
     frames_per_batch: int = 1
     device: str = 'cuda'
