@@ -21,3 +21,4 @@ uvicorn[standard]
 accelerate
 boto3
 python-dotenv
+wandb[media]

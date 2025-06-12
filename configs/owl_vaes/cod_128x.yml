@@ -1,0 +1,53 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: dcae
+  sample_size: [360,640]
+  channels: 3
+  latent_size: 4
+  latent_channels: 128
+
+  noise_decoder_inputs: 0.0
+  ch_0: 128
+  ch_max: 1024
+
+  encoder_blocks_per_stage: [3, 3, 3, 3, 3, 3, 3, 3]
+  decoder_blocks_per_stage: [3, 3, 3, 3, 3, 3, 3, 3]
+
+  checkpoint_grads: true
+
+train:
+  trainer_id: rec
+  data_id: s3_cod
+  target_batch_size: 128
+  batch_size: 16
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-15
+
+  lpips_type: convnext
+  loss_weights:
+    latent_reg: 1.0e-6
+    lpips: 10.0
+    se_reg: 0.0
+
+  scheduler: LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 3000
+    min_lr: 5.0e-6
+
+  checkpoint_dir: checkpoints/cod_128x
+  resume_ckpt: null #checkpoints/2d_64x/step_10000.pt
+
+  sample_interval: 1000
+  save_interval: 5000
+
+wandb:
+  name: ${env:WANDB_USER_NAME}
+  project: new_vaes
+  run_name: 128x_cod

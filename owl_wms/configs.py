@@ -14,12 +14,13 @@ class TransformerConfig:
     n_heads : int = 12
     d_model : int = 384
     
-    tokens_per_frame: int = 16
-    n_buttons : int = 8
-    n_mouse_axes : int = 2
+    audio_channels : int = 64
 
     cfg_prob : float = 0.1
-    n_frames : int = 60
+    n_buttons : int = 8
+    tokens_per_frame : int = 16
+    audio_tokens : int = 0
+    n_frames : int = 120
 
     causal : bool = False
 
