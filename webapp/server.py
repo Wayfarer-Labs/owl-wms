@@ -56,6 +56,7 @@ def main():
     global DEBUG
     import argparse
     import uvicorn
+
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
@@ -63,10 +64,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     args = parser.parse_args()
     
-    # Fix the DEBUG logic
-    if args.debug and args.no_debug:
-        raise ValueError("Cannot have both --debug and --no-debug flags")
-    
+
     if args.debug:
         DEBUG = True
     elif args.no_debug:
