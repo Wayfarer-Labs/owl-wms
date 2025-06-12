@@ -56,7 +56,7 @@ class UserGameSession:
                 mouse, button = await self.action_collector.collect_actions()
                 # Generate Y frames from X actions by taking the X[-1]'th action. Typically, X >> Y, because they are sampled at uncapped FPS from the UI,
                 #  whereas Y frames are sampled from the model one at a time.
-                video_frames, overlay_frames = await self.frame_generator.generate_frames(mouse, button)
+                video_frames, audio_frames = await self.frame_generator.generate_frames(mouse, button)
                 # Queue frames for streaming at a capped FPS. If model predictions speed up or slow down, it won't cause any dilation of frames being displayed.
                 # However, if the model predictions are too slow, the frames will be displayed at a lower FPS than the capped FPS.
                 await self.frame_buffer.queue_frames(video_frames, mouse, button)

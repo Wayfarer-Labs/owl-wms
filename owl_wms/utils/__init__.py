@@ -96,7 +96,7 @@ def batch_permute_to_length(mouse, button, length):
     # Calculate how many times we need to double n to exceed length
     n = mouse.shape[1]
     factor = 0
-    doubled_length = n
+    doubled_length = mouse.shape[1]
     while doubled_length < length:
         factor += 1
         doubled_length *= 2

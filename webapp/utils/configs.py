@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 import yaml
-from typing import Optional
+import torch
 from dataclasses import dataclass
 
-from owl_wms.configs import Config as RunConfig, TransformerConfig as ModelConfig, TrainingConfig
+from owl_wms.configs import Config as RunConfig
 
 @dataclass
 class WebappConfig:
@@ -41,18 +41,38 @@ class SamplingConfig:
 @dataclass
 class StreamingConfig:
     fps: int = 20
-    frames_per_batch: int = 8
-    window_length: int = 60
+    frames_per_batch: int = 1
     device: str = 'cuda'
     n_buttons: int = 11
     n_mouse_axes: int = 2
     mouse_range: tuple[float, float] = (-1.0, 1.0)
-    action_margin_px_height: int = 150
+    video_latent_history_path: os.PathLike = None
+    audio_latent_history_path: os.PathLike = None
+    mouse_history_path: os.PathLike = None
+    button_history_path: os.PathLike = None
 
     @property
-    def frame_interval(self) -> float:
-        return 1.0 / self.fps
+    def frame_interval(self) -> float: return 1.0 / self.fps
 
     @property
-    def batch_duration(self) -> float:
-        return self.frames_per_batch / self.fps
+    def batch_duration(self) -> float: return self.frames_per_batch / self.fps
+
+    @property
+    def video_latent_history(self) -> torch.Tensor:
+        if self.video_latent_history_path is None:  raise ValueError("video_latent_history_path is not set")
+        return torch.load(self.video_latent_history_path)
+    
+    @property
+    def audio_latent_history(self) -> torch.Tensor:
+        if self.audio_latent_history_path is None:  raise ValueError("audio_latent_history_path is not set")
+        return torch.load(self.audio_latent_history_path)
+    
+    @property
+    def mouse_history(self) -> torch.Tensor:
+        if self.mouse_history_path is None:         raise ValueError("mouse_history_path is not set")
+        return torch.load(self.mouse_history_path)
+    
+    @property
+    def button_history(self) -> torch.Tensor:
+        if self.button_history_path is None:         raise ValueError("button_history_path is not set")
+        return torch.load(self.button_history_path)

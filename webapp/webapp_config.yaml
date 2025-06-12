@@ -1,0 +1,27 @@
+model_checkpoint_path: "webapp/checkpoints/av_dfot_35k_ema_200m.pt"
+run_config_path: "webapp/checkpoints/av.yml"
+device: "cuda"
+
+stream_config:
+  fps: 20
+  frames_per_batch: 1
+  device: "cuda"
+  n_buttons: 11
+  n_mouse_axes: 2
+  mouse_range: [-1.0, 1.0]
+  video_latent_history_path: "webapp/static/histories/base/video_latent.pt"
+  audio_latent_history_path: "webapp/static/histories/base/audio_latent.pt"
+  mouse_history_path: "webapp/static/histories/base/mouse.pt"
+  button_history_path: "webapp/static/histories/base/button.pt"
+
+sampling_config:
+  sampling_steps: 20
+  vae_scale: 1.0
+  cfg_scale: 1.3
+  window_length: 60
+  num_frames: 1
+  noise_prev: 0.25
+
+run_config: null # loaded at runtime from model_config_path, and used to access model and train config
+
+

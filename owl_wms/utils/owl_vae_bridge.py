@@ -69,25 +69,6 @@ def make_batched_decode_fn(decoder, batch_size = 8):
     return decode
 
 @torch.no_grad()
-<<<<<<< HEAD
-def make_batched_encode_fn(encoder, batch_size=8):
-    def encode(x):
-        # x is [b,n,c,h,w] RGB frames
-        b,n,c,h,w = x.shape
-        x = x.view(b*n,c,h,w).contiguous()
-
-        batches = x.split(batch_size)
-        batch_out = []
-        for batch in batches:
-            batch_out.append(encoder(batch).bfloat16())
-
-        x = torch.cat(batch_out) # [b*n,latent_c,latent_h,latent_w]
-        _,latent_c,latent_h,latent_w = x.shape
-        x = x.view(b,n,latent_c,latent_h,latent_w).contiguous()
-
-        return x
-    return encode
-=======
 def make_batched_audio_decode_fn(decoder, batch_size = 8):
     def decode(x):
         # x is [b,n,c] audio samples
@@ -104,4 +85,3 @@ def make_batched_audio_decode_fn(decoder, batch_size = 8):
 
         return x
     return decode
->>>>>>> causvid

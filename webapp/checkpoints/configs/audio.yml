@@ -1,0 +1,57 @@
+model:
+  model_id: audio_ae
+
+  channels: 2
+  latent_channels: 64
+  ch_0: 128
+  ch_max: 512
+
+  strides: [3, 5, 7, 7, 1]
+
+  eq: true
+  checkpoint_grads: true
+
+train:
+  trainer_id: audio_rec
+  data_id: local_cod_audio
+  data_kwargs:
+    window_length: 88200
+    root: "../cod_download/raw"
+
+  target_batch_size: 128
+  batch_size: 16
+  epochs: 100
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-4
+    eps: 1.0e-15
+    betas: [0.9, 0.95]
+    weight_decay: 1.0e-4
+
+  loss_weights:
+    recon: 2.5
+    stft: 1.5
+    kl: 1.0e-5
+    lr_ms_ratio: 0.5
+    hubert: 0.0
+    crt: 4.0
+
+  sample_rate: 44100
+  n_fft_list: [1024, 2048, 512]
+
+  scheduler: LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 1500
+    min_lr: 1.0e-6
+
+  checkpoint_dir: webapp/checkpoints/models/audio_20k_ema.pt
+  sample_interval: 500
+  save_interval: 5000
+
+  resume_ckpt: null
+
+wandb:
+  name: ${env:WANDB_USER_NAME}
+  project: owl_audio_vaes
+  run_name: audio_ae_baseline

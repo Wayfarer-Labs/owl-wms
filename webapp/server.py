@@ -1,39 +1,30 @@
 import os
-from torch import nn
+from dotenv import load_dotenv
 
 from contextlib             import asynccontextmanager
 from fastapi                import FastAPI, WebSocket
 from fastapi.staticfiles    import StaticFiles
 from fastapi.responses      import FileResponse
 
-from webapp.utils.models    import load_models
 from webapp.streaming       import StreamingFrameGenerator
 from webapp.user_session    import UserGameSession
 from webapp.utils.configs   import WebappConfig
 
+load_dotenv()
 
 DEBUG = True 
 
 # -- lifespan
-encoder: nn.Module      = None
-decoder: nn.Module      = None
 config: WebappConfig    = None
-webapp_config_path      = "./configs/webapp/config.yaml" ; assert os.path.exists(webapp_config_path)
+webapp_config_path      = "./webapp/webapp_config.yaml" ; assert os.path.exists(webapp_config_path)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global encoder, decoder, config, DEBUG
+    global config, DEBUG
     config = WebappConfig.from_yaml(webapp_config_path)
-    if not DEBUG:
-        encoder, decoder, _ = load_models(
-            checkpoint_path=config.model_checkpoint_path,
-            config_path=config.run_config_path,
-            device=config.device, verbose=True,
-        )
-
     yield
-    encoder, decoder, config = None, None, None
+    config = None
 
 
 def run():
@@ -51,11 +42,8 @@ def run():
         await websocket.accept()
         
         # Create streaming session for this user
-        frame_generator = StreamingFrameGenerator(encoder, decoder,
-                                                  streaming_config=config.stream_config,
-                                                  model_config=config.run_config.model,
-                                                  train_config=config.run_config.train,
-                                                  sampling_config=config.sampling_config,
+        frame_generator = StreamingFrameGenerator(streaming_config=config.stream_config,
+                                                  run_config=config.run_config,
                                                   debug=DEBUG)
         session = UserGameSession(frame_generator)
         await session.run_session(websocket)

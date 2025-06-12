@@ -183,7 +183,7 @@ def get_loader(batch_size, **data_kwargs):
 
 if __name__ == "__main__":
     import time
-    loader = get_loader(16, window_length = 120, file_share_max = 20, include_audio = True)
+    loader = get_loader(1, window_length = 30, file_share_max = 20)
 
     start = time.time()
     batch = next(iter(loader))

@@ -1,16 +1,12 @@
-import math
 import time
 import torch
 import asyncio
-import numpy as np
 from torch import nn
-from typing import Optional
-from functools import cached_property
 
-from webapp.utils.create_samplers                  import create_sampler
-from webapp.utils.configs                   import SamplingConfig, StreamingConfig
-from owl_wms.configs                        import TrainingConfig, TransformerConfig as ModelConfig
-from webapp.utils.visualize_overlay_actions import _draw_video as _draw_action_overlays
+from webapp.utils.configs                           import StreamingConfig
+from webapp.utils.av_window_inference_pipeline      import AV_WindowInferencePipeline
+from owl_wms.configs                                import Config as RunConfig
+
 
 class FrameBuffer:
     """
@@ -54,111 +50,39 @@ class FrameBuffer:
 class StreamingFrameGenerator:
     """Wraps WindowCFGSampler to generate frames."""
     
-    def __init__(self, encoder: nn.Module, decoder: nn.Module,
-                 streaming_config: StreamingConfig,
-                 model_config: ModelConfig,
-                 train_config: TrainingConfig,
-                 sampling_config: SamplingConfig,
-                 debug: bool = False):
+    def __init__(self,
+                 streaming_config:  StreamingConfig,
+                 run_config:        RunConfig,
+                 debug:             bool = False):
+        
+        self.run_config       = run_config
         self.streaming_config = streaming_config
-        self.model_config     = model_config
-        self.train_config     = train_config
-        self.sampling_config  = sampling_config
         self.debug            = debug
 
-        self.encoder = encoder
-        self.decoder = decoder
-        # 
-        # Create WindowCFGSampler for frame generation
-        self.sample_window_fn = create_sampler('window', encoder, decoder,
-                                             batch_size=1,
-                                             n_steps=self.sampling_config.sampling_steps,
-                                             vae_scale=self.sampling_config.vae_scale,
-                                             cfg_scale=self.sampling_config.cfg_scale,
-                                             window_length=self.sampling_config.window_length,
-                                             num_frames=self.sampling_config.num_frames,
-                                             noise_prev=self.sampling_config.noise_prev,
-                                             only_return_generated=True)
-        # Initialize frame history as empty tensor
-        self.latent_history: Optional[torch.Tensor] = None
-        self.mouse_history:  Optional[torch.Tensor] = None
-        self.button_history: Optional[torch.Tensor] = None
+        self.av_window_inference_pipeline = AV_WindowInferencePipeline(
+            config                  = self.run_config,
+            video_latent_history    = self.streaming_config.video_latent_history,
+            audio_latent_history    = self.streaming_config.audio_latent_history,
+            mouse_history           = self.streaming_config.mouse_history,
+            button_history          = self.streaming_config.button_history,
+            return_only_generated   = True,
+            compile                 = True
+        )
 
-    def add_to_history(self, frame_batch: torch.Tensor, mouse_batch: torch.Tensor, button_batch: torch.Tensor):
-        if self.latent_history is None:
-            self.latent_history = frame_batch
-            self.mouse_history  = mouse_batch
-            self.button_history = button_batch
-            return
 
-        self.latent_history  = torch.cat([self.latent_history, frame_batch],    dim=0)
-        self.mouse_history   = torch.cat([self.mouse_history, mouse_batch],     dim=0)
-        self.button_history  = torch.cat([self.button_history, button_batch],   dim=0)
-        # cap this at around 60 frames
-        if self.latent_history.shape[0] > self.streaming_config.window_length:
-            self.latent_history  = self.latent_history[-self.streaming_config.window_length:]
-            self.mouse_history   = self.mouse_history [-self.streaming_config.window_length:]
-            self.button_history  = self.button_history[-self.streaming_config.window_length:]
 
-    def get_latent_history_batch(self) -> torch.Tensor:
-        if self.latent_history.numel() == 0:
-            return self.dummy_batch
-        
-        return self.latent_history.unsqueeze(0)
-
-    @cached_property
-    def dummy_batch(self) -> torch.Tensor:
-        """Dummy autoencoder latents for the sampler to initialize shapes."""
-        tokens_h = tokens_w = int(math.sqrt(self.model_config.tokens_per_frame))
-        dummy_frames = torch.randn(
-            1, self.streaming_config.window_length,
-            self.model_config.channels, tokens_h, tokens_w,
-            device=self.streaming_config.device, dtype=torch.bfloat16)
-        return dummy_frames
-    
-
-    def overlay_actions(self,
-                        video: torch.Tensor,
-                        mouse: torch.Tensor, button: torch.Tensor,
-                        action_margin_px_height: int = 150) -> torch.Tensor:
-        num_frames, channels, height, width = video.shape
-        action_height = height + action_margin_px_height
-        action_width  = width
-        action_video  = torch.zeros((num_frames, action_height, action_width, channels), # [n h w c]
-                                    device=self.streaming_config.device, dtype=torch.bfloat16)
-        # Copy video into top portion of action video
-        action_video[:, :height, :, :]    = video.permute(0, 2, 3, 1) # [n c h w] -> [n h w c]
-        action_video_np: list[np.ndarray] = _draw_action_overlays(action_video, button, mouse)
-        action_video                      = [torch.from_numpy(frame) for frame in action_video_np]
-        action_video                      = torch.stack(action_video).permute(0, 3, 1, 2) # [n h w c] -> [n c h w]
-        return action_video
-
-    def create_overlay_only(self,
-                           video: torch.Tensor,
-                           mouse: torch.Tensor, button: torch.Tensor,
-                           action_margin_px_height: int = 150) -> torch.Tensor:
-        num_frames, channels, height, width = video.shape
-        # Create overlay-only frames with just the action margin height
-        action_video = torch.zeros((num_frames, action_margin_px_height, width, channels), # [n h w c]
-                                   device=self.streaming_config.device, dtype=torch.bfloat16)
-        action_video_np: list[np.ndarray] = _draw_action_overlays(action_video, button, mouse)
-        action_video = [torch.from_numpy(frame) for frame in action_video_np]
-        action_video = torch.stack(action_video).permute(0, 3, 1, 2) # [n h w c] -> [n c h w]
-        return action_video
-
-    async def generate_frames(self, mouse: torch.Tensor, button: torch.Tensor,
-                                    action_margin_px_height: int = 150) -> tuple[torch.Tensor, torch.Tensor]:
+    async def generate_frames(self, mouse: torch.Tensor, button: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Generate window_length frames, return separate video and overlay frames for streaming.
         
         Args:
-            mouse:  [window_length, 2] 
-            button: [window_length, n_buttons]
+            mouse:  [window_length, 2] , user input mouse
+            button: [window_length, n_buttons] , user input button
             
         Returns:
-            tuple: (video_frames, overlay_frames)
+            tuple: (video_frames, audio_frames)
             video_frames: [frames_per_batch, 3, 256, 256] - pure video frames
-            overlay_frames: [frames_per_batch, 3, action_margin_px_height, 256] - action overlay frames
+            audio_frames: [frames_per_batch, 2] - audio frames
         """
         mouse = mouse.to(self.streaming_config.device)
         button = button.to(self.streaming_config.device)
@@ -174,6 +98,7 @@ class StreamingFrameGenerator:
                 (col_indices - 128) / 127.0   # Second half: 0 to 1
             ).view(1, 1, 1, -1)  # [1, 1, 1, 256]
             full_frames = gradient.expand(num_frames, 3, 256, 256).to(torch.bfloat16)
+            audio_frames = torch.randn(num_frames, 2, device=self.streaming_config.device, dtype=torch.bfloat16)
             # to between 0 and 1
             full_frames = (full_frames - full_frames.min()) / (full_frames.max() - full_frames.min())
             # between 0 and 255
@@ -181,24 +106,22 @@ class StreamingFrameGenerator:
         else:
             device_type = 'cuda' if self.streaming_config.device.type == 'cuda' else 'cpu'
             with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                latents, full_frames = self.sample_window_fn(dummy_batch=self.get_latent_history_batch(),
-                                                             mouse=mouse.float().unsqueeze(0),
-                                                             btn=button.float().unsqueeze(0))  # [1, window_length, 3, 256, 256]
-                # remove batch dimension, it returns the frames we generated, since we pass in only_return_generated=True
-                latents     = latents       [0, ::]
-                full_frames = full_frames   [0, ::]
-                # then, convert the frames to a pixel-range of [0-255] from [-1,1]
-                full_frames = (full_frames + 1) / 2
-                full_frames = (full_frames * 255).to(torch.uint8)
-                self.add_to_history(latents, mouse, button)
+                full_frames, audio_frames = self.av_window_inference_pipeline(
+                    mouse=mouse.float().unsqueeze(0),  # NOTE Need batch dimension
+                    button=button.float().unsqueeze(0) # NOTE Need batch dimension
+                )  # [1, window_length, 3, 256, 256], [1, window_length, 2]
 
-        # Create overlay frames separately
-        overlay_frames = self.create_overlay_only(full_frames, mouse, button, action_margin_px_height)
-        
-        return full_frames, overlay_frames  # [window_length, 3, 256, 256], [window_length, 3, action_margin_px_height, 256]
+                full_frames  = full_frames  [0, ::] # remove batch dimension
+                audio_frames = audio_frames [0, ::] # remove batch dimension
+                # then, convert the frames to a pixel-range of [0-255] from [-1,1]
+                full_frames  = (full_frames  + 1) / 2
+                full_frames  = (full_frames  * 255).to(torch.uint8) # [window_length, 3, 256, 256]
+
+        return full_frames, audio_frames  # [window_length, 3, 256, 256], [window_length, 2]
+
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        del self.encoder, self.decoder ; torch.cuda.empty_cache()
+        del torch.cuda.empty_cache()

@@ -64,6 +64,11 @@ class TrainingConfig:
     vae_scale : float = 0.34
     vae_batch_size: int = 4
 
+    audio_vae_id : str = None
+    audio_vae_cfg_path : str = None
+    audio_vae_ckpt_path : str = None
+    audio_vae_scale : float = 0.17
+
 @dataclass
 class WANDBConfig:
     name : str = None
