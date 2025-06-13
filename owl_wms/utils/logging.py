@@ -6,7 +6,9 @@ import einops as eo
 
 import numpy as np
 from .vis import draw_frames
-from moviepy.editor import ImageSequenceClip, AudioClip, AudioArrayClip
+from moviepy.editor import ImageSequenceClip, CompositeVideoClip
+from moviepy.audio.AudioClip import AudioArrayClip
+
 import os
 
 class LogHelper:
