@@ -6,6 +6,7 @@ import einops as eo
 
 import numpy as np
 from .vis import draw_frames
+from moviepy.editor import ImageSequenceClip, AudioClip
 
 class LogHelper:
     """
@@ -126,68 +127,41 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     # Get labels on frames
     x = draw_frames(x, batch_mouse, batch_btn) # -> [b,n,c,h,w] [0,255] uint8 np
     
-    # Convert audio to numpy float32 [-1,1]
-    audio = audio.cpu().float().numpy()
+    # Convert both to list of [n,h,w,c] and [n,2] numpy arrays
+    x = [np.moveaxis(x[i], 1, -1) for i in range(len(x))]
+    audio = [audio[i] for i in range(len(audio))]
 
-    import os
-    import tempfile
-    import subprocess
-    import numpy as np
+    os.makedirs("temp_vids", exist_ok = True)
+    paths = [f'temp_vids/temp_{i}.mp4' for i in range(len(x))]
+    for i, path in enumerate(paths):
+        write_video_with_audio(path, x[i], audio[i])
 
-    tmp_paths = []
-    for i in range(len(x)):
-        # Create temporary directory if it doesn't exist
-        tmp_dir = os.path.join(tempfile.gettempdir(), 'wandb_videos')
-        os.makedirs(tmp_dir, exist_ok=True)
-        
-        # Create temporary paths for video, audio and final output
-        tmp_video = os.path.join(tmp_dir, f'video_{i}_temp.mp4')
-        tmp_audio = os.path.join(tmp_dir, f'audio_{i}_temp.wav')
-        tmp_final = os.path.join(tmp_dir, f'video_{i}.mp4')
-        
-        # Save frames as raw video using ffmpeg
-        p = subprocess.Popen([
-            'ffmpeg', '-y',
-            '-f', 'rawvideo',
-            '-vcodec', 'rawvideo',
-            '-s', f'{x[i].shape[2]}x{x[i].shape[1]}',  # width x height
-            '-pix_fmt', 'rgb24',
-            '-r', '60',  # fps
-            '-i', '-',  # Read from pipe
-            '-c:v', 'libx264',
-            '-preset', 'fast',
-            tmp_video
-        ], stdin=subprocess.PIPE)
-        
-        p.stdin.write(x[i].tobytes())
-        p.stdin.close()
-        p.wait()
+    return [wandb.Video(path, format='mp4') for path in paths]
 
-        # Save audio as wav
-        audio_data = (audio[i] * 32767).astype(np.int16)  # Convert to 16-bit PCM
-        subprocess.run([
-            'ffmpeg', '-y',
-            '-f', 's16le',  # 16-bit signed little endian
-            '-ar', '44100',  # sample rate
-            '-ac', '2',  # stereo
-            '-i', '-',  # Read from pipe
-            tmp_audio
-        ], input=audio_data.tobytes())
+def write_video_with_audio(path, vid, audio, fps=60,audio_fps=44100):
+    """
+    Writes videos with audio to a path at given fps and sample rate
 
-        # Combine video and audio
-        subprocess.run([
-            'ffmpeg', '-y',
-            '-i', tmp_video,
-            '-i', tmp_audio,
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            tmp_final
-        ])
+    :param video: [n,h,w,c] [0,255] uint8 np array
+    :param audio: [n,2] stereo audio as np array norm to [-1,1]
+    """
+    # Create video clip from image sequence
+    video_clip = ImageSequenceClip(list(vid), fps=fps)
+    
+    # Create audio clip from array
+    audio_clip = AudioArrayClip(audio, fps=audio_fps)
+    
+    # Combine video with audio
+    video_with_audio = video_clip.set_audio(audio_clip)
+    
+    # Write to file
+    video_with_audio.write_videofile(
+        path, 
+        fps=fps,
+        codec='libx264',
+        audio_codec='aac',
+        temp_audiofile='temp-audio.m4a',
+        remove_temp=True
+    )
 
-        # Cleanup temp files
-        os.remove(tmp_video)
-        os.remove(tmp_audio)
-        
-        tmp_paths.append(tmp_final)
-
-    return [wandb.Video(path, format='mp4') for path in tmp_paths]
+    
