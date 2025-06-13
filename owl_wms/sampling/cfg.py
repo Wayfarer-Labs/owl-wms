@@ -29,10 +29,10 @@ class CFGSampler:
             x = x - pred*dt
             ts = ts - dt
 
+        pixels = None
         if decode_fn is not None:
-            x = x * scale 
-            x = decode_fn(x)
-        return x, mouse, btn
+            pixels = decode_fn(x * scale)
+        return x, pixels, mouse, btn
 
 class InpaintCFGSampler(CFGSampler):
     @torch.no_grad()
@@ -63,15 +63,21 @@ class InpaintCFGSampler(CFGSampler):
             x[:, mid:] = x[:, mid:] - pred[:, mid:]*dt
             ts[:, mid:] = ts[:, mid:] - dt
 
+        pixels = None
         if decode_fn is not None:
-            x = x * scale
-            x = decode_fn(x)
-        return x, mouse, btn
+            pixels = decode_fn(x * scale)
+        return x, pixels, mouse, btn
+
+
+def zlerp(x, alpha):
+    z = torch.randn_like(x)
+    return x * (1. - alpha) + z * alpha
+
 
 if __name__ == "__main__":
     model = lambda x,t,m,b: x
 
     sampler = CFGSampler()
-    x = sampler(model, torch.randn(4, 128, 16, 128), 
+    x, pixels = sampler(model, torch.randn(4, 128, 16, 128), 
                 torch.randn(4, 128, 2), torch.randn(4, 128, 11))
     print(x.shape)

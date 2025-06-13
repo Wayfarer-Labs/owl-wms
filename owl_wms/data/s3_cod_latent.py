@@ -33,13 +33,15 @@ NUM_TARS=9
 BUCKET_NAME="cod-data-latent-360x640to5x8"
 
 class S3CoDLatentDataset(IterableDataset):
-    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1):
+    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1, bucket_name = BUCKET_NAME, include_keyframe = False):
         super().__init__()
         
         self.window = window_length
         self.file_share_max = file_share_max
         self.rank = rank
         self.world_size = world_size
+        self.include_keyframe = include_keyframe
+        self.bucket_name = bucket_name
 
         # Queue parameters
         self.max_tars = 2
@@ -79,7 +81,7 @@ class S3CoDLatentDataset(IterableDataset):
                 tar_path = self.random_sample_prefix()
                 try:
                     # Download tar directly to memory
-                    response = self.s3_client.get_object(Bucket=BUCKET_NAME, Key=tar_path)
+                    response = self.s3_client.get_object(Bucket=self.bucket_name, Key=tar_path)
                     tar_data = response['Body'].read()
                     self.tar_queue.add(tar_data)
                 except Exception as e:
@@ -140,8 +142,23 @@ class S3CoDLatentDataset(IterableDataset):
                                     latent_slice = latent[window_start:window_start+self.window].float()
                                     mouse_slice = mouse[window_start:window_start+self.window]
                                     button_slice = button[window_start:window_start+self.window]
-                                    
-                                    self.data_queue.add((latent_slice, mouse_slice, button_slice))
+
+                                    if self.include_keyframe:
+                                        # Sample keyframe from nearby in video but not in window
+                                        buffer = 400
+                                        valid_range_start = max(0, window_start - buffer)
+                                        valid_range_end = min(len(latent), window_start + self.window + buffer)
+                                        
+                                        # Exclude the actual window frames
+                                        valid_frames = list(range(valid_range_start, window_start)) + \
+                                                     list(range(window_start + self.window, valid_range_end))
+                                        
+                                        if valid_frames:
+                                            keyframe_idx = random.choice(valid_frames)
+                                            latent_keyframe = latent[keyframe_idx].float().unsqueeze(0)
+                                            self.data_queue.add((latent_slice, latent_keyframe, mouse_slice, button_slice))
+                                    else:
+                                        self.data_queue.add((latent_slice, mouse_slice, button_slice))
 
                 except Exception as e:
                     print(f"Error processing tar: {e}")
@@ -157,12 +174,25 @@ class S3CoDLatentDataset(IterableDataset):
                 time.sleep(0.1)
 
 def collate_fn(batch):
-    # batch is list of triples
-    latents, mouses, buttons = zip(*batch)
-    latents = torch.stack(latents)    # [b,n,c,h,w]
-    mouses = torch.stack(mouses)      # [b,n,2]
-    buttons = torch.stack(buttons)    # [b,n,n_buttons]
-    return latents, mouses, buttons
+    # batch is list of triples or quads
+    items = zip(*batch)
+    items = list(items)
+    
+    if len(items) == 3:
+        # No keyframe case
+        latents, mouses, buttons = items
+        latents = torch.stack(latents)    # [b,n,c,h,w]
+        mouses = torch.stack(mouses)      # [b,n,2] 
+        buttons = torch.stack(buttons)    # [b,n,n_buttons]
+        return latents, mouses, buttons
+    else:
+        # With keyframe case
+        latents, keyframes, mouses, buttons = items
+        latents = torch.stack(latents)      # [b,n,c,h,w]
+        keyframes = torch.stack(keyframes)  # [b,1,c,h,w]
+        mouses = torch.stack(mouses)        # [b,n,2]
+        buttons = torch.stack(buttons)      # [b,n,n_buttons]
+        return latents, keyframes, mouses, buttons
 
 def get_loader(batch_size, **data_kwargs):
     if dist.is_initialized():

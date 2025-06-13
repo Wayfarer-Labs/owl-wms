@@ -8,8 +8,6 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-#from .embeddings import FlatVideoRoPE
-from rotary_embedding_torch import RotaryEmbedding
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -53,7 +51,9 @@ class Attn(nn.Module):
             mask = None
         else:
             mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
+            mask = mask.to(device=x.device,dtype=x.dtype)
             mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
+            mask = mask.unsqueeze(1)
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)
@@ -81,9 +81,6 @@ class DiTBlock(nn.Module):
         super().__init__()
 
         dim = config.d_model
-
-        self.norm1 = LayerNorm(dim)
-        self.norm2 = LayerNorm(dim)
 
         self.attn = Attn(config)
         self.mlp = MLP(config)

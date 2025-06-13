@@ -1,7 +1,3 @@
-"""
-Trainer for reconstruction only
-"""
-
 import torch
 from ema_pytorch import EMA
 import wandb
@@ -184,7 +180,8 @@ class RFTTrainer(BaseTrainer):
                         if self.total_step_counter % self.train_cfg.sample_interval == 0:
                             with ctx, torch.no_grad():
                                 n_samples = self.train_cfg.n_samples
-                                samples, sample_mouse, sample_button = sampler(
+
+                                latents, samples, sample_mouse, sample_button = sampler(
                                     get_ema_core(),
                                     batch_vid[:n_samples],
                                     batch_mouse[:n_samples],

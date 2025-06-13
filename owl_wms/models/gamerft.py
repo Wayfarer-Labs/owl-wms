@@ -18,7 +18,7 @@ from ..nn.attn import UViT, FinalLayer
 class GameRFTCore(nn.Module):
     def __init__(self, config):
         super().__init__()
-
+        self.config = config
         self.transformer = UViT(config)
         self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
@@ -57,15 +57,17 @@ class GameRFT(nn.Module):
         self.core = GameRFTCore(config)
         self.cfg_prob = config.cfg_prob
     
-    def forward(self, x, mouse, btn):
+    def forward(self, x, mouse, btn, return_dict = False, cfg_prob = None):
         # x is [b,n,c,h,w]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
         b,n,c,h,w = x.shape
 
         # Apply classifier-free guidance dropout
-        if self.cfg_prob > 0.:
-            mask = torch.rand(b, device=x.device) < self.cfg_prob
+        if cfg_prob is None:
+            cfg_prob = self.cfg_prob
+        if cfg_prob > 0.0:
+            mask = torch.rand(b, device=x.device) <= self.cfg_prob
             null_mouse = torch.zeros_like(mouse)
             null_btn = torch.zeros_like(btn)
             
@@ -85,7 +87,16 @@ class GameRFT(nn.Module):
         pred = self.core(lerpd, ts, mouse, btn)
         diff_loss = F.mse_loss(pred, target)
 
-        return diff_loss
+        if not return_dict:
+            return diff_loss
+        else:
+            return {
+                'diffusion_loss' : diff_loss,
+                'lerpd' : lerpd, 
+                'pred' : pred,
+                'ts': ts,
+                'z': z
+            }
 
 if __name__ == "__main__":
     from ..configs import Config

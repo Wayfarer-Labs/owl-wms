@@ -1,0 +1,77 @@
+# Config for Self-Forcing training with autoregressive rollout
+model:
+  model_id: game_rft
+  sample_size: [5,8]
+  channels: 64
+  
+  n_layers: 17
+  n_heads: 20
+  d_model: 1280
+
+  tokens_per_frame: 40
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+  n_frames: 30
+
+  causal: true  # Enable causal attention
+
+train:
+  trainer_id: self_forcing
+  data_id: cod_latent
+  data_kwargs:
+    window_length: 30
+    root: ../cod_data/BlackOpsColdWar
+    add_optical_flow: false
+
+  target_batch_size: 256
+  batch_size: 32
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    eps: 1.0e-15
+    betas: [0.9, 0.95]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/self_forcing
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  sampler_id: window
+  sampler_kwargs:
+    n_steps: 20
+    cfg_scale: 1.3
+    window_length: 30
+    num_frames: 60
+    noise_prev: 0.2
+    only_return_generated: true
+
+  n_samples: 8
+
+  vae_id: dcae
+  vae_batch_size: 4
+  vae_scale: 0.35
+  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
+  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+
+  # Self-forcing specific parameters
+  # teacher_ckpt: checkpoints/bidirectional_teacher/best.pt  # Pretrained bidirectional model
+  teacher_ckpt: null  # Pretrained bidirectional model
+  loss_type: dmd  # Options: dmd, sid, gan
+  gradient_steps: 2  # Number of steps to backprop through
+  rollout_steps: 5   # Total autoregressive rollout length
+  stochastic_steps: true  # Random gradient truncation
+  update_ratio: 5    # Critic updates per generator update
+  cfg_scale: 1.3     # Classifier-free guidance scale
+
+wandb:
+  name: samibg
+  project: video_models
+  run_name: self_forcing_dmd
