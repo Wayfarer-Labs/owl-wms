@@ -13,13 +13,13 @@ from ..nn.embeddings import (
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import UViT, FinalLayer
+from ..nn.attn import DiT, FinalLayer
 
 class GameRFTCore(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.transformer = UViT(config)
+        self.transformer = DiT(config)
         self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
 
