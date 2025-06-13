@@ -131,7 +131,8 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
 
     import os
     import tempfile
-    from moviepy.editor import ImageSequenceClip, AudioArrayClip, CompositeVideoClip
+    import subprocess
+    import numpy as np
 
     tmp_paths = []
     for i in range(len(x)):
@@ -139,20 +140,54 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
         tmp_dir = os.path.join(tempfile.gettempdir(), 'wandb_videos')
         os.makedirs(tmp_dir, exist_ok=True)
         
-        # Create temporary path for this video
-        tmp_path = os.path.join(tmp_dir, f'video_{i}.mp4')
+        # Create temporary paths for video, audio and final output
+        tmp_video = os.path.join(tmp_dir, f'video_{i}_temp.mp4')
+        tmp_audio = os.path.join(tmp_dir, f'audio_{i}_temp.wav')
+        tmp_final = os.path.join(tmp_dir, f'video_{i}.mp4')
         
-        # Create video clip from frames
-        video_clip = ImageSequenceClip([frame for frame in x[i]], fps=60)
+        # Save frames as raw video using ffmpeg
+        p = subprocess.Popen([
+            'ffmpeg', '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{x[i].shape[2]}x{x[i].shape[1]}',  # width x height
+            '-pix_fmt', 'rgb24',
+            '-r', '60',  # fps
+            '-i', '-',  # Read from pipe
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            tmp_video
+        ], stdin=subprocess.PIPE)
         
-        # Create audio clip
-        audio_clip = AudioArrayClip(audio[i], fps=44100)  # Transpose to get channels last
-        
+        p.stdin.write(x[i].tobytes())
+        p.stdin.close()
+        p.wait()
+
+        # Save audio as wav
+        audio_data = (audio[i] * 32767).astype(np.int16)  # Convert to 16-bit PCM
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-f', 's16le',  # 16-bit signed little endian
+            '-ar', '44100',  # sample rate
+            '-ac', '2',  # stereo
+            '-i', '-',  # Read from pipe
+            tmp_audio
+        ], input=audio_data.tobytes())
+
         # Combine video and audio
-        final_clip = CompositeVideoClip([video_clip]).set_audio(audio_clip)
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-i', tmp_video,
+            '-i', tmp_audio,
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            tmp_final
+        ])
+
+        # Cleanup temp files
+        os.remove(tmp_video)
+        os.remove(tmp_audio)
         
-        # Write to file
-        final_clip.write_videofile(tmp_path, codec='libx264', audio_codec='aac', verbose=False, logger=None)
-        tmp_paths.append(tmp_path)
+        tmp_paths.append(tmp_final)
 
     return [wandb.Video(path, format='mp4') for path in tmp_paths]
