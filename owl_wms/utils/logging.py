@@ -117,7 +117,7 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     # audio is [b,n,2]
     x = x.clamp(-1, 1)
     x = x[:max_samples]
-    audio = audio[:max_samples].cpu().detach().numpy()
+    audio = audio[:max_samples].cpu().float().detach().numpy()
 
     if dist.is_initialized() and gather:
         gathered_x = [None for _ in range(dist.get_world_size())]
