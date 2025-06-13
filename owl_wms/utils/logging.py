@@ -76,7 +76,7 @@ def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):
     return wandb.Video(x, format='gif',fps=60)
 
 @torch.no_grad()
-def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
+def _to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
     # x is [b,n,c,h,w]
     # audio is [b,n,2]
     x = x.clamp(-1, 1)
@@ -106,3 +106,53 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     audio_samples = [wandb.Audio(audio[i], sample_rate=44100) for i in range(len(audio))]
 
     return video, audio_samples
+
+@torch.no_grad()
+def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
+    # x is [b,n,c,h,w]
+    # audio is [b,n,2]
+    x = x.clamp(-1, 1)
+    x = x[:max_samples]
+    audio = audio[:max_samples]
+
+    if dist.is_initialized() and gather:
+        gathered_x = [None for _ in range(dist.get_world_size())]
+        gathered_audio = [None for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered_x, x)
+        dist.all_gather(gathered_audio, audio)
+        x = torch.cat(gathered_x, dim=0)
+        audio = torch.cat(gathered_audio, dim=0)
+
+    # Get labels on frames
+    x = draw_frames(x, batch_mouse, batch_btn) # -> [b,n,c,h,w] [0,255] uint8 np
+    
+    # Convert audio to numpy float32 [-1,1]
+    audio = audio.cpu().float().numpy()
+
+    import os
+    import tempfile
+    from moviepy.editor import ImageSequenceClip, AudioArrayClip, CompositeVideoClip
+
+    tmp_paths = []
+    for i in range(len(x)):
+        # Create temporary directory if it doesn't exist
+        tmp_dir = os.path.join(tempfile.gettempdir(), 'wandb_videos')
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        # Create temporary path for this video
+        tmp_path = os.path.join(tmp_dir, f'video_{i}.mp4')
+        
+        # Create video clip from frames
+        video_clip = ImageSequenceClip([frame for frame in x[i]], fps=60)
+        
+        # Create audio clip
+        audio_clip = AudioArrayClip(audio[i], fps=44100)  # Transpose to get channels last
+        
+        # Combine video and audio
+        final_clip = CompositeVideoClip([video_clip]).set_audio(audio_clip)
+        
+        # Write to file
+        final_clip.write_videofile(tmp_path, codec='libx264', audio_codec='aac', verbose=False, logger=None)
+        tmp_paths.append(tmp_path)
+
+    return [wandb.Video(path, format='mp4') for path in tmp_paths]

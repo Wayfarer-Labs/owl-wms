@@ -55,7 +55,7 @@ train:
     noise_prev: 0.2
     only_return_generated: false
 
-  n_samples: 8
+  n_samples: 4
 
   vae_id: null
   vae_batch_size: 4
