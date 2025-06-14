@@ -8,3 +8,5 @@ diffusers
 accelerate
 boto3
 python-dotenv
+wandb[media]
+moviepy==1.0.3

@@ -13,11 +13,14 @@ class TransformerConfig:
     
     patch_size : int = 1
     channels : int = 128
+    audio_channels : int = 64
     sample_size : int = 16
 
     cfg_prob : float = 0.1
     n_buttons : int = 8
     tokens_per_frame : int = 16
+    audio_tokens : int = 0
+    n_frames : int = 120
 
     causal : bool = False
 

@@ -8,8 +8,7 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-#from .embeddings import FlatVideoRoPE
-from rotary_embedding_torch import RotaryEmbedding
+from .rope import FlatVideoRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -42,6 +41,8 @@ class Attn(nn.Module):
         self.qk_norm = QKNorm(config.d_model // config.n_heads)
         self.layer_ind = None
 
+        self.rope = FlatVideoRoPE(config)
+
         self.tokens_per_frame = config.tokens_per_frame
         self.causal = config.causal
 
@@ -49,11 +50,13 @@ class Attn(nn.Module):
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
 
-        if not self.causal or len(kv_cache) > 0:
+        if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
             mask = None
         else:
             mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
+            mask = mask.to(device=x.device,dtype=x.dtype)
             mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
+            mask = mask.unsqueeze(1)
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)
@@ -62,7 +65,8 @@ class Attn(nn.Module):
 
             new_k = torch.cat([old_k, k], dim = 2).contiguous()
             new_v = torch.cat([old_v, v], dim = 2).contiguous()
-
+            
+            q,new_k = self.rope(q,new_k)
             if kv_cache.should_update:
                 kv_cache.update(new_k, new_v, self.layer_ind)
 
@@ -70,6 +74,7 @@ class Attn(nn.Module):
             x = F.scaled_dot_product_attention(q, new_k, new_v, attn_mask = mask)
             x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now)
         else:
+            q,k = self.rope(q,k)
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
 
         x = eo.rearrange(x, 'b h n d -> b n (h d)')
@@ -81,9 +86,6 @@ class DiTBlock(nn.Module):
         super().__init__()
 
         dim = config.d_model
-
-        self.norm1 = LayerNorm(dim)
-        self.norm2 = LayerNorm(dim)
 
         self.attn = Attn(config)
         self.mlp = MLP(config)

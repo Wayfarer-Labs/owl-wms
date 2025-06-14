@@ -1,7 +1,3 @@
-"""
-Trainer for reconstruction only
-"""
-
 import torch
 from ema_pytorch import EMA
 import wandb

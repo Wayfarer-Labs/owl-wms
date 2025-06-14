@@ -9,3 +9,6 @@ def get_sampler_cls(sampler_id):
         return CFGSampler
     elif sampler_id == "window":
         return WindowCFGSampler
+    elif sampler_id == "av_window":
+        from .av_window import AVWindowSampler
+        return AVWindowSampler

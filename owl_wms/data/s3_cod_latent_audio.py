@@ -27,20 +27,19 @@ class RandomizedQueue:
         idx = random.randint(0, len(self.items) - 1)
         return self.items.pop(idx)
 
-TOTAL_SHARDS = 2
+TOTAL_SHARDS = 1
 NUM_SUBDIRS=1
 NUM_TARS=9
-BUCKET_NAME="cod-data-latent-360x640to5x8"
+BUCKET_NAME="cod-data-latent-360x640to4x4"
 
-class S3CoDLatentDataset(IterableDataset):
-    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1, bucket_name = BUCKET_NAME, include_keyframe = False):
+class S3CoDLatentAudioDataset(IterableDataset):
+    def __init__(self, window_length=120, file_share_max=20, rank=0, world_size=1, bucket_name = BUCKET_NAME):
         super().__init__()
         
         self.window = window_length
         self.file_share_max = file_share_max
         self.rank = rank
         self.world_size = world_size
-        self.include_keyframe = include_keyframe
         self.bucket_name = bucket_name
 
         # Queue parameters
@@ -124,9 +123,10 @@ class S3CoDLatentDataset(IterableDataset):
                             latent = self.process_tensor_file(tar, base_name, "latent")
                             mouse = self.process_tensor_file(tar, base_name, "mouse")
                             button = self.process_tensor_file(tar, base_name, "buttons")
+                            audio = self.process_tensor_file(tar, base_name, "audiolatent")
 
-                            if all(t is not None for t in [latent, mouse, button]):
-                                min_len = min(len(latent), len(mouse), len(button))
+                            if all(t is not None for t in [latent, mouse, button, audio]):
+                                min_len = min(len(latent), len(mouse), len(button), len(audio))
                                 
                                 # Sample multiple windows if requested
                                 for _ in range(self.file_share_max):
@@ -142,23 +142,9 @@ class S3CoDLatentDataset(IterableDataset):
                                     latent_slice = latent[window_start:window_start+self.window].float()
                                     mouse_slice = mouse[window_start:window_start+self.window]
                                     button_slice = button[window_start:window_start+self.window]
+                                    audio_slice = audio[window_start:window_start+self.window]
 
-                                    if self.include_keyframe:
-                                        # Sample keyframe from nearby in video but not in window
-                                        buffer = 400
-                                        valid_range_start = max(0, window_start - buffer)
-                                        valid_range_end = min(len(latent), window_start + self.window + buffer)
-                                        
-                                        # Exclude the actual window frames
-                                        valid_frames = list(range(valid_range_start, window_start)) + \
-                                                     list(range(window_start + self.window, valid_range_end))
-                                        
-                                        if valid_frames:
-                                            keyframe_idx = random.choice(valid_frames)
-                                            latent_keyframe = latent[keyframe_idx].float().unsqueeze(0)
-                                            self.data_queue.add((latent_slice, latent_keyframe, mouse_slice, button_slice))
-                                    else:
-                                        self.data_queue.add((latent_slice, mouse_slice, button_slice))
+                                    self.data_queue.add((latent_slice, mouse_slice, button_slice, audio_slice))
 
                 except Exception as e:
                     print(f"Error processing tar: {e}")
@@ -174,25 +160,15 @@ class S3CoDLatentDataset(IterableDataset):
                 time.sleep(0.1)
 
 def collate_fn(batch):
-    # batch is list of triples or quads
-    items = zip(*batch)
-    items = list(items)
+    # batch is list of quadruples
+    latents, mouses, buttons, audios = zip(*batch)
     
-    if len(items) == 3:
-        # No keyframe case
-        latents, mouses, buttons = items
-        latents = torch.stack(latents)    # [b,n,c,h,w]
-        mouses = torch.stack(mouses)      # [b,n,2] 
-        buttons = torch.stack(buttons)    # [b,n,n_buttons]
-        return latents, mouses, buttons
-    else:
-        # With keyframe case
-        latents, keyframes, mouses, buttons = items
-        latents = torch.stack(latents)      # [b,n,c,h,w]
-        keyframes = torch.stack(keyframes)  # [b,1,c,h,w]
-        mouses = torch.stack(mouses)        # [b,n,2]
-        buttons = torch.stack(buttons)      # [b,n,n_buttons]
-        return latents, keyframes, mouses, buttons
+    latents = torch.stack(latents)    # [b,n,c,h,w]
+    mouses = torch.stack(mouses)      # [b,n,2] 
+    buttons = torch.stack(buttons)    # [b,n,n_buttons]
+    audios = torch.stack(audios)      # [b,n,d]
+    
+    return latents, audios, mouses, buttons
 
 def get_loader(batch_size, **data_kwargs):
     if dist.is_initialized():
@@ -202,12 +178,12 @@ def get_loader(batch_size, **data_kwargs):
         rank = 0
         world_size = 1
 
-    ds = S3CoDLatentDataset(rank=rank, world_size=world_size, **data_kwargs)
+    ds = S3CoDLatentAudioDataset(rank=rank, world_size=world_size, **data_kwargs)
     return DataLoader(ds, batch_size=batch_size, collate_fn=collate_fn)
 
 if __name__ == "__main__":
     import time
-    loader = get_loader(256, window_length = 120, file_share_max = 20)
+    loader = get_loader(16, window_length = 120, file_share_max = 20, include_audio = True)
 
     start = time.time()
     batch = next(iter(loader))
