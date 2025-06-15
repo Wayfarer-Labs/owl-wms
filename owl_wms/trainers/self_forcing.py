@@ -1,106 +1,167 @@
-"""
-Self-Forcing Trainer for Game World Model
-Implements autoregressive self-rollout training with proper gradient truncation
-"""
-
-import torch
+import random
+from copy import deepcopy
 from ema_pytorch import EMA
-import wandb
-import torch.nn.functional as F
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
-import einops as eo
-from copy import deepcopy
-
+import torch ; from torch import Tensor
+from typing import Callable
+import torch.nn as nn
+from torch.nn.utils import clip_grad_norm_
 from .base import BaseTrainer
-from ..utils import freeze, unfreeze, Timer, find_unused_params, versatile_load
-from ..schedulers import get_scheduler_cls
 from ..models import get_model_cls
-from ..sampling import get_sampler_cls
+from ..utils import (
+    freeze, unfreeze,
+    Timer, versatile_load
+)
 from ..data import get_loader
-from ..utils.logging import LogHelper, to_wandb
-from ..muon import init_muon
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
-from copy import deepcopy
+from ..sampling import get_sampler_cls
+from ..schedulers import get_scheduler_cls
+
+import wandb
+from ..utils.logging import LogHelper, to_wandb
+
+
+# NOTE Schedule for which denoising timestep to sample for DMD loss
+T_SCHEDULE = [1000, 750, 500, 250]
+
+def alpha(t: int) -> Tensor:            # signal coefficient
+    return torch.cos(torch.tensor(t, device='cuda') * torch.pi / 2 / 1000)
+def sigma(t: int) -> Tensor:            # noise coefficient
+    return torch.sin(torch.tensor(t, device='cuda') * torch.pi / 2 / 1000)
+def q_sample(x: Tensor, t: int) -> Tensor:     # add noise to input at timestep
+    return alpha(t) * x + sigma(t) * (eps := torch.randn_like(x)), eps
+
+class KV_Cache:
+    """
+    Rolling buffer that stores one KV tensor **per frame**.
+    It evicts the oldest entry once *max_size* is exceeded so the memory footprint stays O(max_size).
+    The cache itself is just a Python list; *model* decides how to concatenate / attend over it.
+    """
+    def __init__(self, max_size: int):
+        self._buf: list[Tensor] = []
+        self.max_size           = max_size
+
+    def append(self, kv: Tensor) -> None:
+        self._buf.append(kv)
+        if self.max_size and len(self._buf) > self.max_size:
+            self._buf.pop(0)
+
+    def get(self) -> list[Tensor]: return self._buf
+
+    def __len__(self): return len(self._buf)
+
+    def clear(self): self._buf.clear()
+
+
+
+class Loss_DistributionMatchingDistillation(nn.Module):
+
+    def __init__(self,
+                 teacher_model: nn.Module,
+                 q_sample_fn: Callable[[Tensor, int], Tensor] = q_sample,
+                 teacher_score_fn: Callable[[Tensor, int], Tensor] = None):
+
+        super().__init__()
+        self.teacher_model = teacher_model
+        self.teacher_score_fn: Callable[[Tensor, int], Tensor] = teacher_score_fn
+
+        if not self.teacher_score_fn and hasattr(teacher_model, 'score_fn'):
+            self.teacher_score_fn = teacher_model.score_fn
+
+        assert self.teacher_score_fn is not None
+
+        self.device = next(teacher_model.parameters()).device
+        self.q_sample_fn = q_sample_fn
+
+
+    def forward(self,
+            student_model:      nn.Module, *,
+            student_clip:       Tensor,
+            groundtruth_clip:   Tensor,
+            t:                  int | Tensor,
+            student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
+        ) -> Tensor:
+        t = torch.tensor(t, device=self.device) if isinstance(t, int) else t
+
+        student_score_fn = student_score_fn or student_model.score_fn
+        assert student_score_fn is not None
+
+        noisy_student, _     = self.q_sample_fn(student_clip, t)
+        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip, t)
+
+        with torch.no_grad():
+            score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth, t)
+
+        score_student = student_score_fn(noisy_student, t)
+        loss = 0.5 * ((score_student - score_groundtruth_teacher.detach()) ** 2).mean()
+        return loss
+
 
 class SelfForcingTrainer(BaseTrainer):
-    """
-    Self-Forcing Trainer implementing autoregressive self-rollout training
-    
-    Key differences from CausVid:
-    1. Uses self-generated context during training (not ground truth)
-    2. Implements gradient truncation with stochastic steps
-    3. Supports DMD, SiD, and GAN losses on correct distribution
-    """
-    def __init__(self, *args, **kwargs):  
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
+        self.max_grad_norm = getattr(self.train_cfg, 'max_grad_norm', 1.0)
+        
         model_id = self.model_cfg.model_id
 
-        # Create student (causal) and teacher (non-causal) configs
         student_cfg = deepcopy(self.model_cfg)
         teacher_cfg = deepcopy(self.model_cfg)
 
         student_cfg.causal = True
         teacher_cfg.causal = False
+        # -- models
+        self.causal_model: nn.Module        = get_model_cls(model_id)(student_cfg)
+        self.causal_model.load_state_dict(versatile_load(self.train_cfg.student_ckpt))
+        unfreeze(self.causal_model)
 
-        # Initialize models
-        self.model = get_model_cls(model_id)(student_cfg)
-        self.score_real = get_model_cls(model_id)(teacher_cfg)
+        self.bidirectional_model: nn.Module = get_model_cls(model_id)(teacher_cfg)
+        self.bidirectional_model.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
+        freeze(self.bidirectional_model)
 
-        # Load pretrained teacher
-        if self.train_cfg.teacher_ckpt:
-            self.score_real.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
-        freeze(self.score_real)
-
-        # Initialize fake score for DMD/SiD losses
-        self.score_fake = deepcopy(self.score_real)
-
-        # Print model size
-        if self.rank == 0:
-            n_params = sum(p.numel() for p in self.model.parameters())
-            print(f"Model has {n_params:,} parameters")
-
-        self.ema = None
-        self.opt = None
-        self.s_fake_opt = None
-        self.scheduler = None
-        self.s_fake_scaler = None
-        self.scaler = None
-
-        self.total_step_counter = 0
-        
-        # Initialize VAE decoder
-        self.decoder = get_decoder_only(
-            self.train_cfg.vae_id,
-            self.train_cfg.vae_cfg_path,
-            self.train_cfg.vae_ckpt_path
-        )
+        self.decoder:    nn.Module = get_decoder_only()
+        self.decoder_fn            = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
         freeze(self.decoder)
 
-        # Self-forcing specific parameters
-        self.loss_type = self.train_cfg.get('loss_type', 'dmd')  # dmd, sid, or gan
-        self.gradient_steps = self.train_cfg.get('gradient_steps', 1)  # Number of steps to backprop
-        self.rollout_steps = self.train_cfg.get('rollout_steps', 5)  # Total rollout length
-        self.stochastic_steps = self.train_cfg.get('stochastic_steps', True)  # Random gradient truncation
-        self.update_ratio = self.train_cfg.get('update_ratio', 5)  # Critic updates per generator update
-        self.cfg_scale = self.train_cfg.get('cfg_scale', 1.3)
+        if self.rank == 0:
+            n_params = sum(p.numel() for p in self.causal_model.parameters())
+            print(f"Model has {n_params:,} parameters")
 
-    def save(self):
-        save_dict = {
-            'model': self.model.state_dict(),
-            'ema': self.ema.state_dict(),
-            'opt': self.opt.state_dict(),
-            'scaler': self.scaler.state_dict(),
-            'score_fake': self.score_fake.state_dict(),
-            's_fake_opt': self.s_fake_opt.state_dict(),
-            's_fake_scaler': self.s_fake_scaler.state_dict(),
-            'steps': self.total_step_counter
-        }
-        if self.scheduler is not None:
-            save_dict['scheduler'] = self.scheduler.state_dict()
-        super().save(save_dict)
-    
+        # -- loss
+        self.t_schedule = T_SCHEDULE
+        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
+
+        # -- optim tomfoolery, shenanigans, etc.
+        self.ema        = EMA(self.causal_model, beta=0.999, update_after_step=0, update_every=1)
+        self.opt        = torch.optim.AdamW(self.causal_model.parameters(), **self.train_cfg.opt_kwargs)
+        self.scaler     = torch.amp.GradScaler()
+        self.ctx        = torch.amp.autocast('cuda', torch.bfloat16)
+        self.scheduler  = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
+        
+        # -- metrics & logging
+        self.metrics    = LogHelper()
+        if self.rank == 0:
+            wandb.watch(self.get_module(), log = 'all')
+
+        # -- data
+        self.train_loader   = get_loader(self.train_cfg.data_id,
+                                         self.train_cfg.batch_size,
+                                         **self.train_cfg.data_kwargs)
+        # -- sampler
+        # TODO TODO TODO TODO TODO TODO TODO Make this
+        self.sampler        = get_sampler_cls(self.train_cfg.sampler_id)()
+
+        # -- hardware
+        self.device = torch.device("cuda", self.local_rank)
+        self.init_hardware()
+        # -- auto-load
+        self.load()
+
+
+    def init_hardware(self):
+        self.causal_model        = self.causal_model.cuda().train()
+        self.bidirectional_model = self.bidirectional_model\
+                                                    .cuda().eval().bfloat16()
+        self.loss_fn             = self.loss_fn     .cuda().eval().bfloat16()
+
     def load(self):
         has_ckpt = False
         try:
@@ -112,398 +173,184 @@ class SelfForcingTrainer(BaseTrainer):
         
         if not has_ckpt:
             return
-
-        self.model.load_state_dict(save_dict['model'])
-        self.ema.load_state_dict(save_dict['ema'])
-        self.opt.load_state_dict(save_dict['opt'])
-        if self.scheduler is not None and 'scheduler' in save_dict:
-            self.scheduler.load_state_dict(save_dict['scheduler'])
-        self.scaler.load_state_dict(save_dict['scaler'])
-        self.score_fake.load_state_dict(save_dict['score_fake'])
-        self.s_fake_opt.load_state_dict(save_dict['s_fake_opt'])
-        self.s_fake_scaler.load_state_dict(save_dict['s_fake_scaler'])
+        
+        self.causal_model       .load_state_dict(save_dict['causal_model'])
+        self.bidirectional_model.load_state_dict(save_dict['bidirectional_model'])
+        self.ema                .load_state_dict(save_dict['ema'])
+        self.opt                .load_state_dict(save_dict['opt'])
+        self.scaler             .load_state_dict(save_dict['scaler'])
+        if 'scheduler' in save_dict:
+            self.scheduler      .load_state_dict(save_dict['scheduler'])
+        self.decoder            .load_state_dict(save_dict['decoder'])
         self.total_step_counter = save_dict['steps']
 
-    def autoregressive_rollout(self, initial_latent, mouse, btn, decode_fn=None):
+    def save(self):
+        save_dict = {
+            'causal_model':        self.causal_model        .state_dict(),
+            'bidirectional_model': self.bidirectional_model .state_dict(),
+            'ema':                 self.ema                 .state_dict(),
+            'opt':                 self.opt                 .state_dict(),
+            'scaler':              self.scaler              .state_dict(),
+            'decoder':             self.decoder             .state_dict(),
+            'steps':               self.total_step_counter,
+            **({'scheduler':       self.scheduler           .state_dict()}
+               if self.scheduler is not None else {})
+        }
+
+        super().save(save_dict)
+
+    def autoregressive_rollout(self, *, use_teacher: bool = False) -> list[Tensor]:
+        """Roll out *num_frames* latent frames with gradient-truncated denoising.
+
+        Returns
+        -------
+        list[Tensor]
+            length = N ; each tensor has shape **(B, C, F, H, W)**
+            These are the clean x̂_{i,0} latents used later by compute_dmd_loss.
         """
-        Perform autoregressive rollout with gradient truncation
-        
-        Args:
-            initial_latent: Initial frame(s) [b, init_frames, c, h, w]
-            mouse: Mouse inputs for entire sequence [b, n, 2]
-            btn: Button inputs for entire sequence [b, n, n_buttons]
-            decode_fn: Optional decode function for visualization
-            
-        Returns:
-            generated_latents: Full generated sequence
-            gradient_mask: Boolean mask indicating which frames get gradients
-        """
-        b = initial_latent.shape[0]
-        device = initial_latent.device
-        
-        # Initialize output with initial frames
-        generated_latents = [initial_latent]
-        
-        # Determine gradient truncation point
-        if self.stochastic_steps:
-            # Randomly select which steps to backprop through
-            grad_start = torch.randint(
-                max(0, self.rollout_steps - self.gradient_steps),
-                self.rollout_steps,
-                (1,)
-            ).item()
-        else:
-            # Always backprop through last gradient_steps
-            grad_start = self.rollout_steps - self.gradient_steps
-        
-        # Generate frames autoregressively
-        for step in range(self.rollout_steps):
-            # Get context from previously generated frames
-            context = torch.cat(generated_latents, dim=1)
-            context_frames = context.shape[1]
-            
-            # Get corresponding actions
-            step_mouse = mouse[:, :context_frames]
-            step_btn = btn[:, :context_frames]
-            
-            # Determine if this step needs gradients
-            needs_grad = step >= grad_start
-            
-            with torch.set_grad_enabled(needs_grad):
-                # Add noise to last frame for next prediction
-                noisy_next = torch.randn(b, 1, *initial_latent.shape[2:], device=device)
-                
-                # Prepare input
-                model_input = torch.cat([context, noisy_next], dim=1)
-                model_mouse = mouse[:, :context_frames + 1]
-                model_btn = btn[:, :context_frames + 1]
-                
-                # Generate next frame
-                with torch.amp.autocast('cuda', torch.bfloat16):
-                    # Run diffusion model to denoise
-                    ts = torch.ones(b, context_frames + 1, device=device)
-                    ts[:, -1] = 0.99  # High noise for last frame
-                    ts[:, :-1] = 0.0  # Clean context
-                    
-                    pred = self.model.core(model_input, ts, model_mouse, model_btn)
-                    next_frame = model_input - pred * ts[:, :, None, None, None]
-                    next_frame = next_frame[:, -1:]  # Take only the newly generated frame
-                
-                generated_latents.append(next_frame)
-        
-        # Concatenate all generated frames
-        full_sequence = torch.cat(generated_latents, dim=1)
-        
-        # Create gradient mask
-        gradient_mask = torch.zeros(b, full_sequence.shape[1], dtype=torch.bool, device=device)
-        gradient_mask[:, initial_latent.shape[1] + grad_start:] = True
-        
-        return full_sequence, gradient_mask
+        device               = self.device
+        batch_size           = self.train_cfg.batch_size
+        latent_shape_cfhw    = self.train_cfg.latent_shape          # (C,F,H,W)
+        num_frames_n         = self.train_cfg.num_frames            # N
+        t_schedule           = self.t_schedule                      # [t_T … t_1]
+        model                = self.bidirectional_model if use_teacher else self.causal_model
 
-    def compute_dmd_loss(self, generated, mouse, btn, gradient_mask):
-        """Compute DMD loss on generated sequence"""
-        s_real_fn = self.score_real.core
-        s_fake_fn = self.score_fake.module.core if self.world_size > 1 else self.score_fake.core
+        cache = KV_Cache(num_frames_n)
+        latents_bcFHW: list[Tensor] = []                       # collects outputs
 
-        with torch.no_grad():
-            b, n, c, h, w = generated.shape
-            ts = torch.rand(b, n, device=generated.device).sigmoid()
-            z = torch.randn_like(generated)
-            ts_exp = ts[:, :, None, None, None]
-            lerpd = generated * (1. - ts_exp) + z * ts_exp
+        # pick which denoising step keeps gradients for this rollout. because this is stochastic,
+        # in expectation each timestep will get gradient signal over the entire training run.
+        grad_step_s = random.randint(1, len(t_schedule))            # 1-based
 
-        # Compute real score with CFG
-        null_mouse = torch.zeros_like(mouse)
-        null_btn = torch.zeros_like(btn)
-        
-        s_real_uncond = s_real_fn(lerpd, ts, null_mouse, null_btn)
-        s_real_cond = s_real_fn(lerpd, ts, mouse, btn)
-        s_real = s_real_uncond + self.cfg_scale * (s_real_cond - s_real_uncond)
+        for _ in range(num_frames_n):
+            # 1) initialise latent with pure noise at the *max* timestep t_T
+            latent_t_bcFHW = torch.randn(batch_size, *latent_shape_cfhw, device=device)
 
-        # Compute fake score
-        s_fake = s_fake_fn(lerpd, ts, mouse, btn)
+            # 2) denoise backward through all timesteps
+            for step_idx, t in enumerate(reversed(t_schedule), start=1):
+                keep_grad = (step_idx == grad_step_s)
 
-        # DMD gradient
-        grad = (s_fake - s_real)
-        
-        # Normalize
-        p_real = (generated - s_real)
-        normalizer = torch.abs(p_real).mean(dim=[2, 3, 4], keepdim=True)
-        grad = grad / (normalizer + 1e-6)
-        grad = torch.nan_to_num(grad)
-        
-        # Apply gradient mask
-        if gradient_mask is not None:
-            grad = grad * gradient_mask[:, :, None, None, None]
-        
-        dmd_loss = 0.5 * F.mse_loss(generated.double(), (generated - grad).double())
-        
-        return dmd_loss
+                with torch.set_grad_enabled(keep_grad):
+                    x_hat_bcFHW = model.forward(latent_t_bcFHW, t=t, kv_cache=cache.get())
 
-    def compute_sid_loss(self, generated, mouse, btn, gradient_mask):
-        """
-        Compute Score identity Distillation (SiD) loss on generated sequence
-        Based on "Score identity Distillation" paper
-        """
-        s_real_fn = self.score_real.core
-        s_fake_fn = self.score_fake.module.core if self.world_size > 1 else self.score_fake.core
+                if keep_grad:
+                    # store clean frame for outer loss + push KV to cache
+                    latents_bcFHW.append(x_hat_bcFHW)
+                    kv_single = model.get_kv(x_hat_bcFHW, t=0)  # model decides shape
+                    cache.append(kv_single)
+                else:
+                    x_hat_bcFHW = x_hat_bcFHW.detach()
 
-        with torch.no_grad():
-            b, n, c, h, w = generated.shape
-            ts = torch.rand(b, n, device=generated.device).sigmoid()
-            z = torch.randn_like(generated)
-            ts_exp = ts[:, :, None, None, None]
-            lerpd = generated * (1. - ts_exp) + z * ts_exp
+                # 3) re-noise unless we just reached t=0
+                if step_idx < len(t_schedule):
+                    prev_t = t_schedule[-(step_idx + 1)]
+                    eps    = torch.randn_like(x_hat_bcFHW)
+                    latent_t_bcFHW = alpha(prev_t) * x_hat_bcFHW + sigma(prev_t) * eps
 
-        # Compute real score with CFG
-        null_mouse = torch.zeros_like(mouse)
-        null_btn = torch.zeros_like(btn)
-        
-        s_real_uncond = s_real_fn(lerpd, ts, null_mouse, null_btn)
-        s_real_cond = s_real_fn(lerpd, ts, mouse, btn)
-        s_real = s_real_uncond + self.cfg_scale * (s_real_cond - s_real_uncond)
+        return latents_bcFHW
 
-        # Compute fake score
-        s_fake = s_fake_fn(lerpd, ts, mouse, btn)
+    def _format_batch(self):
+        try: return next(self.train_loader)
+        except StopIteration: self.train_loader = iter(self.train_loader) ; return self._format_batch()
 
-        # SiD loss formulation
-        # L = (s_real - s_fake) * ((s_real - x) - α(s_real - s_fake))
-        alpha = self.train_cfg.get('sid_alpha', 1.0)
-        
-        diff_score = s_real - s_fake
-        diff_real = s_real - generated
-        
-        sid_loss = diff_score * (diff_real - alpha * diff_score)
-        
-        # Normalize
-        with torch.no_grad():
-            normalizer = torch.abs(diff_real).mean(dim=[2, 3, 4], keepdim=True)
-        sid_loss = sid_loss / (normalizer + 1e-6)
-        
-        # Apply gradient mask
-        if gradient_mask is not None:
-            sid_loss = sid_loss * gradient_mask[:, :, None, None, None]
-        
-        sid_loss = torch.nan_to_num(sid_loss).mean()
-        
-        return sid_loss
 
-    def compute_gan_loss(self, generated, mouse, btn, gradient_mask, train_generator=True):
-        """
-        Simplified GAN loss using the score networks as discriminators
-        This avoids needing a separate discriminator implementation
-        """
-        with torch.no_grad():
-            b, n, c, h, w = generated.shape
-            # Use a fixed small noise level for discrimination
-            ts = torch.ones(b, n, device=generated.device) * 0.01
-            noise = torch.randn_like(generated) * 0.01
-            noisy_generated = generated + noise
+    def _train_step(self):
+        # NOTE: Auto-regressive rollout
+        student_clip_bcnhw      = self.autoregressive_rollout()
+        groundtruth_clip_bcnhw, mouse, btn = self._format_batch()
+        t: int                  = random.choice(self.t_schedule)
 
-        if train_generator:
-            # Generator loss: make fake score match real score
-            s_fake = self.score_fake.module.core(noisy_generated, ts, mouse, btn) if self.world_size > 1 else self.score_fake.core(noisy_generated, ts, mouse, btn)
-            s_real = self.score_real.core(noisy_generated, ts, mouse, btn)
-            
-            # L2 loss between scores
-            score_diff = (s_fake - s_real) ** 2
-            
-            # Apply gradient mask
-            if gradient_mask is not None:
-                score_diff = score_diff * gradient_mask[:, :, None, None, None]
-            
-            gan_loss = score_diff.mean()
-            return gan_loss
-        else:
-            # Train fake score to distinguish real from fake
-            # This is similar to standard DMD critic training
-            with torch.no_grad():
-                # For real data, we'd need ground truth
-                # For now, return a placeholder
-                return torch.tensor(0.0, device=generated.device)
+        loss = self.loss_fn.forward(
+            student_model=self.causal_model,
+            student_clip=student_clip_bcnhw,
+            groundtruth_clip=groundtruth_clip_bcnhw,
+            t=t,
+            student_score_fn=self.causal_model.score_fn
+        )
+        
+        self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)
+        grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
+        self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
+
+        return {
+            'student_clip':     student_clip_bcnhw,
+            'groundtruth_clip': groundtruth_clip_bcnhw,
+            'mouse':            mouse,
+            'btn':              btn,
+            't':                t,
+            'grad_norm':        grad_norm,
+            'loss':             loss,
+        }
+
+    @property
+    def should_log(self):
+        return self.rank == 0 and self.total_step_counter % self.train_cfg.log_interval == 0
+    
+    @property
+    def should_sample(self):
+        return self.rank == 0 and self.total_step_counter % self.train_cfg.sample_interval == 0
+
+    @property
+    def should_save(self):
+        return self.rank == 0 and self.total_step_counter % self.train_cfg.save_interval == 0
+    
+    @property
+    def should_break(self):
+        return hasattr(self.train_cfg, 'max_steps') and self.total_step_counter >= self.train_cfg.max_steps
+
+
+    @torch.no_grad()
+    def evaluate(self):
+        if self.rank != 0: return
+        self.causal_model.eval()
+        try:
+            _, mouse, btn = self._format_batch()
+            # TODO How does this get conditioning from the groundtruth? I am guessing we need some shenanigans with
+            # latents for groundtruth.
+            student_clip = self.autoregressive_rollout()
+            eval_video = to_wandb(student_clip, mouse, btn,  gather=False, max_samples=4)
+            wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
+        
+        except Exception as e:  print(f"Evaluation failed: {e}")
+        finally:                self.causal_model.train()
+
+    @torch.no_grad()
+    def _log_step(self, info: dict):
+        if self.should_log:
+            wandb.log(self.metrics.pop(), step=self.total_step_counter)
+            if self.scheduler is not None: wandb.log({'lr': self.scheduler.get_last_lr()[0]},
+                                                        step=self.total_step_counter)
+            try:                  
+                wandb.log({
+                    'student_samples':      to_wandb(info['student_clip'], info['mouse'], info['btn'],
+                                                        gather=True, max_samples=8),
+                    'groundtruth_samples':  to_wandb(info['groundtruth_clip'], info['mouse'], info['btn'],
+                                                        gather=True, max_samples=8),
+                }, step=self.total_step_counter)
+
+            except Exception as e: print(f"Warning: Failed to log videos: {e}")
+
+        if self.should_sample: self.evaluate()
 
 
     def train(self):
-        torch.cuda.set_device(self.local_rank)
-
-        # Prepare models
-        self.model = self.model.cuda().train()        
-        self.decoder = self.decoder.cuda().eval().bfloat16()
-        self.score_real = self.score_real.cuda().eval().bfloat16()
-        self.score_fake = self.score_fake.cuda().train()
-
-        if self.world_size > 1:
-            self.model = DDP(self.model)
-            self.score_fake = DDP(self.score_fake)
-
-        freeze(self.decoder)
-        freeze(self.score_real)
-
-        decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
-
-        # Initialize EMA
-        self.ema = EMA(
-            self.model,
-            beta=0.999,
-            update_after_step=0,
-            update_every=1
-        )
-
-        # Initialize optimizers
-        self.opt = getattr(torch.optim, self.train_cfg.opt)(
-            self.model.parameters(), 
-            **self.train_cfg.opt_kwargs
-        )
-        self.s_fake_opt = getattr(torch.optim, self.train_cfg.opt)(
-            self.score_fake.parameters(), 
-            **self.train_cfg.opt_kwargs
-        )
-
-        if self.train_cfg.scheduler is not None:
-            self.scheduler = get_scheduler_cls(self.train_cfg.scheduler)(
-                self.opt, 
-                **self.train_cfg.scheduler_kwargs
-            )
-
-        # Scalers for mixed precision
-        self.s_fake_scaler = torch.amp.GradScaler()
-        self.scaler = torch.amp.GradScaler()
-        ctx = torch.amp.autocast('cuda', torch.bfloat16)
-
-        self.load()
-
-        # Setup logging
         timer = Timer()
-        timer.reset()
-        metrics = LogHelper()
-        if self.rank == 0:
-            wandb.watch(self.get_module(), log='all')
-        
-        # Dataset setup
-        loader = get_loader(
-            self.train_cfg.data_id, 
-            self.train_cfg.batch_size, 
-            **self.train_cfg.data_kwargs
-        )
-        sampler = get_sampler_cls(self.train_cfg.sampler_id)(**self.train_cfg.sampler_kwargs)
-
-        def optimizer_step(loss, model, scaler, optimizer):
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            optimizer.zero_grad(set_to_none=True)
-            scaler.update()
-
-        # Training loop
-        loader = iter(loader)
-        while True:
-            # Update critic/fake score
-            if self.loss_type in ['dmd', 'sid']:
-                freeze(self.model)
-                unfreeze(self.score_fake)
-                
-                for _ in range(self.update_ratio):
-                    batch_vid, batch_mouse, batch_btn = next(loader)
-                    
-                    # Get initial frames
-                    initial_frames = batch_vid[:, :1]  # Use first frame as initial
-                    
-                    with torch.no_grad():
-                        # Generate sequence autoregressively
-                        generated, _ = self.autoregressive_rollout(
-                            initial_frames, 
-                            batch_mouse, 
-                            batch_btn
-                        )
-                    
-                    # Train fake score on generated data
-                    with ctx:
-                        s_fake_loss = self.score_fake(
-                            generated.detach(), 
-                            batch_mouse[:, :generated.shape[1]], 
-                            batch_btn[:, :generated.shape[1]]
-                        )
-                    
-                    optimizer_step(s_fake_loss, self.score_fake, self.s_fake_scaler, self.s_fake_opt)
-                    metrics.log('s_fake_loss', s_fake_loss)
-
-            # Update generator
-            unfreeze(self.model)
-            freeze(self.score_fake)
+        while not self.should_break:
+            timer.reset()
+            with self.ctx:
+                info = self._train_step()
+                self.ema.update() ; info['time'] = timer.hit()
             
-            batch_vid, batch_mouse, batch_btn = next(loader)
-            initial_frames = batch_vid[:, :1]
-            
-            # Generate with gradients
-            with ctx:
-                generated, gradient_mask = self.autoregressive_rollout(
-                    initial_frames,
-                    batch_mouse,
-                    batch_btn
-                )
-                
-                # Compute loss based on selected type
-                if self.loss_type == 'dmd':
-                    loss = self.compute_dmd_loss(
-                        generated, 
-                        batch_mouse[:, :generated.shape[1]], 
-                        batch_btn[:, :generated.shape[1]], 
-                        gradient_mask
-                    )
-                elif self.loss_type == 'sid':
-                    loss = self.compute_sid_loss(
-                        generated,
-                        batch_mouse[:, :generated.shape[1]],
-                        batch_btn[:, :generated.shape[1]],
-                        gradient_mask
-                    )
-                elif self.loss_type == 'gan':
-                    loss = self.compute_gan_loss(
-                        generated,
-                        batch_mouse[:, :generated.shape[1]],
-                        batch_btn[:, :generated.shape[1]],
-                        gradient_mask,
-                        train_generator=True
-                    )
-                
-                metrics.log(f'{self.loss_type}_loss', loss)
-            
-            optimizer_step(loss, self.model, self.scaler, self.opt)
-            self.ema.update()
-
-            # Logging and visualization
-            with torch.no_grad():
-                wandb_dict = metrics.pop()
-                wandb_dict['time'] = timer.hit()
-                timer.reset()
-
-                if self.total_step_counter % self.train_cfg.sample_interval == 0:
-                    with ctx, torch.no_grad():
-                        n_samples = self.train_cfg.n_samples
-                        
-                        # Get EMA model for sampling
-                        ema_core = self.ema.ema_model.module.core if self.world_size > 1 else self.ema.ema_model.core
-                        
-                        # Sample using the trained model
-                        samples, sample_mouse, sample_button = sampler(
-                            ema_core,
-                            batch_vid[:n_samples, :1],  # Initial frame
-                            batch_mouse[:n_samples],
-                            batch_btn[:n_samples],
-                            decode_fn=decode_fn,
-                            scale=self.train_cfg.vae_scale
-                        )
-                        
-                        if self.rank == 0:
-                            wandb_dict['samples'] = to_wandb(samples, sample_mouse, sample_button)
-                    
-                if self.rank == 0:
-                    wandb.log(wandb_dict)
+            self.metrics.log_dict({
+                'loss':         info['loss'],
+                'grad_norm':    info['grad_norm'],
+                'time':         info['time'],
+                't':            info['t']
+            })
 
             self.total_step_counter += 1
-            if self.total_step_counter % self.train_cfg.save_interval == 0:
-                if self.rank == 0:
-                    self.save()
-                
+            self._log_step(info)
             self.barrier()
+            if self.should_save: self.save()
+
+        self.save()
