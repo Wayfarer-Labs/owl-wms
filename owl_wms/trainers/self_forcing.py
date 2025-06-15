@@ -15,7 +15,7 @@ from ..data import get_loader
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..sampling import get_sampler_cls
 from ..schedulers import get_scheduler_cls
-
+from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb
 
@@ -29,6 +29,9 @@ def sigma(t: int) -> Tensor:            # noise coefficient
     return torch.sin(torch.tensor(t, device='cuda') * torch.pi / 2 / 1000)
 def q_sample(x: Tensor, t: int) -> Tensor:     # add noise to input at timestep
     return alpha(t) * x + sigma(t) * (eps := torch.randn_like(x)), eps
+def action_conditioning(*, mouse: Tensor, btn: Tensor) -> dict[str, Tensor]:
+    return {'mouse': mouse, 'button': btn}
+
 
 class KV_Cache:
     """
@@ -147,6 +150,7 @@ class SelfForcingTrainer(BaseTrainer):
                                          **self.train_cfg.data_kwargs)
         # -- sampler
         # TODO TODO TODO TODO TODO TODO TODO Make this
+        self.context_len    = self.train_cfg.context_length
         self.sampler        = get_sampler_cls(self.train_cfg.sampler_id)()
 
         # -- hardware
@@ -154,7 +158,9 @@ class SelfForcingTrainer(BaseTrainer):
         self.init_hardware()
         # -- auto-load
         self.load()
-
+        # -- ddp
+        if self.world_size > 1:
+            self.causal_model    = DistributedDataParallel(self.causal_model)
 
     def init_hardware(self):
         self.causal_model        = self.causal_model.cuda().train()
@@ -199,7 +205,12 @@ class SelfForcingTrainer(BaseTrainer):
 
         super().save(save_dict)
 
-    def autoregressive_rollout(self, *, use_teacher: bool = False) -> list[Tensor]:
+    def autoregressive_rollout(self, *,
+                               use_teacher: bool = False,
+                               context_len: int = None,
+                               action_conditioning: dict[str, Tensor] = None,
+                               latent_conditioning: Tensor = None,
+                               frame_gradient_cutoff: int = 0) -> list[Tensor]:
         """Roll out *num_frames* latent frames with gradient-truncated denoising.
 
         Returns
@@ -215,12 +226,12 @@ class SelfForcingTrainer(BaseTrainer):
         t_schedule           = self.t_schedule                      # [t_T … t_1]
         model                = self.bidirectional_model if use_teacher else self.causal_model
 
-        cache = KV_Cache(num_frames_n)
-        latents_bcFHW: list[Tensor] = []                       # collects outputs
+        cache                       = KV_Cache(max_size=context_len or self.context_len)
+        latents_bcFHW: list[Tensor] = [] # collects outputs
 
         # pick which denoising step keeps gradients for this rollout. because this is stochastic,
         # in expectation each timestep will get gradient signal over the entire training run.
-        grad_step_s = random.randint(1, len(t_schedule))            # 1-based
+        grad_step_s = random.randint(1, len(t_schedule))
 
         for _ in range(num_frames_n):
             # 1) initialise latent with pure noise at the *max* timestep t_T
