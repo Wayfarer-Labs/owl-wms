@@ -18,42 +18,15 @@ from ..schedulers import get_scheduler_cls
 from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb
+from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sigma
 
 
 # NOTE Schedule for which denoising timestep to sample for DMD loss
 T_SCHEDULE = [1000, 750, 500, 250]
 
-def alpha(t: int) -> Tensor:            # signal coefficient
-    return torch.cos(torch.tensor(t, device='cuda') * torch.pi / 2 / 1000)
-def sigma(t: int) -> Tensor:            # noise coefficient
-    return torch.sin(torch.tensor(t, device='cuda') * torch.pi / 2 / 1000)
+
 def q_sample(x: Tensor, t: int) -> Tensor:     # add noise to input at timestep
     return alpha(t) * x + sigma(t) * (eps := torch.randn_like(x)), eps
-def action_conditioning(*, mouse: Tensor, btn: Tensor) -> dict[str, Tensor]:
-    return {'mouse': mouse, 'button': btn}
-
-
-class KV_Cache:
-    """
-    Rolling buffer that stores one KV tensor **per frame**.
-    It evicts the oldest entry once *max_size* is exceeded so the memory footprint stays O(max_size).
-    The cache itself is just a Python list; *model* decides how to concatenate / attend over it.
-    """
-    def __init__(self, max_size: int):
-        self._buf: list[Tensor] = []
-        self.max_size           = max_size
-
-    def append(self, kv: Tensor) -> None:
-        self._buf.append(kv)
-        if self.max_size and len(self._buf) > self.max_size:
-            self._buf.pop(0)
-
-    def get(self) -> list[Tensor]: return self._buf
-
-    def __len__(self): return len(self._buf)
-
-    def clear(self): self._buf.clear()
-
 
 
 class Loss_DistributionMatchingDistillation(nn.Module):
@@ -113,7 +86,9 @@ class SelfForcingTrainer(BaseTrainer):
         teacher_cfg.causal = False
         # -- models
         self.causal_model: nn.Module        = get_model_cls(model_id)(student_cfg)
-        self.causal_model.load_state_dict(versatile_load(self.train_cfg.student_ckpt))
+        if self.train_cfg.resume_ckpt is not None:
+            assert self.train_cfg.student_ckpt is not None
+            self.causal_model.load_state_dict(versatile_load(self.train_cfg.student_ckpt))
         unfreeze(self.causal_model)
 
         self.bidirectional_model: nn.Module = get_model_cls(model_id)(teacher_cfg)
@@ -129,7 +104,7 @@ class SelfForcingTrainer(BaseTrainer):
             print(f"Model has {n_params:,} parameters")
 
         # -- loss
-        self.t_schedule = T_SCHEDULE
+        self.t_schedule = self.train_cfg.t_schedule
         self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
 
         # -- optim tomfoolery, shenanigans, etc.
@@ -149,9 +124,19 @@ class SelfForcingTrainer(BaseTrainer):
                                          self.train_cfg.batch_size,
                                          **self.train_cfg.data_kwargs)
         # -- sampler
-        # TODO TODO TODO TODO TODO TODO TODO Make this
-        self.context_len    = self.train_cfg.context_length
-        self.sampler        = get_sampler_cls(self.train_cfg.sampler_id)()
+        self.context_len           = self.model_cfg.context_length
+        self.frame_gradient_cutoff = self.train_cfg.frame_gradient_cutoff
+        self.sampler               = SelfForcingSampler(
+            model=self.causal_model,
+            model_config=self.model_cfg,
+            train_config=self.train_cfg,
+            latent_shape=self.train_cfg.latent_shape,
+            t_schedule=self.t_schedule,
+            context_len=self.context_len,
+            frame_gradient_cutoff=self.frame_gradient_cutoff,
+            training=True,
+            autocast=torch.bfloat16
+        )
 
         # -- hardware
         self.device = torch.device("cuda", self.local_rank)
@@ -205,60 +190,6 @@ class SelfForcingTrainer(BaseTrainer):
 
         super().save(save_dict)
 
-    def autoregressive_rollout(self, *,
-                               use_teacher: bool = False,
-                               context_len: int = None,
-                               action_conditioning: dict[str, Tensor] = None,
-                               latent_conditioning: Tensor = None,
-                               frame_gradient_cutoff: int = 0) -> list[Tensor]:
-        """Roll out *num_frames* latent frames with gradient-truncated denoising.
-
-        Returns
-        -------
-        list[Tensor]
-            length = N ; each tensor has shape **(B, C, F, H, W)**
-            These are the clean x̂_{i,0} latents used later by compute_dmd_loss.
-        """
-        device               = self.device
-        batch_size           = self.train_cfg.batch_size
-        latent_shape_cfhw    = self.train_cfg.latent_shape          # (C,F,H,W)
-        num_frames_n         = self.train_cfg.num_frames            # N
-        t_schedule           = self.t_schedule                      # [t_T … t_1]
-        model                = self.bidirectional_model if use_teacher else self.causal_model
-
-        cache                       = KV_Cache(max_size=context_len or self.context_len)
-        latents_bcFHW: list[Tensor] = [] # collects outputs
-
-        # pick which denoising step keeps gradients for this rollout. because this is stochastic,
-        # in expectation each timestep will get gradient signal over the entire training run.
-        grad_step_s = random.randint(1, len(t_schedule))
-
-        for _ in range(num_frames_n):
-            # 1) initialise latent with pure noise at the *max* timestep t_T
-            latent_t_bcFHW = torch.randn(batch_size, *latent_shape_cfhw, device=device)
-
-            # 2) denoise backward through all timesteps
-            for step_idx, t in enumerate(reversed(t_schedule), start=1):
-                keep_grad = (step_idx == grad_step_s)
-
-                with torch.set_grad_enabled(keep_grad):
-                    x_hat_bcFHW = model.forward(latent_t_bcFHW, t=t, kv_cache=cache.get())
-
-                if keep_grad:
-                    # store clean frame for outer loss + push KV to cache
-                    latents_bcFHW.append(x_hat_bcFHW)
-                    kv_single = model.get_kv(x_hat_bcFHW, t=0)  # model decides shape
-                    cache.append(kv_single)
-                else:
-                    x_hat_bcFHW = x_hat_bcFHW.detach()
-
-                # 3) re-noise unless we just reached t=0
-                if step_idx < len(t_schedule):
-                    prev_t = t_schedule[-(step_idx + 1)]
-                    eps    = torch.randn_like(x_hat_bcFHW)
-                    latent_t_bcFHW = alpha(prev_t) * x_hat_bcFHW + sigma(prev_t) * eps
-
-        return latents_bcFHW
 
     def _format_batch(self):
         try: return next(self.train_loader)

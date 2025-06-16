@@ -1,6 +1,6 @@
 import yaml
 from omegaconf import OmegaConf
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -23,6 +23,8 @@ class TransformerConfig:
     n_frames : int = 120
 
     causal : bool = False
+    # -- self forcing stuff:
+    context_length : int = 48 # number of frames of context in kv cache
 
 
 @dataclass
@@ -45,6 +47,10 @@ class TrainingConfig:
 
     checkpoint_dir : str = "checkpoints/v0" # Where checkpoints saved
     resume_ckpt : str = None
+    # -- self forcing only:
+    student_ckpt : str = None
+    teacher_ckpt : str = None
+    # -- 
 
     # Distillation related
     teacher_ckpt : str = None
@@ -68,6 +74,10 @@ class TrainingConfig:
     audio_vae_cfg_path : str = None
     audio_vae_ckpt_path : str = None
     audio_vae_scale : float = 0.17
+
+    # -- self forcing stuff:
+    frame_gradient_cutoff : int = 20 # number of frames from the end to start gradient computation for
+    t_schedule : list[int] = field(default_factory=lambda: [1000, 750, 500, 250]) # timesteps to sample for DMD loss
 
 @dataclass
 class WANDBConfig:

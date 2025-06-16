@@ -18,3 +18,6 @@ def get_sampler_cls(sampler_id):
     elif sampler_id == "av_window":
         from .av_window import AVWindowSampler
         return AVWindowSampler
+    elif sampler_id == "self_forcing":
+        from .self_forcing_sampler import SelfForcingSampler
+        return SelfForcingSampler

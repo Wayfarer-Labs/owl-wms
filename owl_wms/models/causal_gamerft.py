@@ -6,6 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import einops as eo
+from copy import deepcopy
 
 from ..nn.embeddings import (
     TimestepEmbedding,

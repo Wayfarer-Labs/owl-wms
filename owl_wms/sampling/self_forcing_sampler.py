@@ -4,7 +4,7 @@ from torch.nn import Module
 from functools import cache
 
 from owl_wms.nn.kv_cache import KVCache
-from owl_wms.configs import Config as RunConfig
+from owl_wms.configs import TransformerConfig as ModelConfig, TrainingConfig
 from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
 
 _SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.cpu()
@@ -18,8 +18,8 @@ def alpha(t: int) -> Tensor: return (1 - sigma(t).square()).sqrt()
 class SelfForcingSampler:
     def __init__(self,
             model: Module,
-            config: RunConfig,
-            batch_size: int,
+            model_config: ModelConfig,
+            train_config: TrainingConfig,
             latent_shape: tuple[int, int, int, int],
             t_schedule: list[int] = [1000, 750, 500, 250],
             context_len: int = 48,
@@ -32,19 +32,21 @@ class SelfForcingSampler:
 
         # -- models, hardware
         self.model = model
-        self.config = config
+        self.model_config = model_config
+        self.train_config = train_config
         self.device = next(model.parameters()).device
+        self.tokens_per_frame = self.model_config.tokens_per_frame
 
         # -- sampling
         self.t_schedule = t_schedule
-        self.batch_size = batch_size
+        self.batch_size = self.train_config.batch_size
         self.context_len = context_len
         self.latent_shape = latent_shape
         
         # -- gradient optimisation
         self.frame_gradient_cutoff = frame_gradient_cutoff
-        self.kv_cache = KVCache(self.config.model).to(self.device)
-        self.kv_cache.reset(self.config.train.batch_size)
+        self.kv_cache = KVCache(self.model_config).to(self.device)
+        self.kv_cache.reset(self.batch_size)
 
         # -- validation
         assert self.frame_gradient_cutoff < self.context_len
@@ -74,7 +76,6 @@ class SelfForcingSampler:
         device        = self.device
         N             = num_frames
         start_grad_at = N - self.frame_gradient_cutoff
-        tokens_per_frame = self.config.model.tokens_per_frame
 
         if latent_conditioning:
             self._warmup_kv(latent_conditioning)
@@ -102,9 +103,9 @@ class SelfForcingSampler:
                         btn     = btn,
                     )
                     self.kv_cache.disable_cache_updates()
-                    cache_overflow = len(self.kv_cache) - (self.context_len * tokens_per_frame)
+                    cache_overflow = len(self.kv_cache) - (self.context_len * self.tokens_per_frame)
                     if cache_overflow > 0:
-                        drop = -(-cache_overflow // tokens_per_frame)  # ceil division
+                        drop = -(-cache_overflow // self.tokens_per_frame)  # ceil division
                         self.kv_cache.truncate(drop)
 
                 # move to the previous timestep unless we hit t=0
