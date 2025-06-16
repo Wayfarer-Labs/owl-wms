@@ -4,16 +4,16 @@ model:
   channels: 128
   audio_channels: 64
   
-  n_layers: 13
-  n_heads: 16
-  d_model: 1024
+  n_layers: 25
+  n_heads: 24
+  d_model: 1536
 
   tokens_per_frame: 17
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.1
-  n_frames: 30
+  n_frames: 60
 
   causal: false
 
@@ -21,7 +21,7 @@ train:
   trainer_id: av
   data_id: cod_s3_audio
   data_kwargs:
-    window_length: 30
+    window_length: 60
     bucket_name: cod-data-latent-360x640to4x4
 
   target_batch_size: 256
@@ -41,21 +41,22 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: checkpoints/360p
-
+  checkpoint_dir: checkpoints/av_huge
+  resume_ckpt: checkpoints/av_huge/step_50000.pt
+        
   sample_interval: 1000
   save_interval: 5000
 
   sampler_id: av_window
   sampler_kwargs:
-    n_steps: 10
+    n_steps: 20
     cfg_scale: 1.3
-    window_length: 30
-    num_frames: 60
+    window_length: 60
+    num_frames: 120
     noise_prev: 0.2
     only_return_generated: false
 
-  n_samples: 8
+  n_samples: 4
 
   vae_id: null
   vae_batch_size: 4

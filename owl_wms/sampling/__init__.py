@@ -9,12 +9,6 @@ def get_sampler_cls(sampler_id):
         return CFGSampler
     elif sampler_id == "window":
         return WindowCFGSampler
-    elif sampler_id == "shortcut":
-        from .shortcut_sampler import CacheShortcutSampler
-        return CacheShortcutSampler
-    elif sampler_id == "shortcut_2":
-        from .shortcut_sampler import WindowShortcutSamplerNoKeyframe
-        return WindowShortcutSamplerNoKeyframe
     elif sampler_id == "av_window":
         from .av_window import AVWindowSampler
         return AVWindowSampler

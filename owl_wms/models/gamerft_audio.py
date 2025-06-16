@@ -13,13 +13,13 @@ from ..nn.embeddings import (
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import UViT, FinalLayer
+from ..nn.attn import DiT, FinalLayer
 
-class GameRFTCore(nn.Module):
+class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.transformer = UViT(config)
+        self.transformer = DiT(config)
         self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
 
@@ -71,11 +71,11 @@ class GameRFTCore(nn.Module):
 
         return video, audio
 
-class GameRFT(nn.Module):
+class GameRFTAudio(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.core = GameRFTCore(config)
+        self.core = GameRFTAudioCore(config)
         self.cfg_prob = config.cfg_prob
     
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None):
