@@ -15,6 +15,7 @@ from ..data import get_loader
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..sampling import get_sampler_cls
 from ..schedulers import get_scheduler_cls
+from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
 from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb
@@ -73,8 +74,16 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
 
 class SelfForcingTrainer(BaseTrainer):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+            self,
+            train_cfg:      TrainingConfig,
+            logging_cfg:    LoggingConfig,
+            model_cfg:      ModelConfig,
+            global_rank:    int = 0,
+            local_rank:     int = 0,
+            world_size:     int = 1
+        ):
+        super().__init__(train_cfg, logging_cfg, model_cfg, global_rank, local_rank, world_size)
         self.max_grad_norm = getattr(self.train_cfg, 'max_grad_norm', 1.0)
         
         model_id = self.model_cfg.model_id
@@ -88,11 +97,13 @@ class SelfForcingTrainer(BaseTrainer):
         self.causal_model: nn.Module        = get_model_cls(model_id)(student_cfg)
         if self.train_cfg.resume_ckpt is not None:
             assert self.train_cfg.student_ckpt is not None
-            self.causal_model.load_state_dict(versatile_load(self.train_cfg.student_ckpt))
+            student_state_dict = versatile_load(self.train_cfg.student_ckpt)
+            self.causal_model.core.load_state_dict(student_state_dict)
         unfreeze(self.causal_model)
 
         self.bidirectional_model: nn.Module = get_model_cls(model_id)(teacher_cfg)
-        self.bidirectional_model.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
+        teacher_state_dict = versatile_load(self.train_cfg.teacher_ckpt)
+        self.bidirectional_model.load_state_dict(teacher_state_dict)
         freeze(self.bidirectional_model)
 
         self.decoder:    nn.Module = get_decoder_only()

@@ -1,63 +1,61 @@
-# Config for Self-Forcing training with autoregressive rollout
 model:
-  model_id: causal_game_rft
-  sample_size: [5,8]
+  model_id: game_rft_audio
+  sample_size: 4
   channels: 128
-  
-  n_layers: 17
-  n_heads: 16
-  d_model: 1024
-
-  tokens_per_frame: 16
+  audio_channels: 64
+  n_layers: 25
+  n_heads: 24
+  d_model: 1536
+  tokens_per_frame: 17
   n_buttons: 11
   n_mouse_axes: 2
-
-  cfg_prob: 0.0
-  n_frames: 48
-
-  causal: true
+  cfg_prob: 0.1
+  n_frames: 60
+  causal: false
 
 train:
   trainer_id: self_forcing
-  data_id: cod_latent
+  data_id: cod_s3_audio
   data_kwargs:
-    window_length: 48
-    root: ../cod_data/BlackOpsColdWar
-    add_optical_flow: false
+    window_length: 60
+    bucket_name: cod-data-latent-360x640to4x4
 
   target_batch_size: 256
   batch_size: 32
-
   epochs: 200
 
   opt: AdamW
   opt_kwargs:
-    lr: 2.0e-6
-    weight_decay: 1.0e-4
-    eps: 1.0e-15
-    betas: [0.9, 0.95]
+    lr: 0.001
+    momentum: 0.95
+    adamw_lr: 0.0001
+    adamw_wd: 0.0001
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys:
+      - core.proj_in
+      - core.proj_out.proj
 
   scheduler: null
 
-  checkpoint_dir: checkpoints/self_forcing-360p
-
-  student_ckpt: null
-  teacher_ckpt: null
+  checkpoint_dir: checkpoints/av_wm
+  resume_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
+  teacher_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
+  student_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
 
   sample_interval: 1000
   save_interval: 5000
 
   n_samples: 8
 
-  vae_id: 720pr3dc
+  vae_id: null
   vae_batch_size: 4
-  vae_scale: 0.35
-  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
-  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
-
-  teacher_ckpt: null # Set later TODO
+  vae_scale: 0.13
+  audio_vae_scale: 0.17
+  vae_cfg_path: configs/owl_vaes/cod_128x.yml
+  vae_ckpt_path: checkpoints/owl_vaes/cod_128x_30k_ema.pt
 
 wandb:
   name: samibg
-  project: video_models
-  run_name: self_forcing_360p
+  project: video_world_models
+  run_name: self_forcing_360p4x4
