@@ -10,44 +10,52 @@ model:
   n_buttons: 11
   n_mouse_axes: 2
   cfg_prob: 0.1
-  n_frames: 60
-  causal: false
+  context_length: 48
+  n_frames: 60  # n_frames - context_length is how many frames we generate at once
+  causal: false          # bidirectional teacher; set true for the student
 
 train:
   trainer_id: self_forcing
+  t_schedule: [1000, 750, 500, 250]
+  frame_gradient_cutoff: 30 # TODO set this carefully in case it interferes with context length and num_gen_frames
+  latent_shape: [128, 4, 4]
+  scheduler: constant
+  scheduler_kwargs:
+    factor: 1.0
+    total_iters: 1
+
+  # ---------- data ----------
   data_id: cod_s3_audio
   data_kwargs:
     window_length: 60
     bucket_name: cod-data-latent-360x640to4x4
 
-  target_batch_size: 256
-  batch_size: 32
+  # ---------- batching ----------
+  target_batch_size: 256     # effective (across GPUs × grad-accum)
+  batch_size: 32             # clips / GPU
   epochs: 200
 
+  # ---------- optimizer ----------
   opt: AdamW
   opt_kwargs:
-    lr: 0.001
-    momentum: 0.95
-    adamw_lr: 0.0001
-    adamw_wd: 0.0001
-    adamw_eps: 1.0e-15
-    adamw_betas: [0.9, 0.95]
-    adamw_keys:
-      - core.proj_in
-      - core.proj_out.proj
+    lr: 8.0e-6               # Self-Forcing default
+    weight_decay: 0.01       # paper value
+    eps: 1.0e-8              # paper value
+    betas: [0.0, 0.999]      # paper value
 
-  scheduler: null
 
+  # ---------- checkpoints ----------
   checkpoint_dir: checkpoints/av_wm
-  resume_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
+  resume_ckpt:  checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
   teacher_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
   student_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
 
+  # ---------- logging / sampling ----------
   sample_interval: 1000
   save_interval: 5000
-
   n_samples: 8
 
+  # ---------- VAE ----------
   vae_id: null
   vae_batch_size: 4
   vae_scale: 0.13

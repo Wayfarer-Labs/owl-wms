@@ -13,10 +13,11 @@ from ..nn.embeddings import (
     ControlEmbedding,
     LearnedPosEnc
 )
+from ..configs import TransformerConfig
 from ..nn.attn import DiT, FinalLayer
 
 class GameRFTAudioCore(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: TransformerConfig):
         super().__init__()
 
         self.transformer = DiT(config)
@@ -72,12 +73,38 @@ class GameRFTAudioCore(nn.Module):
         return video, audio
 
 class GameRFTAudio(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: TransformerConfig):
         super().__init__()
-
+        self.config = config
         self.core = GameRFTAudioCore(config)
         self.cfg_prob = config.cfg_prob
     
+    def score_fn(self,
+                x_t:   torch.Tensor,       # [B, N, C, H, W] noisy video latents
+                t:     torch.Tensor,       # [B, N] or scalar
+                mouse: torch.Tensor | None = None,
+                btn:   torch.Tensor | None = None,
+                audio: torch.Tensor | None = None):
+        """
+        Return ε-score for the *video* branch at noise level t.
+        Matches the target (z − x) / σ used at training time.
+        """
+        B, N, _, _, _ = x_t.shape
+        if audio is None:        # every call from Self-Forcing passes video only
+            audio = torch.zeros(B, N, self.config.audio_channels,
+                                device=x_t.device, dtype=x_t.dtype)
+
+        if mouse is None:
+            mouse = torch.zeros(B, N, 2,             device=x_t.device, dtype=x_t.dtype)
+        if btn is None:
+            btn   = torch.zeros(B, N, self.config.n_buttons,
+                                device=x_t.device, dtype=x_t.dtype)
+
+        # core returns (pred_video, pred_audio); we keep the first
+        score_video, _ = self.core(x_t, audio, t, mouse, btn)
+        return score_video
+
+
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
@@ -113,6 +140,7 @@ class GameRFTAudio(nn.Module):
             target_audio = z_audio - audio
             
         pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn)
+        
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)
         diff_loss = video_loss + audio_loss

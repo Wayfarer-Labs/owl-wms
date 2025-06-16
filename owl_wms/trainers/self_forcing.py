@@ -20,7 +20,7 @@ from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sigma
-
+from owl_wms.muon import Muon
 
 # NOTE Schedule for which denoising timestep to sample for DMD loss
 T_SCHEDULE = [1000, 750, 500, 250]
@@ -39,12 +39,13 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
         super().__init__()
         self.teacher_model = teacher_model
+        # -- teacher score fn
         self.teacher_score_fn: Callable[[Tensor, int], Tensor] = teacher_score_fn
-
         if not self.teacher_score_fn and hasattr(teacher_model, 'score_fn'):
             self.teacher_score_fn = teacher_model.score_fn
-
         assert self.teacher_score_fn is not None
+
+        self.teacher_score_fn = torch.no_grad()(self.teacher_score_fn)
 
         self.device = next(teacher_model.parameters()).device
         self.q_sample_fn = q_sample_fn
@@ -103,10 +104,13 @@ class SelfForcingTrainer(BaseTrainer):
 
         self.bidirectional_model: nn.Module = get_model_cls(model_id)(teacher_cfg)
         teacher_state_dict = versatile_load(self.train_cfg.teacher_ckpt)
-        self.bidirectional_model.load_state_dict(teacher_state_dict)
+        self.bidirectional_model.core.load_state_dict(teacher_state_dict)
         freeze(self.bidirectional_model)
 
-        self.decoder:    nn.Module = get_decoder_only()
+        self.decoder:    nn.Module = get_decoder_only(self.train_cfg.vae_id,
+                                                      self.train_cfg.vae_cfg_path,
+                                                      self.train_cfg.vae_ckpt_path)
+
         self.decoder_fn            = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
         freeze(self.decoder)
 
@@ -175,8 +179,8 @@ class SelfForcingTrainer(BaseTrainer):
         
         if not has_ckpt:
             return
-        
-        self.causal_model       .load_state_dict(save_dict['causal_model'])
+        # TODO make a ckpt manually from the 1b model that conforms to the below structure
+        self.causal_model       .load_state_dict(save_dict.get('causal_model') or save_dict['model'])
         self.bidirectional_model.load_state_dict(save_dict['bidirectional_model'])
         self.ema                .load_state_dict(save_dict['ema'])
         self.opt                .load_state_dict(save_dict['opt'])
@@ -206,17 +210,37 @@ class SelfForcingTrainer(BaseTrainer):
         try: return next(self.train_loader)
         except StopIteration: self.train_loader = iter(self.train_loader) ; return self._format_batch()
 
+    def _construct_primers(self,
+                           clip_bcnhw: Tensor,
+                           mouse: Tensor,
+                           btn: Tensor,
+                           primer_len: int) -> list[dict[str, Tensor]]:
+        return [
+            dict(latent =clip_bcnhw[:, i:i+1],
+                 mouse  =mouse     [:, i:i+1],
+                 btn    =btn       [:, i:i+1])
+            for i in range(primer_len)
+        ]
 
     def _train_step(self):
         # NOTE: Auto-regressive rollout
-        student_clip_bcnhw      = self.autoregressive_rollout()
-        groundtruth_clip_bcnhw, mouse, btn = self._format_batch()
+        clip_bcnhw, mouse, btn  = self._format_batch()
+        latent_conditions       = self._construct_primers(clip_bcnhw, mouse, btn, self.context_len)
+        num_gen_frames          = self.model_cfg.n_frames - self.context_len
+        # TODO WTF is even going on here
+        # NOTE The issue is that we need latent conditioning.
+        # This could be the groundtruth latents, but they need to be in {'latent': ..., 'mouse': ..., 'btn': ...} format.
+        # This means that we might need to chunk the groundtruth+mouse+btn into two - but is this correct?
+        student_clip_bcnhw      = self.sampler.autoregressive_rollout(btn  [:, self.context_len:],
+                                                                      mouse[:, self.context_len:],
+                                                                      latent_conditioning=latent_conditions,
+                                                                      num_frames=num_gen_frames)
         t: int                  = random.choice(self.t_schedule)
 
         loss = self.loss_fn.forward(
             student_model=self.causal_model,
             student_clip=student_clip_bcnhw,
-            groundtruth_clip=groundtruth_clip_bcnhw,
+            groundtruth_clip=clip_bcnhw,
             t=t,
             student_score_fn=self.causal_model.score_fn
         )
@@ -227,7 +251,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         return {
             'student_clip':     student_clip_bcnhw,
-            'groundtruth_clip': groundtruth_clip_bcnhw,
+            'groundtruth_clip': clip_bcnhw,
             'mouse':            mouse,
             'btn':              btn,
             't':                t,
@@ -251,16 +275,22 @@ class SelfForcingTrainer(BaseTrainer):
     def should_break(self):
         return hasattr(self.train_cfg, 'max_steps') and self.total_step_counter >= self.train_cfg.max_steps
 
+    def get_module(self, ema = False):
+        if ema: return self.ema.ema_model if self.world_size == 1 else self.ema.ema_model.module
+        else:   return self.causal_model  if self.world_size == 1 else self.causal_model.module
 
     @torch.no_grad()
     def evaluate(self):
         if self.rank != 0: return
         self.causal_model.eval()
         try:
-            _, mouse, btn = self._format_batch()
+            groundtruth, mouse, btn = self._format_batch()
             # TODO How does this get conditioning from the groundtruth? I am guessing we need some shenanigans with
             # latents for groundtruth.
-            student_clip = self.autoregressive_rollout()
+            student_clip = self.sampler.autoregressive_rollout(btn,
+                                                               mouse,
+                                                               latent_conditioning=groundtruth,
+                                                               num_frames=self.model_cfg.n_frames)
             eval_video = to_wandb(student_clip, mouse, btn,  gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         

@@ -78,6 +78,8 @@ class TrainingConfig:
     # -- self forcing stuff:
     frame_gradient_cutoff : int = 20 # number of frames from the end to start gradient computation for
     t_schedule : list[int] = field(default_factory=lambda: [1000, 750, 500, 250]) # timesteps to sample for DMD loss
+    latent_shape : tuple[int, int, int] = (128, 4, 4)
+
 
 @dataclass
 class WANDBConfig:
