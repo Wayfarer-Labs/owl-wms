@@ -23,7 +23,8 @@ class SelfForcingSampler:
             latent_shape: tuple[int, int, int, int],
             t_schedule: list[int] = [1000, 750, 500, 250],
             context_len: int = 48,
-            frame_gradient_cutoff: int = 20,
+            frame_gradient_cutoff: int = 8,
+            num_gen_frames: int = 64,
             training: bool = False,
             autocast: torch.dtype = torch.bfloat16
         ):
@@ -42,11 +43,16 @@ class SelfForcingSampler:
         self.batch_size = self.train_config.batch_size
         self.context_len = context_len
         self.latent_shape = latent_shape
+        self.num_gen_frames = num_gen_frames
+    
         
         # -- gradient optimisation
-        self.frame_gradient_cutoff = frame_gradient_cutoff
         self.kv_cache = KVCache(self.model_config).to(self.device)
         self.kv_cache.reset(self.batch_size)
+        self.frame_gradient_cutoff = frame_gradient_cutoff
+        self.start_grad_at = max(0, self.num_gen_frames - self.frame_gradient_cutoff)
+        if self.start_grad_at <= 0:
+            print(f'WARNING: {self.num_gen_frames=} <= {self.frame_gradient_cutoff=}')
 
         # -- validation
         assert self.frame_gradient_cutoff < self.context_len
@@ -55,55 +61,63 @@ class SelfForcingSampler:
     def _warmup_kv(self, latent_primers: list[dict[str, Tensor]]):
         """Fill rolling KV cache without tracking grads."""
         self.kv_cache.enable_cache_updates()
+        t = torch.zeros((self.batch_size, 1), device=self.device)
         for f in latent_primers:
-            _ = self.model(
-                x       = f["latent"].to(self.device),
-                t       = 0,
+            _ = self.model.core(
+                x       = f["latent"],
+                t       = t,
                 kv_cache= self.kv_cache,
-                mouse   = f["mouse"].to(self.device),
-                btn     = f["button"].to(self.device),
+                mouse   = f["mouse"],
+                btn     = f["btn"],
+                audio   = f["audio"],
             )
         self.kv_cache.disable_cache_updates()
 
     def autoregressive_rollout(self,
                                btn: Tensor,
                                mouse: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]],
-                               num_frames: int) -> list[Tensor]:
+                               audio: Tensor,
+                               latent_conditioning: list[dict[str, Tensor]]) -> list[Tensor]:
+        assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
+            f'btn, mouse, and audio must have the same number of frames: \
+                {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
+        
         B             = self.batch_size
-        C, F, H, W    = self.latent_shape
-        Tschedule     = self.t_schedule
+        C, H, W       = self.latent_shape       # dims of latent of upstream autoencoder
+        t_schedule    = self.t_schedule         # few-step distillation schedule
         device        = self.device
-        N             = num_frames
-        start_grad_at = N - self.frame_gradient_cutoff
+        N             = self.num_gen_frames     # number of frames to generate that are outside the context
+        start_grad_at = self.start_grad_at      # frame_idx past which we start keeping track of grads (vanishing error accumulation horizon)        
 
         if latent_conditioning:
             self._warmup_kv(latent_conditioning)
 
+        tokens_per_context = self.context_len * self.tokens_per_frame
         clean_latents = []
 
         for i in range(N):
-            grad_frame = i >= start_grad_at  # last L₁ frames
-            s_idx = torch.randint(0, len(Tschedule), ())
+            grad_frame  = i >= start_grad_at                     # last L₁ frames
+            s_idx       = torch.randint(0, len(t_schedule), ())  # step index of the chosen (reversed) step
+            x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
 
-            # sample x_t at the *largest* timestep
-            x_t = torch.randn(B, C, F, H, W, device=device)
-
-            for step_idx, t in enumerate(reversed(Tschedule)):
+            for step_idx, t in enumerate(reversed(t_schedule)):
                 # enable grad **only** on the chosen (reversed) step
                 keep_grad = grad_frame and (step_idx == s_idx) and self.training
-                x_t.requires_grad_(keep_grad)
+                x_t.detach_()                   # always detach x_t, so it starts as a leaf node
+                x_t.requires_grad_(keep_grad)   # but reattach if keep_grad
                 with torch.autocast(device_type=device.type, dtype=self.autocast):
                     self.kv_cache.enable_cache_updates()
-                    x_0 = self.model(
+                    # NOTE: ignore audio as _ for now? ask shab to double check :( 
+                    x_0, _ = self.model.core(
                         x       = x_t,
-                        t       = t,
+                        t       = t * torch.ones((self.batch_size, 1), device=self.device),
                         kv_cache= self.kv_cache,
-                        mouse   = mouse,
-                        btn     = btn,
+                        mouse   = mouse [:, i:i+1],
+                        btn     = btn   [:, i:i+1],
+                        audio   = audio [:, i:i+1],
                     )
                     self.kv_cache.disable_cache_updates()
-                    cache_overflow = len(self.kv_cache) - (self.context_len * self.tokens_per_frame)
+                    cache_overflow = len(self.kv_cache) - tokens_per_context
                     if cache_overflow > 0:
                         drop = -(-cache_overflow // self.tokens_per_frame)  # ceil division
                         self.kv_cache.truncate(drop)

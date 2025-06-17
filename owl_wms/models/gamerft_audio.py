@@ -15,6 +15,7 @@ from ..nn.embeddings import (
 )
 from ..configs import TransformerConfig
 from ..nn.attn import DiT, FinalLayer
+from ..nn.kv_cache import KVCache
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config: TransformerConfig):
@@ -32,7 +33,7 @@ class GameRFTAudioCore(nn.Module):
 
         self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
 
-    def forward(self, x, audio, t, mouse, btn):
+    def forward(self, x, audio, t, mouse, btn, kv_cache = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # t is [b,n]
@@ -55,7 +56,7 @@ class GameRFTAudioCore(nn.Module):
         x = eo.rearrange(x, 'b n f d -> b (n f) d')
 
         x = self.pos_enc(x)
-        x = self.transformer(x, cond)
+        x = self.transformer(x, cond, kv_cache)
 
         # Split into video and audio tokens
         x = eo.rearrange(x, 'b (n f) d -> b n f d', n=n)
@@ -84,7 +85,8 @@ class GameRFTAudio(nn.Module):
                 t:     torch.Tensor,       # [B, N] or scalar
                 mouse: torch.Tensor | None = None,
                 btn:   torch.Tensor | None = None,
-                audio: torch.Tensor | None = None):
+                audio: torch.Tensor | None = None,
+                kv_cache: KVCache | None = None):
         """
         Return ε-score for the *video* branch at noise level t.
         Matches the target (z − x) / σ used at training time.
@@ -101,7 +103,7 @@ class GameRFTAudio(nn.Module):
                                 device=x_t.device, dtype=x_t.dtype)
 
         # core returns (pred_video, pred_audio); we keep the first
-        score_video, _ = self.core(x_t, audio, t, mouse, btn)
+        score_video, _ = self.core(x_t, audio, t, mouse, btn, kv_cache)
         return score_video
 
 

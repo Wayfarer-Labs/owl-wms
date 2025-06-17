@@ -54,7 +54,7 @@ class BaseTrainer:
         fp = os.path.join(self.train_cfg.checkpoint_dir, f"step_{self.total_step_counter}.pt")
         torch.save(save_dict, fp)
     
-    def load(self, path):
+    def load_causal(self, path):
         return torch.load(path, map_location=f'cuda:{self.local_rank}',weights_only=False)
 
             

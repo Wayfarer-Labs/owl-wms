@@ -79,11 +79,11 @@ class CausVidTrainer(BaseTrainer):
             save_dict['scheduler'] = self.scheduler.state_dict()
         super().save(save_dict)
     
-    def load(self):
+    def load_causal(self):
         has_ckpt = False
         try:
             if self.train_cfg.resume_ckpt is not None:
-                save_dict = super().load(self.train_cfg.resume_ckpt)
+                save_dict = super().load_causal(self.train_cfg.resume_ckpt)
                 has_ckpt = True
         except:
             print("Error loading checkpoint")
@@ -151,7 +151,7 @@ class CausVidTrainer(BaseTrainer):
         self.scaler = torch.amp.GradScaler()
         ctx = torch.amp.autocast('cuda',torch.bfloat16)
 
-        self.load()
+        self.load_causal()
 
         # Timer reset
         timer = Timer()

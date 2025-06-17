@@ -10,14 +10,14 @@ model:
   n_buttons: 11
   n_mouse_axes: 2
   cfg_prob: 0.1
-  context_length: 48
+  context_length: 32
   n_frames: 60  # n_frames - context_length is how many frames we generate at once
   causal: false          # bidirectional teacher; set true for the student
 
 train:
   trainer_id: self_forcing
   t_schedule: [1000, 750, 500, 250]
-  frame_gradient_cutoff: 30 # TODO set this carefully in case it interferes with context length and num_gen_frames
+  frame_gradient_cutoff: 16 # TODO set this carefully in case it interferes with context length and num_gen_frames
   latent_shape: [128, 4, 4]
   scheduler: constant
   scheduler_kwargs:
@@ -46,9 +46,8 @@ train:
 
   # ---------- checkpoints ----------
   checkpoint_dir: checkpoints/av_wm
-  resume_ckpt:  checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
   teacher_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
-  student_ckpt: checkpoints/av_wm/av_huge_1b_step_205k_ema.pt
+  student_ckpt: null
 
   # ---------- logging / sampling ----------
   sample_interval: 1000

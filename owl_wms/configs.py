@@ -48,6 +48,7 @@ class TrainingConfig:
     checkpoint_dir : str = "checkpoints/v0" # Where checkpoints saved
     resume_ckpt : str = None
     # -- self forcing only:
+    frame_gradient_cutoff : int = 12
     student_ckpt : str = None
     teacher_ckpt : str = None
     # -- 
