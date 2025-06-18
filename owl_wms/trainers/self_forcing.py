@@ -55,19 +55,18 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
     def forward(self,
             student_model:      nn.Module, *,
-            student_clip:       Tensor,
-            groundtruth_clip:   Tensor,
-            t:                  int | Tensor,
+            student_clip_bnchw: Tensor,
+            groundtruth_clip_bnchw:   Tensor,
+            t:                  int,
             student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
         ) -> Tensor:
-        t = torch.tensor(t, device=self.device) if isinstance(t, int) else t
-
         student_score_fn = student_score_fn or student_model.score_fn
         assert student_score_fn is not None
+        
+        noisy_student, _     = self.q_sample_fn(student_clip_bnchw,     t)
+        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip_bnchw, t)
 
-        noisy_student, _     = self.q_sample_fn(student_clip, t)
-        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip, t)
-
+        t = torch.tensor(t, device=self.device).repeat(student_clip_bnchw.shape[0], 1)
         with torch.no_grad():
             score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth, t)
 
@@ -249,8 +248,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                                             audio[:, self.context_len:],
                                                                             latent_conditions)
         t: int  = random.choice(self.t_schedule)
-        t       = torch.tensor(t, device=self.device).repeat(self.batch_size, 1) # might not be necessary cause of broadcasting? if we get device mismatch errors maybe we should autocast
-
+        
         loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = student_clip_bnchw,
@@ -302,9 +300,9 @@ class SelfForcingTrainer(BaseTrainer):
             groundtruth, audio, mouse, btn  = self._format_batch()
             primers                         = self._construct_primers(groundtruth, audio, mouse, btn, self.context_len)
             student_clip                    = self.sampler.autoregressive_rollout(btn,
-                                                                                   mouse,
-                                                                                   audio,
-                                                                                   latent_conditioning=primers)
+                                                                                  mouse,
+                                                                                  audio,
+                                                                                  latent_conditioning=primers)
             eval_video = to_wandb(student_clip, mouse, btn, audio, gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         

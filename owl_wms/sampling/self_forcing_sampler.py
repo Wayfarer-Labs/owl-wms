@@ -10,10 +10,12 @@ from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
 
 _SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.cpu()
 
-@cache
-def sigma(t: int) -> Tensor: return _SIGMA_TABLE[int(t)-1].to(torch.float32) # list is 0-indexed but t_schedule is 1-indexed?
 
-def alpha(t: int) -> Tensor: return (1 - sigma(t).square()).sqrt()
+# NOTE t is one element tensor, or int
+@cache
+def sigma(t: int | Tensor) -> Tensor: return _SIGMA_TABLE[int(t)-1].to(torch.float32) # list is 0-indexed but t_schedule is 1-indexed?
+
+def alpha(t: int | Tensor) -> Tensor: return (1 - sigma(t).square()).sqrt()
 
 
 class SelfForcingSampler:
