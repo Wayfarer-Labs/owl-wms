@@ -4,6 +4,7 @@ from torch import Tensor
 from torch.nn import Module
 from functools import cache
 
+from owl_wms.models.gamerft_audio import GameRFTAudio
 from owl_wms.nn.kv_cache import KVCache
 from owl_wms.configs import TransformerConfig as ModelConfig, TrainingConfig
 from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
@@ -13,17 +14,36 @@ _SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=
 
 # NOTE t is one element tensor, or int
 @cache
-def sigma(t: int | Tensor) -> Tensor: return _SIGMA_TABLE[int(t)-1].to(torch.float32) # list is 0-indexed but t_schedule is 1-indexed?
+def sigma(t: int | Tensor) -> Tensor: 
+    if isinstance(t, Tensor): return _SIGMA_TABLE[(t - 1).long()].to(torch.float32)
+    else:                     return _SIGMA_TABLE[int(t) - 1].to(torch.float32)
 
-def alpha(t: int | Tensor) -> Tensor: return (1 - sigma(t).square()).sqrt()
+def alpha(t: int | Tensor) -> Tensor: 
+    return (1 - sigma(t).square()).sqrt()
+
+def q_sample(x: Tensor, t_bn: Tensor) -> tuple[Tensor, Tensor]:
+    # x: [B, N, C, H, W], t_bn: [B, N] (all batch elements identical)
+    
+    # Since all batches identical, use first row
+    t_single = t_bn[0]  # [N]
+    
+    alphas = alpha(t_single)  # [N] 
+    sigmas = sigma(t_single)  # [N]
+    
+    # Reshape for broadcasting: [1, N, 1, 1, 1]
+    alphas = alphas.view(1, -1, 1, 1, 1)
+    sigmas = sigmas.view(1, -1, 1, 1, 1)
+    
+    eps = torch.randn_like(x)
+    return (alphas * x) + (sigmas * eps), eps
 
 
 class SelfForcingSampler:
     def __init__(self,
-            model: Module,
+            model: GameRFTAudio,
             model_config: ModelConfig,
             batch_size: int,
-            latent_shape: tuple[int, int, int, int],
+            latent_shape: tuple[int, int, int],
             t_schedule: list[int] = [1000, 750, 500, 250],
             context_len: int = 48,
             frame_gradient_cutoff: int = 8,
@@ -35,7 +55,7 @@ class SelfForcingSampler:
         self.autocast = autocast
 
         # -- models, hardware
-        self.model = model
+        self.model: GameRFTAudio = model
         self.model_config = model_config
         self.device = next(model.parameters()).device
         self.tokens_per_frame = self.model_config.tokens_per_frame
@@ -49,7 +69,7 @@ class SelfForcingSampler:
     
         
         # -- gradient optimisation
-        self.kv_cache = KVCache(self.model_config).to(self.device)
+        self.kv_cache = KVCache(self.model_config).to(self.device.type)
         self.kv_cache.reset(self.batch_size)
         self.frame_gradient_cutoff = frame_gradient_cutoff
         self.start_grad_at = max(0, self.num_gen_frames - self.frame_gradient_cutoff)
@@ -79,7 +99,7 @@ class SelfForcingSampler:
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor, Tensor]:
         assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
             f'btn, mouse, and audio must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
@@ -102,7 +122,7 @@ class SelfForcingSampler:
 
         for i in range(N):
             grad_frame  = i >= start_grad_at                        # last L₁ frames
-            s_t         = random.randint(0, max(t_schedule)-1)      # chosen step to keep grads on for
+            s_t         = random.choice(t_schedule)      # chosen step to keep grads on for
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
 
             for t in reversed(t_schedule):
@@ -138,25 +158,20 @@ class SelfForcingSampler:
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    eps_video       = torch.randn_like(x_0)
-                    eps_audio       = torch.randn_like(audio_0)
-                    _alpha, _sigma  = alpha(t), sigma(t)
-                    x_t             = (_alpha * x_0) + (_sigma * eps_video)
-                    audio_t         = (_alpha * audio_0) + (_sigma * eps_audio)
-                else:
-                    break                            # reached fully-denoised
+                    x_t,     _ = q_sample(x_0,     t)
+                    audio_t, _ = q_sample(audio_0, t)
+                else: break # reached fully-denoised
 
             # -- we never use these for gradients in self-forcing. this is because, to get the teacher's score,
             # we take the scores_video/scores_audio, re-noise them, and then get the score from the teacher on
             # the re-noised frames. these are only needed for inference.
-            clean_latents_video .append(x_0.detach())
-            clean_latents_audio .append(audio_0.detach())
+            clean_latents_video += [x_0.detach()]
+            clean_latents_audio += [audio_0.detach()]
 
         if self.training:
-            return (
-                torch.cat(scores_video,          dim=1),
-                torch.cat(scores_audio,          dim=1),
-                torch.tensor(selected_timesteps, device=device).repeat(B, 1))
+            return (torch.cat(scores_video,          dim=1),
+                    torch.cat(scores_audio,          dim=1),
+                    torch.tensor(selected_timesteps, device=device).repeat(B, 1))
 
         return (torch.cat(clean_latents_video,   dim=1),
                 torch.cat(clean_latents_audio,   dim=1),

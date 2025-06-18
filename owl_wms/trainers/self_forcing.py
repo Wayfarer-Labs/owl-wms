@@ -21,35 +21,23 @@ from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBCon
 from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb_av
-from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sigma
-from owl_wms.muon import Muon
-
-# NOTE Schedule for which denoising timestep to sample for DMD loss
-# TODO hunt this down and fix it
-T_SCHEDULE = [1000, 750, 500, 250]
-
-# TODO make this take t as tensor of [B, N]. each N for each batch is the same.
-def q_sample(x: Tensor, t: Tensor) -> Tensor:     # add noise to input at timestep
-    sigmas = torch.vectorize(sigma)(t)
-    alphas = torch.vectorize(alpha)(t)
-    return alphas * x + sigmas * (eps := torch.randn_like(x)), eps
+from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, q_sample
 
 
 class Loss_DistributionMatchingDistillation(nn.Module):
 
     def __init__(self,
                  teacher_model: nn.Module,
-                 q_sample_fn: Callable[[Tensor, int], Tensor] = q_sample,
-                 teacher_score_fn: Callable[[Tensor, int], Tensor] = None):
+                 q_sample_fn: Callable[[Tensor, ...], tuple[Tensor, Tensor]] = q_sample,
+                 teacher_score_fn: Callable[[Tensor, Tensor], Tensor] | None = None):
 
         super().__init__()
         self.teacher_model = teacher_model
         # -- teacher score fn
-        self.teacher_score_fn: Callable[[Tensor, int], Tensor] = teacher_score_fn
-        if not self.teacher_score_fn and hasattr(teacher_model, 'score_fn'):
+        if not teacher_score_fn and hasattr(teacher_model, 'score_fn'):
             self.teacher_score_fn = teacher_model.score_fn
         assert self.teacher_score_fn is not None
-        self.teacher_score_fn = torch.no_grad()(self.teacher_score_fn)
+        self.teacher_score_fn: Callable[[Tensor, Tensor], Tensor] = torch.no_grad()(self.teacher_score_fn)
         self.q_sample_fn = q_sample_fn
 
     def forward(self,
@@ -58,7 +46,7 @@ class Loss_DistributionMatchingDistillation(nn.Module):
             t:                   Tensor,  # [B, N] containing initial denoising timestep for its corresponding frame in scores
             mouse:               Tensor,  # [B, N, 2]
             btn:                 Tensor,  # [B, N, n_buttons]
-        ) -> Tensor:
+        ) -> dict[str, Tensor]:
         noisy_clip,  _ = self.q_sample_fn(score_student_clip,  t)
         noisy_audio, _ = self.q_sample_fn(score_student_audio, t)
         
@@ -251,10 +239,10 @@ class SelfForcingTrainer(BaseTrainer):
 
     def _train_step(self):
         clip_bnchw, audio, mouse, btn   = self._format_batch()
-        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
-        scores_video, scores_audio, t_b = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
-                                                                             mouse              [:, self.context_len:],
-                                                                             audio              [:, self.context_len:],
+        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames]
+        scores_video, scores_audio, t_b = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
+                                                                             mouse              [:, -self.num_gen_frames:],
+                                                                             audio              [:, -self.num_gen_frames:],
                                                                              latent_conditions)
         
         loss = self.loss_fn.forward(
