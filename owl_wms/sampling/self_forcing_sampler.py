@@ -79,7 +79,7 @@ class SelfForcingSampler:
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]]) -> Tensor:
+                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor]:
         assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
             f'btn, mouse, and audio must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
@@ -95,7 +95,8 @@ class SelfForcingSampler:
             self._warmup_kv(latent_conditioning)
 
         tokens_per_context = self.context_len * self.tokens_per_frame
-        clean_latents = []
+        clean_latents_video = []
+        clean_latents_audio = []
 
         for i in range(N):
             grad_frame  = i >= start_grad_at                     # last L₁ frames
@@ -110,13 +111,13 @@ class SelfForcingSampler:
                 with torch.autocast(device_type=device.type, dtype=self.autocast):
                     self.kv_cache.enable_cache_updates()
                     # NOTE: ignore audio as _ for now? ask shab to double check :( 
-                    x_0, _ = self.model.core(
-                        x       = x_t,
-                        t       = t * torch.ones((self.batch_size, 1), device=self.device),
-                        kv_cache= self.kv_cache,
-                        mouse   = mouse [:, i:i+1],
-                        btn     = btn   [:, i:i+1],
-                        audio   = audio [:, i:i+1],
+                    x_0, audio_0 = self.model.core(
+                        x        = x_t,
+                        t        = t * torch.ones((self.batch_size, 1), device=self.device),
+                        kv_cache = self.kv_cache,
+                        mouse    = mouse [:, i:i+1],
+                        btn      = btn   [:, i:i+1],
+                        audio    = audio [:, i:i+1],
                     )
                     self.kv_cache.disable_cache_updates()
                     cache_overflow = len(self.kv_cache) - tokens_per_context
@@ -126,13 +127,15 @@ class SelfForcingSampler:
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    eps   = torch.randn_like(x_0)
-                    _alpha, _sigma = alpha(t), sigma(t)
-                    x_t   = (_alpha * x_0) + (_sigma * eps)
+                    eps             = torch.randn_like(x_0)
+                    _alpha, _sigma  = alpha(t), sigma(t)
+                    x_t             = (_alpha * x_0) + (_sigma * eps)
+                    audio_t         = (_alpha * audio_0) + (_sigma * eps)
                 else:
                     break                            # reached fully-denoised
 
             # detach unless this frame carries grads
-            clean_latents.append(x_0 if keep_grad else x_0.detach())
+            clean_latents_video.append(x_0 if keep_grad else x_0.detach())
+            clean_latents_audio.append(audio_0 if keep_grad else audio_0.detach())
 
-        return torch.cat(clean_latents, dim=1)
+        return torch.cat(clean_latents_video, dim=1), torch.cat(clean_latents_audio, dim=1)

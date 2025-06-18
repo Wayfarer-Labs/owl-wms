@@ -59,9 +59,14 @@ train:
   vae_id: null
   vae_batch_size: 4
   vae_scale: 0.13
-  audio_vae_scale: 0.17
   vae_cfg_path: configs/owl_vaes/cod_128x.yml
   vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_128x_30k_ema.pt
+
+  audio_vae_id: null
+  audio_vae_batch_size: 4
+  audio_vae_scale: 0.17
+  audio_vae_cfg_path: configs/owl_vaes/cod_audio.yml
+  audio_vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_audio_v2_90m_50k_ema.pt
 
 wandb:
   name: samibg

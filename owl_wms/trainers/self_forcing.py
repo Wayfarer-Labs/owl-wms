@@ -104,12 +104,18 @@ class SelfForcingTrainer(BaseTrainer):
         self.bidirectional_model.core.load_state_dict(teacher_state_dict)
         freeze(self.bidirectional_model)
 
-        self.decoder:    nn.Module = get_decoder_only(self.train_cfg.vae_id,
+        self.decoder: nn.Module = get_decoder_only(self.train_cfg.vae_id,
                                                       self.train_cfg.vae_cfg_path,
                                                       self.train_cfg.vae_ckpt_path)
+        self.decoder_fn         = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
-        self.decoder_fn            = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
+        self.audio_decoder: nn.Module = get_decoder_only(self.train_cfg.audio_vae_id,
+                                                      self.train_cfg.audio_vae_cfg_path,
+                                                      self.train_cfg.audio_vae_ckpt_path)
+        self.audio_decoder_fn   = make_batched_decode_fn(self.audio_decoder, self.train_cfg.audio_vae_batch_size)
+        
         freeze(self.decoder)
+        freeze(self.audio_decoder)
 
         if self.rank == 0:
             n_params = sum(p.numel() for p in self.causal_model.parameters())
@@ -240,20 +246,30 @@ class SelfForcingTrainer(BaseTrainer):
         # NOTE: Auto-regressive rollout
         clip_bnchw, audio, mouse, btn = self._format_batch()
         latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
-        student_clip_bnchw            = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
+        student_clip_bnchw, audio_bn  = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
                                                                             mouse             [:, self.context_len:],
                                                                             audio             [:, self.context_len:],
                                                                             latent_conditions)
         t: int  = random.choice(self.t_schedule)
-        
-        loss = self.loss_fn.forward(
+        # TODO - how would audio work? how do i add it to the loss? just a sum?
+        video_loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = student_clip_bnchw,
             groundtruth_clip    = clip_bnchw[:, self.context_len:],
             t                   = t,
             student_score_fn    = self.causal_model.score_fn
         )
-        
+        # TODO big question mask is if audio does dmd1 too
+        audio_loss = self.loss_fn.forward(
+            student_model       = self.causal_model,
+            student_clip        = audio_bn,
+            groundtruth_clip    = audio[:, self.context_len:],
+            t                   = t,
+            student_score_fn    = self.causal_model.score_fn
+        )
+
+        loss = video_loss + audio_loss
+
         self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)
         grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
         self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
@@ -261,12 +277,15 @@ class SelfForcingTrainer(BaseTrainer):
         return {
             'student_clip':     student_clip_bnchw,
             'groundtruth_clip': clip_bnchw,
+            'groundtruth_audio':audio,
+            'student_audio':    audio_bn,
             'mouse':            mouse,
             'btn':              btn,
-            'audio':            audio,
             't':                t,
             'grad_norm':        grad_norm,
-            'loss':             loss,
+            'total_loss':             loss,
+            'video_loss':       video_loss,
+            'audio_loss':       audio_loss,
         }
 
     @property
@@ -296,11 +315,11 @@ class SelfForcingTrainer(BaseTrainer):
         try:
             groundtruth, audio, mouse, btn  = self._format_batch()
             primers                         = self._construct_primers(groundtruth, audio, mouse, btn)[  :self.context_len]
-            student_clip                    = self.sampler.autoregressive_rollout(btn                [:, self.context_len:],
+            student_clip, audio_bn          = self.sampler.autoregressive_rollout(btn                [:, self.context_len:],
                                                                                   mouse              [:, self.context_len:],
                                                                                   audio              [:, self.context_len:],
                                                                                   latent_conditioning=primers)
-            eval_video = to_wandb_av(student_clip, audio, mouse, btn, gather=False, max_samples=4)
+            eval_video = to_wandb_av(student_clip, audio_bn, mouse, btn, gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         
         except Exception as e:  print(f"Evaluation failed: {e}")
@@ -314,18 +333,25 @@ class SelfForcingTrainer(BaseTrainer):
                                                         step=self.total_step_counter)
 
             student_clip, groundtruth_clip = info['student_clip'], info['groundtruth_clip']
+            student_audio, groundtruth_audio = info['student_audio'], info['groundtruth_audio']
             gt = groundtruth_clip.clone()
             # replace last n frames of groundtruth with student frames, where n is the number of student frames
             gt[:, -student_clip.shape[1]:] = student_clip
             student_on_groundtruth = gt
             student_on_groundtruth = self.decoder_fn(student_on_groundtruth.bfloat16())
             groundtruth_clip = self.decoder_fn(groundtruth_clip.bfloat16())
-            
+
+            gt_audio = groundtruth_audio.clone()
+            gt_audio[:, -student_audio.shape[1]:] = student_audio
+            student_audio_on_groundtruth = gt_audio
+            student_audio_on_groundtruth = self.audio_decoder_fn(student_audio_on_groundtruth.bfloat16())
+            groundtruth_audio = self.audio_decoder_fn(groundtruth_audio.bfloat16())
+
             try:                  
                 wandb.log({
-                    'student_samples':      to_wandb_av(student_on_groundtruth, info['audio'], info['mouse'], info['btn'],
+                    'student_samples':      to_wandb_av(student_on_groundtruth, student_audio_on_groundtruth, info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
-                    'groundtruth_samples':  to_wandb_av(groundtruth_clip, info['audio'], info['mouse'], info['btn'],
+                    'groundtruth_samples':  to_wandb_av(groundtruth_clip, groundtruth_audio, info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
                 }, step=self.total_step_counter, commit=True)
 
@@ -343,7 +369,9 @@ class SelfForcingTrainer(BaseTrainer):
                 self.ema.update() ; info['time'] = timer.hit()
             
             self.metrics.log_dict({
-                'loss':         info['loss'],
+                'total_loss':   info['total_loss'],
+                'video_loss':   info['video_loss'],
+                'audio_loss':   info['audio_loss'],
                 'grad_norm':    info['grad_norm'],
                 'time':         info['time'],
                 't':            info['t']
