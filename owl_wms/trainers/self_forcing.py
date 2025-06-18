@@ -46,12 +46,8 @@ class Loss_DistributionMatchingDistillation(nn.Module):
         if not self.teacher_score_fn and hasattr(teacher_model, 'score_fn'):
             self.teacher_score_fn = teacher_model.score_fn
         assert self.teacher_score_fn is not None
-
         self.teacher_score_fn = torch.no_grad()(self.teacher_score_fn)
-
-        self.device = next(teacher_model.parameters()).device
         self.q_sample_fn = q_sample_fn
-
 
     def forward(self,
             student_model:      nn.Module, *,
@@ -66,7 +62,7 @@ class Loss_DistributionMatchingDistillation(nn.Module):
         noisy_student, _     = self.q_sample_fn(student_clip,     t)
         noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip, t)
 
-        t = torch.tensor(t, device=self.device).repeat(student_clip.shape[0], 1)
+        t = torch.tensor(t, device=student_clip.device).repeat(student_clip.shape[0], 1)
         with torch.no_grad():
             score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth, t)
 
@@ -131,6 +127,10 @@ class SelfForcingTrainer(BaseTrainer):
                                          **self.train_cfg.data_kwargs)
         self.train_loader   = iter(self.train_loader)
         
+        # -- loss
+        self.t_schedule = self.train_cfg.t_schedule
+        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
+
         # -- auto-load
         self.load_bidirectional()  # always has to load cause an assumption we make is that it always exists
         self.load_causal()         # only loads if we have a checkpoint to resume from or if student is specified
@@ -146,9 +146,6 @@ class SelfForcingTrainer(BaseTrainer):
         self.ctx        = torch.amp.autocast('cuda', torch.float32)
         self.scheduler  = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
         
-        # -- loss
-        self.t_schedule = self.train_cfg.t_schedule
-        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
 
         # -- sampler - initialize this after the hardware so it detects the device
         self.batch_size            = self.train_cfg.batch_size
