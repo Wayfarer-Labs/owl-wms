@@ -1,4 +1,5 @@
 import torch
+import einops
 import random
 from torch import Tensor
 from torch.nn import Module
@@ -21,18 +22,34 @@ def sigma(t: int | Tensor) -> Tensor:
 def alpha(t: int | Tensor) -> Tensor: 
     return (1 - sigma(t).square()).sqrt()
 
-def q_sample(x: Tensor, t_bn: Tensor) -> tuple[Tensor, Tensor]:
-    # x: [B, N, C, H, W], t_bn: [B, N] (all batch elements identical)
+
+# NOTE In sampling, t_bn is a tensor of shape [B, 1]
+# NOTE In training, t_bn is a tensor of shape [B, N]
+# NOTE In both cases, columns are identical across batch elements
+# NOTE In both cases, x can be audio ([B, N, D]) or video ([B,N,C,H,W])
+
+def q_sample(x: Tensor, t_bn: Tensor) -> Tensor:
+    # x: [B, N, ...], t_bn: [B, 1] (sampling) or [B, N] (training)
+    
+    # Handle both sampling and training cases
+    if t_bn.shape[1] == 1:  # Sampling: [B, 1] -> broadcast to [B, N]
+        t_bn = t_bn.expand(-1, x.shape[1])  # [B, N]
     
     # Since all batches identical, use first row
-    t_single = t_bn[0]  # [N]
+    t_single = t_bn[0]        # [N]
     
     alphas = alpha(t_single)  # [N] 
     sigmas = sigma(t_single)  # [N]
     
-    # Reshape for broadcasting: [1, N, 1, 1, 1]
-    alphas = alphas.view(1, -1, 1, 1, 1)
-    sigmas = sigmas.view(1, -1, 1, 1, 1)
+    # Handle common cases
+    if x.ndim == 3:  # Audio: [B, N, D]
+        alphas = einops.repeat(alphas, 'n -> 1 n 1')
+        sigmas = einops.repeat(sigmas, 'n -> 1 n 1')
+    elif x.ndim == 5:  # Images: [B, N, C, H, W]  
+        alphas = einops.repeat(alphas, 'n -> 1 n 1 1 1')
+        sigmas = einops.repeat(sigmas, 'n -> 1 n 1 1 1')
+    else:
+        raise ValueError(f"Unsupported tensor shape: {x.shape}")
     
     eps = torch.randn_like(x)
     return (alphas * x) + (sigmas * eps), eps
@@ -154,12 +171,12 @@ class SelfForcingSampler:
                 # -- only keep track of the scores for the chosen timestep for few-step distillation
                 scores_video       += [x_0]     if (t == s_t) else []
                 scores_audio       += [audio_0] if (t == s_t) else []
-                selected_timesteps += [t]       if (t == s_t) else []
+                selected_timesteps += [t]       if (t == s_t) else []  # NOTE selected_timestamps is a list of randomly sampled N values
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    x_t,     _ = q_sample(x_0,     t * torch.ones(x_t      .shape[0:2], device=x_t.device))
-                    audio_t, _ = q_sample(audio_0, t * torch.ones(audio_0  .shape[0:2], device=audio_0.device))
+                    x_t,     _ = q_sample(x_0,     t * torch.ones((B, 1), device=x_t.device))
+                    audio_t, _ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
                 else: break # reached fully-denoised
 
             # -- we never use these for gradients in self-forcing. this is because, to get the teacher's score,
