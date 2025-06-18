@@ -51,7 +51,7 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
     def forward(self,
             student_model:      nn.Module, *,
-            student_clip: Tensor,
+            student_clip:       Tensor,
             groundtruth_clip:   Tensor,
             t:                  int,
             student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
@@ -234,23 +234,23 @@ class SelfForcingTrainer(BaseTrainer):
         return [ dict(latent = clip_bnchw[:, i:i+1],
                        mouse = mouse     [:, i:i+1],
                        btn   = btn       [:, i:i+1],
-                       audio = audio     [:, i:i+1]) for i in range(primer_len) ]
+                       audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
 
 
     def _train_step(self):
         # NOTE: Auto-regressive rollout
         clip_bnchw, audio, mouse, btn = self._format_batch()
-        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio, self.context_len)
-        student_clip_bnchw            = self.sampler.autoregressive_rollout(btn  [:, self.context_len:],
-                                                                            mouse[:, self.context_len:],
-                                                                            audio[:, self.context_len:],
+        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[:, :self.context_len]
+        student_clip_bnchw            = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
+                                                                            mouse             [:, self.context_len:],
+                                                                            audio             [:, self.context_len:],
                                                                             latent_conditions)
         t: int  = random.choice(self.t_schedule)
         
         loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = student_clip_bnchw,
-            groundtruth_clip    = clip_bnchw,
+            groundtruth_clip    = clip_bnchw[:, self.context_len:],
             t                   = t,
             student_score_fn    = self.causal_model.score_fn
         )
