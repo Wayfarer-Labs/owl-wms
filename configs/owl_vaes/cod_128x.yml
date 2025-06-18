@@ -41,7 +41,7 @@ train:
     warmup_steps: 3000
     min_lr: 5.0e-6
 
-  checkpoint_dir: checkpoints/cod_128x
+  checkpoint_dir: /mnt/data/checkpoints/cod_128x
   resume_ckpt: null #checkpoints/2d_64x/step_10000.pt
 
   sample_interval: 1000

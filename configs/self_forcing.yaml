@@ -60,7 +60,7 @@ train:
   vae_scale: 0.13
   audio_vae_scale: 0.17
   vae_cfg_path: configs/owl_vaes/cod_128x.yml
-  vae_ckpt_path: checkpoints/owl_vaes/cod_128x_30k_ema.pt
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_128x_30k_ema.pt
 
 wandb:
   name: samibg
