@@ -355,8 +355,6 @@ class SelfForcingTrainer(BaseTrainer):
         wandb.log({'lr': self.scheduler.get_last_lr()[0]}, step=self.total_step_counter, commit=False)
         return 
 
-
-
     def train(self):
         timer = Timer()
         while not self.should_break:
