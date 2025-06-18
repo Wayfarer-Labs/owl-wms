@@ -312,6 +312,9 @@ class SelfForcingTrainer(BaseTrainer):
             wandb.log(self.metrics.pop(), step=self.total_step_counter)
             if self.scheduler is not None: wandb.log({'lr': self.scheduler.get_last_lr()[0]},
                                                         step=self.total_step_counter)
+            breakpoint()
+            student_clip = self.decoder_fn(info['student_clip'][:, self.context_len:])
+            groundtruth_clip = self.decoder_fn(info['groundtruth_clip'][:, self.context_len:])
             try:                  
                 wandb.log({
                     'student_samples':      _to_wandb_av(info['student_clip'], info['audio'], info['mouse'], info['btn'],
