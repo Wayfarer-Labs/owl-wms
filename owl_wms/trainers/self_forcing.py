@@ -52,8 +52,12 @@ class Loss_DistributionMatchingDistillation(nn.Module):
     def forward(self,
             student_model:      nn.Module, *,
             student_clip:       Tensor,
+            student_audio:      Tensor,
             groundtruth_clip:   Tensor,
+            groundtruth_audio:  Tensor,
             t:                  int,
+            mouse:              Tensor,
+            btn:                Tensor,
             student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
         ) -> Tensor:
         student_score_fn = student_score_fn or student_model.score_fn
@@ -64,9 +68,17 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
         t = torch.tensor(t, device=student_clip.device).repeat(student_clip.shape[0], 1)
         with torch.no_grad():
-            score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth, t)
-
-        score_student = student_score_fn(noisy_student, t)
+            score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth,
+                                                             t,
+                                                             mouse,
+                                                             btn,
+                                                             groundtruth_audio)
+        # TODO do these need kv-cache?
+        score_student = student_score_fn(noisy_student,
+                                         t,
+                                         mouse,
+                                         btn,
+                                         student_audio)
         loss = 0.5 * ((score_student - score_groundtruth_teacher.detach()) ** 2).mean()
         return loss
 
@@ -251,23 +263,22 @@ class SelfForcingTrainer(BaseTrainer):
                                                                             audio             [:, self.context_len:],
                                                                             latent_conditions)
         t: int  = random.choice(self.t_schedule)
-        # NOTE can we compute loss in one fwd pass? concat or something?
-        video_loss = self.loss_fn.forward(
+        # TODO biggest question is if this needs the kv-cache too. it is already used in
+        # the autoregressive rollout, but we re-calculate the score fn for the student.
+        # this is super suspicious because would the loss-fn calculate gradients for 
+        # the things that were gradient-less in the autoregressive rollout?
+        loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = student_clip_bnchw,
+            student_audio       = audio_bn,
             groundtruth_clip    = clip_bnchw[:, self.context_len:],
+            groundtruth_audio   = audio[:, self.context_len:],
             t                   = t,
-            student_score_fn    = self.causal_model.score_fn
-        )
-        audio_loss = self.loss_fn.forward(
-            student_model       = self.causal_model,
-            student_clip        = audio_bn,
-            groundtruth_clip    = audio[:, self.context_len:],
-            t                   = t,
+            mouse               = mouse[:, self.context_len:],
+            btn                 = btn[:, self.context_len:],
             student_score_fn    = self.causal_model.score_fn
         )
 
-        loss = video_loss + audio_loss
 
         self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)
         grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
@@ -283,8 +294,6 @@ class SelfForcingTrainer(BaseTrainer):
             't':                t,
             'grad_norm':        grad_norm,
             'total_loss':       loss,
-            'video_loss':       video_loss,
-            'audio_loss':       audio_loss,
         }
 
     @property
@@ -358,8 +367,6 @@ class SelfForcingTrainer(BaseTrainer):
             
             self.metrics.log_dict({
                 'total_loss':   info['total_loss'],
-                'video_loss':   info['video_loss'],
-                'audio_loss':   info['audio_loss'],
                 'grad_norm':    info['grad_norm'],
                 'time':         info['time'],
                 't':            info['t']
