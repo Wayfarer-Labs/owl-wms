@@ -228,8 +228,7 @@ class SelfForcingTrainer(BaseTrainer):
                            clip_bnchw: Tensor,
                            mouse: Tensor,
                            btn: Tensor,
-                           audio: Tensor,
-                           primer_len: int) -> list[dict[str, Tensor]]:
+                           audio: Tensor) -> list[dict[str, Tensor]]:
 
         return [ dict(latent = clip_bnchw[:, i:i+1],
                        mouse = mouse     [:, i:i+1],
