@@ -245,7 +245,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                                              audio              [:, -self.num_gen_frames:],
                                                                              latent_conditions)
         
-        loss = self.loss_fn.forward(
+        loss_info = self.loss_fn.forward(
             scores_video        = scores_video,  # fully denoised frame latent from t->0
             scores_audio        = scores_audio,  # fully denoised audio latent from t->0
             t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
@@ -253,20 +253,19 @@ class SelfForcingTrainer(BaseTrainer):
             btn                 = btn  [:, -self.num_gen_frames:],
         )
 
-        self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)
+        self.scaler.scale(loss_info['total_loss']).backward() ; self.scaler.unscale_(self.opt)
         grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
         self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
 
         return {
-            'student_clip':     student_clip_bnchw,
             'groundtruth_clip': clip_bnchw,
             'groundtruth_audio':audio,
-            'student_audio':    audio_bn,
+            'student_clip':     scores_video,
+            'student_audio':    scores_audio,
             'mouse':            mouse,
             'btn':              btn,
-            't':                t,
             'grad_norm':        grad_norm,
-            'total_loss':       loss,
+            **loss_info,
         }
 
     @property
@@ -339,8 +338,7 @@ class SelfForcingTrainer(BaseTrainer):
             self.metrics.log_dict({
                 'total_loss':   info['total_loss'],
                 'grad_norm':    info['grad_norm'],
-                'time':         info['time'],
-                't':            info['t']
+                'time':         info['time']
             })
 
             self.total_step_counter += 1
