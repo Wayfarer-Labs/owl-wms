@@ -308,15 +308,17 @@ class SelfForcingTrainer(BaseTrainer):
             overlay_audio                   = groundtruth_audio.clone()
             overlay_audio   [:, -n_frames:] = student_audio
             overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16())
-
+            # -- decode the groundtruth
+            groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16())
+            groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16())
             wandb.log({
-                'student_samples':     to_wandb_av(overlay_student,  overlay_audio,     mouse, btn, gather=True, max_samples=8),
-                'groundtruth_samples': to_wandb_av(groundtruth_clip, groundtruth_audio, mouse, btn, gather=True, max_samples=8),
+                'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=True, max_samples=8),
+                'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=True, max_samples=8),
             }, step=self.total_step_counter, commit=True)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            print(f"Evaluation failed: {e}") ; breakpoint()
+            print(f"Evaluation failed: {e}")
         finally:               self.causal_model.train()
 
     @torch.no_grad()
