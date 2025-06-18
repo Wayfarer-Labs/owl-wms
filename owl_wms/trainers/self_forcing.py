@@ -20,7 +20,7 @@ from ..schedulers import get_scheduler_cls
 from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
 from torch.nn.parallel import DistributedDataParallel
 import wandb
-from ..utils.logging import LogHelper, _to_wandb_av
+from ..utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sigma
 from owl_wms.muon import Muon
 
@@ -300,7 +300,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                                                   mouse              [:, self.context_len:],
                                                                                   audio              [:, self.context_len:],
                                                                                   latent_conditioning=primers)
-            eval_video = _to_wandb_av(student_clip, audio, mouse, btn, gather=False, max_samples=4)
+            eval_video = to_wandb_av(student_clip, audio, mouse, btn, gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         
         except Exception as e:  print(f"Evaluation failed: {e}")
@@ -320,11 +320,12 @@ class SelfForcingTrainer(BaseTrainer):
             student_on_groundtruth = gt
             student_on_groundtruth = self.decoder_fn(student_on_groundtruth.bfloat16())
             groundtruth_clip = self.decoder_fn(groundtruth_clip.bfloat16())
+            
             try:                  
                 wandb.log({
-                    'student_samples':      _to_wandb_av(student_on_groundtruth, info['audio'], info['mouse'], info['btn'],
+                    'student_samples':      to_wandb_av(student_on_groundtruth, info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
-                    'groundtruth_samples':  _to_wandb_av(groundtruth_clip, info['audio'], info['mouse'], info['btn'],
+                    'groundtruth_samples':  to_wandb_av(groundtruth_clip, info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
                 }, step=self.total_step_counter, commit=True)
 
