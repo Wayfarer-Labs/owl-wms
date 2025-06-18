@@ -20,7 +20,7 @@ from ..schedulers import get_scheduler_cls
 from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
 from torch.nn.parallel import DistributedDataParallel
 import wandb
-from ..utils.logging import LogHelper, to_wandb
+from ..utils.logging import LogHelper, _to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sigma
 from owl_wms.muon import Muon
 
@@ -295,12 +295,12 @@ class SelfForcingTrainer(BaseTrainer):
         self.causal_model.eval()
         try:
             groundtruth, audio, mouse, btn  = self._format_batch()
-            primers                         = self._construct_primers(groundtruth, audio, mouse, btn, self.context_len)
-            student_clip                    = self.sampler.autoregressive_rollout(btn,
-                                                                                  mouse,
-                                                                                  audio,
+            primers                         = self._construct_primers(groundtruth, audio, mouse, btn)[  :self.context_len]
+            student_clip                    = self.sampler.autoregressive_rollout(btn                [:, self.context_len:],
+                                                                                  mouse              [:, self.context_len:],
+                                                                                  audio              [:, self.context_len:],
                                                                                   latent_conditioning=primers)
-            eval_video = to_wandb(student_clip, mouse, btn, audio, gather=False, max_samples=4)
+            eval_video = _to_wandb_av(student_clip, audio, mouse, btn, gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         
         except Exception as e:  print(f"Evaluation failed: {e}")
@@ -314,9 +314,9 @@ class SelfForcingTrainer(BaseTrainer):
                                                         step=self.total_step_counter)
             try:                  
                 wandb.log({
-                    'student_samples':      to_wandb(info['student_clip'], info['mouse'], info['btn'], info['audio'],
+                    'student_samples':      _to_wandb_av(info['student_clip'], info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
-                    'groundtruth_samples':  to_wandb(info['groundtruth_clip'], info['mouse'], info['btn'], info['audio'],
+                    'groundtruth_samples':  _to_wandb_av(info['groundtruth_clip'], info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
                 }, step=self.total_step_counter, commit=True)
 
