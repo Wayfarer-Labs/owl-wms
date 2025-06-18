@@ -246,8 +246,8 @@ class SelfForcingTrainer(BaseTrainer):
                                                                              latent_conditions)
         
         loss_info = self.loss_fn.forward(
-            scores_video        = scores_video,  # fully denoised frame latent from t->0
-            scores_audio        = scores_audio,  # fully denoised audio latent from t->0
+            score_student_clip  = scores_video,  # fully denoised frame latent from t->0
+            score_student_audio = scores_audio,  # fully denoised audio latent from t->0
             t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
             mouse               = mouse[:, -self.num_gen_frames:],
             btn                 = btn  [:, -self.num_gen_frames:],
