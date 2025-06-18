@@ -78,7 +78,7 @@ class SelfForcingSampler:
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]]) -> list[Tensor]:
+                               latent_conditioning: list[dict[str, Tensor]]) -> Tensor:
         assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
             f'btn, mouse, and audio must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
@@ -134,4 +134,4 @@ class SelfForcingSampler:
             # detach unless this frame carries grads
             clean_latents.append(x_0 if keep_grad else x_0.detach())
 
-        return clean_latents
+        return torch.cat(clean_latents, dim=1)

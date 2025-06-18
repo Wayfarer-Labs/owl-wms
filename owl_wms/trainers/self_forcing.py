@@ -232,6 +232,7 @@ class SelfForcingTrainer(BaseTrainer):
                            btn: Tensor,
                            audio: Tensor,
                            primer_len: int) -> list[dict[str, Tensor]]:
+                           # TODO check shapes here! could befucked 
         return [ dict(latent = clip_bcnhw[:, i:i+1],
                        mouse = mouse     [:, i:i+1],
                        btn   = btn       [:, i:i+1],
@@ -242,7 +243,7 @@ class SelfForcingTrainer(BaseTrainer):
         # NOTE: Auto-regressive rollout
         clip_bnchw, audio, mouse, btn = self._format_batch()
         latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio, self.context_len)
-        student_clip_bcnhw            = self.sampler.autoregressive_rollout(btn  [:, self.context_len:],
+        student_clip_bnchw            = self.sampler.autoregressive_rollout(btn  [:, self.context_len:],
                                                                             mouse[:, self.context_len:],
                                                                             audio[:, self.context_len:],
                                                                             latent_conditions)
@@ -250,7 +251,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         loss = self.loss_fn.forward(
             student_model=self.causal_model,
-            student_clip=student_clip_bcnhw,
+            student_clip=student_clip_bnchw,
             groundtruth_clip=clip_bnchw,
             t=t,
             student_score_fn=self.causal_model.score_fn
@@ -261,7 +262,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
 
         return {
-            'student_clip':     student_clip_bcnhw,
+            'student_clip':     student_clip_bnchw,
             'groundtruth_clip': clip_bnchw,
             'mouse':            mouse,
             'btn':              btn,
