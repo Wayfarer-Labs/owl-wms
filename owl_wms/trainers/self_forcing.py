@@ -123,10 +123,12 @@ class SelfForcingTrainer(BaseTrainer):
 
 
         # -- metrics & logging
-        self.metrics    = LogHelper()
+        self.metrics            = LogHelper()
         self.total_step_counter = 0
-        if self.rank == 0:
-            wandb.watch(self.get_module(), log = 'all')
+        if self.rank == 0:        wandb.watch(self.get_module(), log = 'all')
+
+        # -- make sure that eval frequency is a multiple of log frequency
+        self.train_cfg.sample_interval = (self.train_cfg.log_interval * (self.train_cfg.sample_interval // self.train_cfg.log_interval))
 
         # -- data
         self.train_loader   = get_loader(self.train_cfg.data_id,
@@ -243,7 +245,6 @@ class SelfForcingTrainer(BaseTrainer):
                        audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
 
     def _train_step(self):
-        # NOTE: Auto-regressive rollout
         clip_bnchw, audio, mouse, btn = self._format_batch()
         latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
         student_clip_bnchw, audio_bn  = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
@@ -251,7 +252,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                                             audio             [:, self.context_len:],
                                                                             latent_conditions)
         t: int  = random.choice(self.t_schedule)
-        # TODO - how would audio work? how do i add it to the loss? just a sum?
+        # NOTE can we compute loss in one fwd pass? concat or something?
         video_loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = student_clip_bnchw,
@@ -259,7 +260,6 @@ class SelfForcingTrainer(BaseTrainer):
             t                   = t,
             student_score_fn    = self.causal_model.score_fn
         )
-        # TODO big question mask is if audio does dmd1 too. fix inputs
         audio_loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = audio_bn,
@@ -283,7 +283,7 @@ class SelfForcingTrainer(BaseTrainer):
             'btn':              btn,
             't':                t,
             'grad_norm':        grad_norm,
-            'total_loss':             loss,
+            'total_loss':       loss,
             'video_loss':       video_loss,
             'audio_loss':       audio_loss,
         }
@@ -311,55 +311,42 @@ class SelfForcingTrainer(BaseTrainer):
     @torch.no_grad()
     def evaluate(self):
         if self.rank != 0: return
-        self.causal_model.eval()
         try:
-            groundtruth, audio, mouse, btn  = self._format_batch()
-            primers                         = self._construct_primers(groundtruth, audio, mouse, btn)[  :self.context_len]
-            student_clip, audio_bn          = self.sampler.autoregressive_rollout(btn                [:, self.context_len:],
-                                                                                  mouse              [:, self.context_len:],
-                                                                                  audio              [:, self.context_len:],
-                                                                                  latent_conditioning=primers)
-            # TODO decode audio and video before passing
-            eval_video = to_wandb_av(student_clip, audio_bn, mouse, btn, gather=False, max_samples=4)
-            wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
-        
-        except Exception as e:  print(f"Evaluation failed: {e}")
-        finally:                self.causal_model.train()
+            self.causal_model.eval()
+            info = self._train_step()
+            # -- get relevant samples
+            student_clip      = info['student_clip']
+            student_audio     = info['student_audio']
+            groundtruth_clip  = info['groundtruth_clip']
+            groundtruth_audio = info['groundtruth_audio']
+            mouse, btn        = info['mouse'], info['btn']
+            # -- overlay student frames on groundtruth ones
+            n_frames                        = student_clip.shape[1]
+            overlay_student                 = groundtruth_clip.clone()
+            overlay_student [:, -n_frames:] = student_clip             # replace last n frames of groundtruth with student frames
+            overlay_student                 = self.decoder_fn(overlay_student.bfloat16())
+            # -- overlay student audio on groundtruth ones
+            overlay_audio                   = groundtruth_audio.clone()
+            overlay_audio   [:, -n_frames:] = student_audio
+            overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16())
+
+            wandb.log({
+                'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=True, max_samples=8),
+                'groundtruth_samples': to_wandb_av(groundtruth_clip, groundtruth_audio, mouse, btn, gather=True, max_samples=8),
+            }, step=self.total_step_counter, commit=True)
+        except Exception as e: print(f"Evaluation failed: {e}")
+        finally:               self.causal_model.train()
 
     @torch.no_grad()
     def _log_step(self, info: dict):
         # TODO fix this garbaje. also make it only samplein evaluate & only log metrics in should_log
-        if self.should_log:
-            wandb.log(self.metrics.pop(), step=self.total_step_counter)
-            if self.scheduler is not None: wandb.log({'lr': self.scheduler.get_last_lr()[0]},
-                                                        step=self.total_step_counter)
+        if self.should_sample:  self.evaluate()
+        if not self.should_log: return
 
-            student_clip, groundtruth_clip = info['student_clip'], info['groundtruth_clip']
-            student_audio, groundtruth_audio = info['student_audio'], info['groundtruth_audio']
-            gt = groundtruth_clip.clone()
-            # replace last n frames of groundtruth with student frames, where n is the number of student frames
-            gt[:, -student_clip.shape[1]:] = student_clip
-            student_on_groundtruth = gt
-            student_on_groundtruth = self.decoder_fn(student_on_groundtruth.bfloat16())
-            groundtruth_clip = self.decoder_fn(groundtruth_clip.bfloat16())
+        wandb.log(self.metrics.pop(), step=self.total_step_counter, commit=False)
+        wandb.log({'lr': self.scheduler.get_last_lr()[0]}, step=self.total_step_counter, commit=False)
+        return 
 
-            gt_audio = groundtruth_audio.clone()
-            gt_audio[:, -student_audio.shape[1]:] = student_audio
-            student_audio_on_groundtruth = gt_audio
-            student_audio_on_groundtruth = self.audio_decoder_fn(student_audio_on_groundtruth.bfloat16())
-            groundtruth_audio = self.audio_decoder_fn(groundtruth_audio.bfloat16())
-
-            try:                  
-                wandb.log({
-                    'student_samples':      to_wandb_av(student_on_groundtruth, student_audio_on_groundtruth, info['mouse'], info['btn'],
-                                                        gather=True, max_samples=8),
-                    'groundtruth_samples':  to_wandb_av(groundtruth_clip, groundtruth_audio, info['mouse'], info['btn'],
-                                                        gather=True, max_samples=8),
-                }, step=self.total_step_counter, commit=True)
-
-            except Exception as e: print(f"Warning: Failed to log videos: {e}")
-
-        if self.should_sample: self.evaluate()
 
 
     def train(self):
