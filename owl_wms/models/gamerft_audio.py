@@ -5,7 +5,7 @@ GameRFT with Audio
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+from torch import Tensor
 import einops as eo
 
 from ..nn.embeddings import (
@@ -86,7 +86,7 @@ class GameRFTAudio(nn.Module):
                 mouse: torch.Tensor | None = None,
                 btn:   torch.Tensor | None = None,
                 audio: torch.Tensor | None = None,
-                kv_cache: KVCache | None = None):
+                kv_cache: KVCache | None = None) -> tuple[Tensor, Tensor]:
         """
         Return ε-score for the *video* branch at noise level t.
         Matches the target (z − x) / σ used at training time.
@@ -102,9 +102,9 @@ class GameRFTAudio(nn.Module):
             btn   = torch.zeros(B, N, self.config.n_buttons,
                                 device=x_t.device, dtype=x_t.dtype)
 
-        # core returns (pred_video, pred_audio); we keep the first
-        score_video, _ = self.core(x_t, audio, t, mouse, btn, kv_cache)
-        return score_video
+        # core returns (pred_video, pred_audio)
+        score_video, score_audio = self.core(x_t, audio, t, mouse, btn, kv_cache)
+        return score_video, score_audio
 
 
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None):

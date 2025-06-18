@@ -79,7 +79,7 @@ class SelfForcingSampler:
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor]:
+                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
             f'btn, mouse, and audio must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
@@ -95,17 +95,19 @@ class SelfForcingSampler:
             self._warmup_kv(latent_conditioning)
 
         tokens_per_context = self.context_len * self.tokens_per_frame
-        clean_latents_video = []
-        clean_latents_audio = []
+        
+        clean_latents_video, clean_latents_audio = [], []  # N frames, one for each N
+        scores_video,        scores_audio        = [], []  # N frames, one for each (t == s_t)
+        selected_timesteps                       = []      # N values, one for each t sampled from t_schedule
 
         for i in range(N):
-            grad_frame  = i >= start_grad_at                     # last L₁ frames
-            s_idx       = random.randint(0, len(t_schedule)-1)  # step index of the chosen (reversed) step
+            grad_frame  = i >= start_grad_at                        # last L₁ frames
+            s_t         = random.randint(0, max(t_schedule)-1)      # chosen step to keep grads on for
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
 
-            for step_idx, t in enumerate(reversed(t_schedule)):
-                # enable grad **only** on the chosen (reversed) step
-                keep_grad = grad_frame and (step_idx == s_idx) and self.training
+            for t in reversed(t_schedule):
+                # enable grad **only** on the chosen timestep
+                keep_grad = grad_frame and (t == s_t) and self.training
                 x_t.detach_()                   # always detach x_t, so it starts as a leaf node
                 x_t.requires_grad_(keep_grad)   # but reattach if keep_grad
                 with torch.autocast(device_type=device.type, dtype=self.autocast):
@@ -124,6 +126,15 @@ class SelfForcingSampler:
                     if cache_overflow > 0:
                         drop = -(-cache_overflow // self.tokens_per_frame)  # ceil division
                         self.kv_cache.truncate(drop)
+                
+                # -- ignore gradients for frames that are too far backwards, as calculated by frame_gradient_cutoff
+                x_0     = x_0     if grad_frame else x_0.detach()
+                audio_0 = audio_0 if grad_frame else audio_0.detach()
+
+                # -- only keep track of the scores for the chosen timestep for few-step distillation
+                scores_video       += [x_0]     if (t == s_t) else []
+                scores_audio       += [audio_0] if (t == s_t) else []
+                selected_timesteps += [t]       if (t == s_t) else []
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
@@ -135,8 +146,18 @@ class SelfForcingSampler:
                 else:
                     break                            # reached fully-denoised
 
-            # detach unless this frame carries grads
-            clean_latents_video.append(x_0 if keep_grad else x_0.detach())
-            clean_latents_audio.append(audio_0 if keep_grad else audio_0.detach())
+            # -- we never use these for gradients in self-forcing. this is because, to get the teacher's score,
+            # we take the scores_video/scores_audio, re-noise them, and then get the score from the teacher on
+            # the re-noised frames. these are only needed for inference.
+            clean_latents_video .append(x_0.detach())
+            clean_latents_audio .append(audio_0.detach())
 
-        return torch.cat(clean_latents_video, dim=1), torch.cat(clean_latents_audio, dim=1)
+        if self.training:
+            return (
+                torch.cat(scores_video,          dim=1),
+                torch.cat(scores_audio,          dim=1),
+                torch.tensor(selected_timesteps, device=device).repeat(B, 1))
+
+        return (torch.cat(clean_latents_video,   dim=1),
+                torch.cat(clean_latents_audio,   dim=1),
+                torch.tensor(selected_timesteps, device=device).repeat(B, 1))

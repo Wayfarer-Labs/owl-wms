@@ -25,11 +25,14 @@ from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, alpha, sig
 from owl_wms.muon import Muon
 
 # NOTE Schedule for which denoising timestep to sample for DMD loss
+# TODO hunt this down and fix it
 T_SCHEDULE = [1000, 750, 500, 250]
 
-
-def q_sample(x: Tensor, t: int) -> Tensor:     # add noise to input at timestep
-    return alpha(t) * x + sigma(t) * (eps := torch.randn_like(x)), eps
+# TODO make this take t as tensor of [B, N]. each N for each batch is the same.
+def q_sample(x: Tensor, t: Tensor) -> Tensor:     # add noise to input at timestep
+    sigmas = torch.vectorize(sigma)(t)
+    alphas = torch.vectorize(alpha)(t)
+    return alphas * x + sigmas * (eps := torch.randn_like(x)), eps
 
 
 class Loss_DistributionMatchingDistillation(nn.Module):
@@ -50,37 +53,28 @@ class Loss_DistributionMatchingDistillation(nn.Module):
         self.q_sample_fn = q_sample_fn
 
     def forward(self,
-            student_model:      nn.Module, *,
-            student_clip:       Tensor,
-            student_audio:      Tensor,
-            groundtruth_clip:   Tensor,
-            groundtruth_audio:  Tensor,
-            t:                  int,
-            mouse:              Tensor,
-            btn:                Tensor,
-            student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
+            score_student_clip:  Tensor,  # [B, N, C, H, W]
+            score_student_audio: Tensor,  # [B, N, C] 
+            t:                   Tensor,  # [B, N] containing initial denoising timestep for its corresponding frame in scores
+            mouse:               Tensor,  # [B, N, 2]
+            btn:                 Tensor,  # [B, N, n_buttons]
         ) -> Tensor:
-        student_score_fn = student_score_fn or student_model.score_fn
-        assert student_score_fn is not None
+        noisy_clip,  _ = self.q_sample_fn(score_student_clip,  t)
+        noisy_audio, _ = self.q_sample_fn(score_student_audio, t)
         
-        noisy_student, _     = self.q_sample_fn(student_clip,     t)
-        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip, t)
-
-        t = torch.tensor(t, device=student_clip.device).repeat(student_clip.shape[0], 1)
         with torch.no_grad():
-            score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth,
-                                                             t,
-                                                             mouse,
-                                                             btn,
-                                                             groundtruth_audio)
-        # TODO do these need kv-cache?
-        score_student = student_score_fn(noisy_student,
-                                         t,
-                                         mouse,
-                                         btn,
-                                         student_audio)
-        loss = 0.5 * ((score_student - score_groundtruth_teacher.detach()) ** 2).mean()
-        return loss
+            score_teacher_clip, score_teacher_audio = self.teacher_score_fn(noisy_clip, t,
+                                                                            mouse, btn,
+                                                                            noisy_audio)
+
+        clip_loss  = 0.5 * ((score_student_clip  - score_teacher_clip.detach())  ** 2).mean()
+        audio_loss = 0.5 * ((score_student_audio - score_teacher_audio.detach()) ** 2).mean()
+
+        return {
+            'clip_loss':  clip_loss,
+            'audio_loss': audio_loss,
+            'total_loss': clip_loss + audio_loss,
+        }
 
 
 class SelfForcingTrainer(BaseTrainer):
@@ -256,29 +250,20 @@ class SelfForcingTrainer(BaseTrainer):
                        audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
 
     def _train_step(self):
-        clip_bnchw, audio, mouse, btn = self._format_batch()
-        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
-        student_clip_bnchw, audio_bn  = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
-                                                                            mouse             [:, self.context_len:],
-                                                                            audio             [:, self.context_len:],
-                                                                            latent_conditions)
-        t: int  = random.choice(self.t_schedule)
-        # TODO biggest question is if this needs the kv-cache too. it is already used in
-        # the autoregressive rollout, but we re-calculate the score fn for the student.
-        # this is super suspicious because would the loss-fn calculate gradients for 
-        # the things that were gradient-less in the autoregressive rollout?
+        clip_bnchw, audio, mouse, btn   = self._format_batch()
+        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
+        scores_video, scores_audio, t_b = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
+                                                                             mouse              [:, self.context_len:],
+                                                                             audio              [:, self.context_len:],
+                                                                             latent_conditions)
+        
         loss = self.loss_fn.forward(
-            student_model       = self.causal_model,
-            student_clip        = student_clip_bnchw,
-            student_audio       = audio_bn,
-            groundtruth_clip    = clip_bnchw[:, self.context_len:],
-            groundtruth_audio   = audio[:, self.context_len:],
-            t                   = t,
-            mouse               = mouse[:, self.context_len:],
-            btn                 = btn[:, self.context_len:],
-            student_score_fn    = self.causal_model.score_fn
+            scores_video        = scores_video,  # fully denoised frame latent from t->0
+            scores_audio        = scores_audio,  # fully denoised audio latent from t->0
+            t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
+            mouse               = mouse[:, -self.num_gen_frames:],
+            btn                 = btn  [:, -self.num_gen_frames:],
         )
-
 
         self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)
         grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
