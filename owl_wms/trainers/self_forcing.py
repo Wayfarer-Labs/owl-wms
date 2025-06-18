@@ -344,10 +344,10 @@ class SelfForcingTrainer(BaseTrainer):
                 'total_loss':   info['total_loss'],
                 'grad_norm':    info['grad_norm'],
                 'time':         info['time']
-            })
+            }, step=self.total_step_counter, commit=False)
 
-            self.total_step_counter += 1
             self._log_step(info)
+            self.total_step_counter += 1
             self.barrier()
             if self.should_save: self.save()
 
