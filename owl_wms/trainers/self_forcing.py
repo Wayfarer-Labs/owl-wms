@@ -118,6 +118,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         # -- metrics & logging
         self.metrics    = LogHelper()
+        self.total_step_counter = 0
         if self.rank == 0:
             wandb.watch(self.get_module(), log = 'all')
 
@@ -234,7 +235,6 @@ class SelfForcingTrainer(BaseTrainer):
                        mouse = mouse     [:, i:i+1],
                        btn   = btn       [:, i:i+1],
                        audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
-
 
     def _train_step(self):
         # NOTE: Auto-regressive rollout
