@@ -9,7 +9,7 @@ from owl_wms.nn.kv_cache import KVCache
 from owl_wms.configs import TransformerConfig as ModelConfig, TrainingConfig
 from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
 
-_SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.cpu()
+_SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.cuda()
 
 
 # NOTE t is one element tensor, or int
@@ -158,8 +158,8 @@ class SelfForcingSampler:
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    x_t,     _ = q_sample(x_0,     t)
-                    audio_t, _ = q_sample(audio_0, t)
+                    x_t,     _ = q_sample(x_0,     t * torch.ones(x_t      .shape[0:2], device=x_t.device))
+                    audio_t, _ = q_sample(audio_0, t * torch.ones(audio_0  .shape[0:2], device=audio_0.device))
                 else: break # reached fully-denoised
 
             # -- we never use these for gradients in self-forcing. this is because, to get the teacher's score,
