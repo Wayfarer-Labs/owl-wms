@@ -119,9 +119,6 @@ class SelfForcingTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.causal_model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        # -- loss
-        self.t_schedule = self.train_cfg.t_schedule
-        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
 
         # -- metrics & logging
         self.metrics    = LogHelper()
@@ -149,6 +146,10 @@ class SelfForcingTrainer(BaseTrainer):
         self.ctx        = torch.amp.autocast('cuda', torch.float32)
         self.scheduler  = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
         
+        # -- loss
+        self.t_schedule = self.train_cfg.t_schedule
+        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
+
         # -- sampler - initialize this after the hardware so it detects the device
         self.batch_size            = self.train_cfg.batch_size
         self.context_len           = self.model_cfg.context_length
