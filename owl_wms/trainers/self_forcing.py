@@ -14,7 +14,7 @@ from ..utils import (
     Timer, versatile_load
 )
 from ..data import get_loader
-from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
+from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn, make_batched_audio_decode_fn
 from ..sampling import get_sampler_cls
 from ..schedulers import get_scheduler_cls
 from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
@@ -103,10 +103,10 @@ class SelfForcingTrainer(BaseTrainer):
                                                       self.train_cfg.vae_ckpt_path)
         self.decoder_fn         = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
-        self.audio_decoder: nn.Module = get_decoder_only(self.train_cfg.audio_vae_id,
+        self.audio_decoder: nn.Module   = get_decoder_only(self.train_cfg.audio_vae_id,
                                                       self.train_cfg.audio_vae_cfg_path,
                                                       self.train_cfg.audio_vae_ckpt_path)
-        self.audio_decoder_fn   = make_batched_decode_fn(self.audio_decoder, self.train_cfg.audio_vae_batch_size)
+        self.audio_decoder_fn           = make_batched_audio_decode_fn(self.audio_decoder, self.train_cfg.audio_vae_batch_size)
         
         freeze(self.decoder)
         freeze(self.audio_decoder)
