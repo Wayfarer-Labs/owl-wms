@@ -51,7 +51,7 @@ train:
 
   # ---------- logging / sampling ----------
   log_interval: 1
-  sample_interval: 1000
+  sample_interval: 1
   save_interval: 5000
   n_samples: 8
 
@@ -66,7 +66,7 @@ train:
   audio_vae_batch_size: 4
   audio_vae_scale: 0.17
   audio_vae_cfg_path: configs/owl_vaes/cod_audio.yml
-  audio_vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_audio_v2_90m_50k_ema.pt
+  audio_vae_ckpt_path: /mnt/data/checkpoints/audio_ae/cod_audio_20k_ema.pt
 
 wandb:
   name: samibg

@@ -227,8 +227,7 @@ class SelfForcingTrainer(BaseTrainer):
     def _format_batch(self) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         try:
             batch: tuple[Tensor, ...] = next(self.train_loader)
-            return tuple(item.to(self.device).float()
-                         for item in batch)
+            return tuple(item.to(self.device).float() for item in batch)
         except StopIteration:
             self.train_loader = iter(self.train_loader)
             return self._format_batch()
