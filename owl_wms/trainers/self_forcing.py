@@ -151,13 +151,14 @@ class SelfForcingTrainer(BaseTrainer):
         self.scheduler  = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
         
         # -- sampler - initialize this after the hardware so it detects the device
+        self.batch_size            = self.train_cfg.batch_size
         self.context_len           = self.model_cfg.context_length
         self.frame_gradient_cutoff = self.train_cfg.frame_gradient_cutoff
         self.num_gen_frames        = self.model_cfg.n_frames - self.context_len
         self.sampler               = SelfForcingSampler(
             model=self.causal_model,
             model_config=self.model_cfg,
-            train_config=self.train_cfg,
+            batch_size=self.batch_size,
             latent_shape=self.train_cfg.latent_shape,
             t_schedule=self.t_schedule,
             context_len=self.context_len,
@@ -227,13 +228,13 @@ class SelfForcingTrainer(BaseTrainer):
             return self._format_batch()
 
     def _construct_primers(self,
-                           clip_bcnhw: Tensor,
+                           clip_bnchw: Tensor,
                            mouse: Tensor,
                            btn: Tensor,
                            audio: Tensor,
                            primer_len: int) -> list[dict[str, Tensor]]:
-                           # TODO check shapes here! could befucked 
-        return [ dict(latent = clip_bcnhw[:, i:i+1],
+
+        return [ dict(latent = clip_bnchw[:, i:i+1],
                        mouse = mouse     [:, i:i+1],
                        btn   = btn       [:, i:i+1],
                        audio = audio     [:, i:i+1]) for i in range(primer_len) ]
@@ -247,14 +248,15 @@ class SelfForcingTrainer(BaseTrainer):
                                                                             mouse[:, self.context_len:],
                                                                             audio[:, self.context_len:],
                                                                             latent_conditions)
-        t: int = random.choice(self.t_schedule)
+        t: int  = random.choice(self.t_schedule)
+        t       = torch.tensor(t, device=self.device).repeat(self.batch_size, 1) # might not be necessary cause of broadcasting? if we get device mismatch errors maybe we should autocast
 
         loss = self.loss_fn.forward(
-            student_model=self.causal_model,
-            student_clip=student_clip_bnchw,
-            groundtruth_clip=clip_bnchw,
-            t=t,
-            student_score_fn=self.causal_model.score_fn
+            student_model       = self.causal_model,
+            student_clip        = student_clip_bnchw,
+            groundtruth_clip    = clip_bnchw,
+            t                   = t,
+            student_score_fn    = self.causal_model.score_fn
         )
         
         self.scaler.scale(loss).backward() ; self.scaler.unscale_(self.opt)

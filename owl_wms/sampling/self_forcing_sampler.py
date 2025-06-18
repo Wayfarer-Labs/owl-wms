@@ -20,7 +20,7 @@ class SelfForcingSampler:
     def __init__(self,
             model: Module,
             model_config: ModelConfig,
-            train_config: TrainingConfig,
+            batch_size: int,
             latent_shape: tuple[int, int, int, int],
             t_schedule: list[int] = [1000, 750, 500, 250],
             context_len: int = 48,
@@ -35,13 +35,12 @@ class SelfForcingSampler:
         # -- models, hardware
         self.model = model
         self.model_config = model_config
-        self.train_config = train_config
         self.device = next(model.parameters()).device
         self.tokens_per_frame = self.model_config.tokens_per_frame
 
         # -- sampling
         self.t_schedule = t_schedule
-        self.batch_size = self.train_config.batch_size
+        self.batch_size = batch_size
         self.context_len = context_len
         self.latent_shape = latent_shape
         self.num_gen_frames = num_gen_frames
