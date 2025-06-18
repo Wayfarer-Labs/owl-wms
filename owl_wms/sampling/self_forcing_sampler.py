@@ -127,10 +127,11 @@ class SelfForcingSampler:
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    eps             = torch.randn_like(x_0)
+                    eps_video       = torch.randn_like(x_0)
+                    eps_audio       = torch.randn_like(audio_0)
                     _alpha, _sigma  = alpha(t), sigma(t)
-                    x_t             = (_alpha * x_0) + (_sigma * eps)
-                    audio_t         = (_alpha * audio_0) + (_sigma * eps)
+                    x_t             = (_alpha * x_0) + (_sigma * eps_video)
+                    audio_t         = (_alpha * audio_0) + (_sigma * eps_audio)
                 else:
                     break                            # reached fully-denoised
 
