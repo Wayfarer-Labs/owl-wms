@@ -312,14 +312,19 @@ class SelfForcingTrainer(BaseTrainer):
             wandb.log(self.metrics.pop(), step=self.total_step_counter)
             if self.scheduler is not None: wandb.log({'lr': self.scheduler.get_last_lr()[0]},
                                                         step=self.total_step_counter)
-            breakpoint()
-            student_clip = self.decoder_fn(info['student_clip'][:, self.context_len:])
-            groundtruth_clip = self.decoder_fn(info['groundtruth_clip'][:, self.context_len:])
+
+            student_clip, groundtruth_clip = info['student_clip'], info['groundtruth_clip']
+            gt = groundtruth_clip.clone()
+            # replace last n frames of groundtruth with student frames, where n is the number of student frames
+            gt[:, -student_clip.shape[1]:] = student_clip
+            student_on_groundtruth = gt
+            student_on_groundtruth = self.decoder_fn(student_on_groundtruth)
+            groundtruth_clip = self.decoder_fn(groundtruth_clip)
             try:                  
                 wandb.log({
-                    'student_samples':      _to_wandb_av(info['student_clip'], info['audio'], info['mouse'], info['btn'],
+                    'student_samples':      _to_wandb_av(student_on_groundtruth, info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
-                    'groundtruth_samples':  _to_wandb_av(info['groundtruth_clip'], info['audio'], info['mouse'], info['btn'],
+                    'groundtruth_samples':  _to_wandb_av(groundtruth_clip, info['audio'], info['mouse'], info['btn'],
                                                         gather=True, max_samples=8),
                 }, step=self.total_step_counter, commit=True)
 
