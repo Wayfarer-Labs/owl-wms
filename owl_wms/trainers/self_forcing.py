@@ -289,11 +289,10 @@ class SelfForcingTrainer(BaseTrainer):
         else:   return self.causal_model  if self.world_size == 1 else self.causal_model.module
 
     @torch.no_grad()
-    def evaluate(self):
+    def evaluate(self, info: dict):
         if self.rank != 0: return
         try:
             self.causal_model.eval()
-            info = self._train_step()
             # -- get relevant samples
             student_clip      = info['student_clip']
             student_audio     = info['student_audio']
@@ -311,7 +310,7 @@ class SelfForcingTrainer(BaseTrainer):
             overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16())
 
             wandb.log({
-                'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=True, max_samples=8),
+                'student_samples':     to_wandb_av(overlay_student,  overlay_audio,     mouse, btn, gather=True, max_samples=8),
                 'groundtruth_samples': to_wandb_av(groundtruth_clip, groundtruth_audio, mouse, btn, gather=True, max_samples=8),
             }, step=self.total_step_counter, commit=True)
         except Exception as e: print(f"Evaluation failed: {e}") ; breakpoint()
@@ -320,7 +319,7 @@ class SelfForcingTrainer(BaseTrainer):
     @torch.no_grad()
     def _log_step(self, info: dict):
         # TODO fix this garbaje. also make it only samplein evaluate & only log metrics in should_log
-        if self.should_sample:  self.evaluate()
+        if self.should_sample:  self.evaluate(info)
         if not self.should_log: return
 
         wandb.log(self.metrics.pop(), step=self.total_step_counter, commit=False)
