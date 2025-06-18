@@ -259,7 +259,7 @@ class SelfForcingTrainer(BaseTrainer):
             t                   = t,
             student_score_fn    = self.causal_model.score_fn
         )
-        # TODO big question mask is if audio does dmd1 too
+        # TODO big question mask is if audio does dmd1 too. fix inputs
         audio_loss = self.loss_fn.forward(
             student_model       = self.causal_model,
             student_clip        = audio_bn,
@@ -319,6 +319,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                                                   mouse              [:, self.context_len:],
                                                                                   audio              [:, self.context_len:],
                                                                                   latent_conditioning=primers)
+            # TODO decode audio and video before passing
             eval_video = to_wandb_av(student_clip, audio_bn, mouse, btn, gather=False, max_samples=4)
             wandb.log({'eval_samples': eval_video}, step=self.total_step_counter)
         
@@ -327,6 +328,7 @@ class SelfForcingTrainer(BaseTrainer):
 
     @torch.no_grad()
     def _log_step(self, info: dict):
+        # TODO fix this garbaje. also make it only samplein evaluate & only log metrics in should_log
         if self.should_log:
             wandb.log(self.metrics.pop(), step=self.total_step_counter)
             if self.scheduler is not None: wandb.log({'lr': self.scheduler.get_last_lr()[0]},
