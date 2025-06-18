@@ -318,7 +318,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                         gather=True, max_samples=8),
                     'groundtruth_samples':  to_wandb(info['groundtruth_clip'], info['mouse'], info['btn'], info['audio'],
                                                         gather=True, max_samples=8),
-                }, step=self.total_step_counter)
+                }, step=self.total_step_counter, commit=True)
 
             except Exception as e: print(f"Warning: Failed to log videos: {e}")
 
