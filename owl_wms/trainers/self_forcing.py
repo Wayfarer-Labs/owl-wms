@@ -55,18 +55,18 @@ class Loss_DistributionMatchingDistillation(nn.Module):
 
     def forward(self,
             student_model:      nn.Module, *,
-            student_clip_bnchw: Tensor,
-            groundtruth_clip_bnchw:   Tensor,
+            student_clip: Tensor,
+            groundtruth_clip:   Tensor,
             t:                  int,
             student_score_fn:   Callable[[Tensor, int], Tensor] | None = None
         ) -> Tensor:
         student_score_fn = student_score_fn or student_model.score_fn
         assert student_score_fn is not None
         
-        noisy_student, _     = self.q_sample_fn(student_clip_bnchw,     t)
-        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip_bnchw, t)
+        noisy_student, _     = self.q_sample_fn(student_clip,     t)
+        noisy_groundtruth, _ = self.q_sample_fn(groundtruth_clip, t)
 
-        t = torch.tensor(t, device=self.device).repeat(student_clip_bnchw.shape[0], 1)
+        t = torch.tensor(t, device=self.device).repeat(student_clip.shape[0], 1)
         with torch.no_grad():
             score_groundtruth_teacher = self.teacher_score_fn(noisy_groundtruth, t)
 
