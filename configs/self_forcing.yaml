@@ -50,6 +50,7 @@ train:
   student_ckpt: null
 
   # ---------- logging / sampling ----------
+  log_interval: 50
   sample_interval: 1000
   save_interval: 5000
   n_samples: 8

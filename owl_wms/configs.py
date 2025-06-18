@@ -57,6 +57,7 @@ class TrainingConfig:
     teacher_ckpt : str = None
     teacher_cfg : str = None
 
+    log_interval : int = 100
     sample_interval : int = 1000
     save_interval : int = 1000
 
