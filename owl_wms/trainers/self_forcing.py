@@ -314,7 +314,7 @@ class SelfForcingTrainer(BaseTrainer):
                 'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=True, max_samples=8),
                 'groundtruth_samples': to_wandb_av(groundtruth_clip, groundtruth_audio, mouse, btn, gather=True, max_samples=8),
             }, step=self.total_step_counter, commit=True)
-        except Exception as e: print(f"Evaluation failed: {e}")
+        except Exception as e: print(f"Evaluation failed: {e}") ; breakpoint()
         finally:               self.causal_model.train()
 
     @torch.no_grad()
