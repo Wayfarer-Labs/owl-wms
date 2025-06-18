@@ -239,7 +239,7 @@ class SelfForcingTrainer(BaseTrainer):
     def _train_step(self):
         # NOTE: Auto-regressive rollout
         clip_bnchw, audio, mouse, btn = self._format_batch()
-        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[:, :self.context_len]
+        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[  :self.context_len]
         student_clip_bnchw            = self.sampler.autoregressive_rollout(btn               [:, self.context_len:],
                                                                             mouse             [:, self.context_len:],
                                                                             audio             [:, self.context_len:],
