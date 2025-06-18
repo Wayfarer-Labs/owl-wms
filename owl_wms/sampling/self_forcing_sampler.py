@@ -1,4 +1,5 @@
 import torch
+import random
 from torch import Tensor
 from torch.nn import Module
 from functools import cache
@@ -97,7 +98,7 @@ class SelfForcingSampler:
 
         for i in range(N):
             grad_frame  = i >= start_grad_at                     # last L₁ frames
-            s_idx       = torch.randint(0, len(t_schedule), ())  # step index of the chosen (reversed) step
+            s_idx       = random.randint(0, len(t_schedule)-1)  # step index of the chosen (reversed) step
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
 
             for step_idx, t in enumerate(reversed(t_schedule)):
