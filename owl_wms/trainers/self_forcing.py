@@ -318,8 +318,8 @@ class SelfForcingTrainer(BaseTrainer):
             # replace last n frames of groundtruth with student frames, where n is the number of student frames
             gt[:, -student_clip.shape[1]:] = student_clip
             student_on_groundtruth = gt
-            student_on_groundtruth = self.decoder_fn(student_on_groundtruth)
-            groundtruth_clip = self.decoder_fn(groundtruth_clip)
+            student_on_groundtruth = self.decoder_fn(student_on_groundtruth.bfloat16())
+            groundtruth_clip = self.decoder_fn(groundtruth_clip.bfloat16())
             try:                  
                 wandb.log({
                     'student_samples':      _to_wandb_av(student_on_groundtruth, info['audio'], info['mouse'], info['btn'],
