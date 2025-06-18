@@ -315,6 +315,7 @@ class SelfForcingTrainer(BaseTrainer):
                 'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=True, max_samples=8),
                 'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=True, max_samples=8),
             }, step=self.total_step_counter, commit=True)
+            print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:
             import traceback
             traceback.print_exc()
