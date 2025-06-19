@@ -4,12 +4,12 @@ from torch import nn
 from ..configs import TransformerConfig
 
 class KVCache:
-    def __init__(self, config : TransformerConfig):
+    def __init__(self, config : TransformerConfig, rank: int = 0):
         self.shape = None
         self.config = config
 
         self.cache = None
-        self.device = 'cuda'
+        self.device = torch.device('cuda', rank) # NOTE: This is the device that the cache will be on
         self.dtype = torch.bfloat16
         
         self.should_update = False
@@ -23,8 +23,8 @@ class KVCache:
     def disable_cache_updates(self):
         self.should_update = False
 
-    def to(self, device = 'cuda', dtype = torch.bfloat16):
-        self.device = device
+    def to(self, device = 'cuda', dtype = torch.bfloat16, rank: int = 0):
+        self.device = torch.device(device, rank)
         self.dtype = dtype
         return self
 

@@ -142,11 +142,11 @@ class SelfForcingTrainer(BaseTrainer):
         self.device = torch.device("cuda", self.local_rank)
         self.init_hardware()
 
-        # -- optim tomfoolery, shenanigans, etc. - needs to be done after init_hardware so .cuda() calls work as intended
+        # -- optim tomfoolery, shenanigans, etc. - needs to be done after init_hardware so device casting calls work as intended
         self.ema        = EMA(self.causal_model, beta=0.999, update_after_step=0, update_every=1)
         self.opt        = torch.optim.AdamW(self.causal_model.parameters(), **self.train_cfg.opt_kwargs)
         self.scaler     = torch.amp.GradScaler()
-        self.ctx        = torch.amp.autocast('cuda', torch.float32)
+        self.ctx        = torch.amp.autocast(self.device.type, torch.float32)
         self.scheduler  = get_scheduler_cls(self.train_cfg.scheduler)(self.opt, **self.train_cfg.scheduler_kwargs)
         
 
