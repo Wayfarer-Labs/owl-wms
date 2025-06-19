@@ -284,9 +284,9 @@ class SelfForcingTrainer(BaseTrainer):
     def should_break(self):
         return hasattr(self.train_cfg, 'max_steps') and self.total_step_counter >= self.train_cfg.max_steps
 
-    def get_module(self, ema = False):
-        if ema: return self.ema.ema_model if self.world_size == 1 else self.ema.ema_model.module
-        else:   return self.causal_model  if self.world_size == 1 else self.causal_model.module
+    def get_module(self, ema = False): # TODO fix this shit
+        if ema: return self.ema.ema_model if self.world_size == 1 else self.ema.ema_model
+        else:   return self.causal_model  if self.world_size == 1 else self.causal_model
 
     @torch.no_grad()
     def evaluate(self, info: dict):
