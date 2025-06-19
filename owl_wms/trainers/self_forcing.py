@@ -290,7 +290,10 @@ class SelfForcingTrainer(BaseTrainer):
 
     @torch.no_grad()
     def evaluate(self, info: dict):
-        if self.rank != 0: return
+        print(f'Rank {self.rank} - ENTER evaluate')
+        if self.rank != 0:
+            print(f'Rank {self.rank} - SKIPPING evaluation')
+            return
         try:
             self.causal_model.eval()
             # -- get relevant samples
@@ -321,7 +324,9 @@ class SelfForcingTrainer(BaseTrainer):
             import traceback
             traceback.print_exc()
             print(f"Evaluation failed: {e}")
-        finally:               self.causal_model.train()
+        finally:
+            self.causal_model.train()
+            print(f'Evaluation complete - model set to train()')
 
     @torch.no_grad()
     def _log_step(self, info):
@@ -329,17 +334,20 @@ class SelfForcingTrainer(BaseTrainer):
             self.evaluate(info)
 
         # all ranks participate - keeps the communicator healthy
+        print(f'Rank {self.rank} - ENTER barrier')
         self.barrier() # -- evaluate can be time-consuming
+        print(f'Rank {self.rank} - EXIT barrier')
         popped_metrics = self.metrics.pop('total_loss', 'grad_norm', 'time', strict=True)
 
         # only rank-0 actually writes to wandb
         if self.should_log:
+            print(f'Rank {self.rank} - ENTER wandb.log')
             wandb.log(
                 {**popped_metrics, 'lr': self.scheduler.get_last_lr()[0]},
                 step=self.total_step_counter,
                 commit=True,
             )
-
+            print(f'Rank {self.rank} - EXIT wandb.log')
 
     def train(self):
         timer = Timer()
