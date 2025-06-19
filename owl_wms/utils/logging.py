@@ -47,11 +47,8 @@ class LogHelper:
             keys   = sorted(reduced)
             tensor = torch.tensor([reduced[k] for k in keys],
                                   device='cuda', dtype=torch.float32)
-            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(tensor, op=dist.ReduceOp.MEAN)
             reduced = {k: v.item() for k, v in zip(keys, tensor)}
-            # NOTE assume it's here for now...
-            reduced['time']      /= self.world_size
-            reduced['grad_norm'] /= self.world_size
         return reduced
 
 @torch.no_grad()
