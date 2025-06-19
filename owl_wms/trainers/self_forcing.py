@@ -301,6 +301,7 @@ class SelfForcingTrainer(BaseTrainer):
             mouse, btn        = info['mouse'], info['btn']
             # -- overlay student frames on groundtruth ones
             n_frames                        = student_clip.shape[1]
+            breakpoint()
             overlay_student                 = groundtruth_clip.clone()
             overlay_student [:, -n_frames:] = student_clip             # replace last n frames of groundtruth with student frames
             overlay_student                 = self.decoder_fn(overlay_student.bfloat16())
