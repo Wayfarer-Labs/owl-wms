@@ -325,11 +325,12 @@ class SelfForcingTrainer(BaseTrainer):
 
     @torch.no_grad()
     def _log_step(self, info: dict):
-        # TODO fix this garbaje. also make it only samplein evaluate & only log metrics in should_log
         if self.should_sample:  self.evaluate(info)
         if not self.should_log: return
-        wandb.log(self.metrics.pop(), step=self.total_step_counter, commit=False)
-        wandb.log({'lr': self.scheduler.get_last_lr()[0]}, step=self.total_step_counter, commit=True)
+        wandb.log({
+            **self.metrics.pop(),
+            'lr': self.scheduler.get_last_lr()[0]
+        }, step=self.total_step_counter, commit=True)
         return 
 
     def train(self):
