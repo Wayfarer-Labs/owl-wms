@@ -12,6 +12,8 @@ def setup(force=False):
             
             return global_rank, local_rank, world_size
         except:
+            import traceback
+            traceback.print_exc()
             return 0, 0, 1
     else:
         dist.init_process_group(backend="nccl")
