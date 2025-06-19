@@ -41,36 +41,18 @@ class LogHelper:
             self.log(k,v)
 
     def pop(self):
-        rank = dist.get_rank() if dist.is_initialized() else 0
-
-        print(f"Rank {rank}: self.data keys: {list(self.data.keys())}")
-        
-        reduced = {}
-        for k, v in self.data.items():
-            try:
-                summed = sum(v)
-                print(f"Rank {rank}: {k} -> {type(summed)}, shape: {getattr(summed, 'shape', 'no shape')}")
-                reduced[k] = summed
-            except Exception as e:
-                print(f"Rank {rank}: ERROR summing {k}: {e}")
-                print(f"Rank {rank}: {k} contents: {v}")
-                reduced[k] = 0.0  # fallback
-        
+        reduced = {k: sum(v) / self.world_size for k, v in self.data.items()}
+        self.data.clear()
         if self.world_size > 1:
-            gathered = [None for _ in range(self.world_size)]
-            dist.all_gather_object(gathered, reduced)
-            final = {}
-            for d in gathered:
-                for k,v in d.items():
-                    if k not in final:
-                        final[k] = v
-                    else:
-                        final[k] += v
-        else:
-            final = reduced
-            
-        self.data = {}
-        return final
+            keys   = sorted(reduced)
+            tensor = torch.tensor([reduced[k] for k in keys],
+                                  device='cuda', dtype=torch.float32)
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+            reduced = {k: v.item() for k, v in zip(keys, tensor)}
+            # NOTE assume it's here for now...
+            reduced['time']      /= self.world_size
+            reduced['grad_norm'] /= self.world_size
+        return reduced
 
 @torch.no_grad()
 def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):
