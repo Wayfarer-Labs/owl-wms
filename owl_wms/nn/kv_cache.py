@@ -30,7 +30,7 @@ class KVCache:
 
     def reset(self, batch_size = 1):
         self.shape = (batch_size, self.config.n_heads, 0, self.config.d_model//self.config.n_heads)
-        dummy = torch.empty(*self.shape, device = self.device, dtype = self.dtype)
+        dummy = torch.empty(self.shape, device = self.device, dtype = self.dtype)
         self.cache = [(torch.empty_like(dummy), torch.empty_like(dummy)) for _ in range(self.config.n_layers)]
 
     @torch.no_grad()
