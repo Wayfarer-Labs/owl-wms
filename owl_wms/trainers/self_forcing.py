@@ -341,12 +341,12 @@ class SelfForcingTrainer(BaseTrainer):
                 info = self._train_step()
                 self.ema.update() ; info['time'] = timer.hit()
             
-            self.metrics.log_dict({
+            self.metrics.log_dict(loss_info := {
                 'total_loss':   info['total_loss'],
                 'grad_norm':    info['grad_norm'],
                 'time':         info['time']
             })
-
+            print(f'Rank {self.rank}: {loss_info}')
             self._log_step(info)
             self.total_step_counter += 1
             self.barrier()
