@@ -301,7 +301,6 @@ class SelfForcingTrainer(BaseTrainer):
             mouse, btn        = info['mouse'], info['btn']
             # -- overlay student frames on groundtruth ones
             n_frames                        = student_clip.shape[1]
-            breakpoint()
             overlay_student                 = groundtruth_clip.clone()
             overlay_student [:, -n_frames:] = student_clip             # replace last n frames of groundtruth with student frames
             overlay_student                 = self.decoder_fn(overlay_student.bfloat16())
@@ -313,10 +312,11 @@ class SelfForcingTrainer(BaseTrainer):
             groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16())
             groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16())
 
-            wandb.log({
-                'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8),
-                'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8),
-            }, step=self.total_step_counter, commit=True)
+            # -- commit separately cause they point to the same named mp4s which get overwritten with each to_wandb_av call
+            wandb.log({'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8)},
+                        step=self.total_step_counter, commit=True)
+            wandb.log({'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8)},
+                        step=self.total_step_counter, commit=True)
             print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:
             import traceback
