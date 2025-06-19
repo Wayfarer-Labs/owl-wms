@@ -51,8 +51,8 @@ train:
 
   # ---------- logging / sampling ----------
   log_interval: 1
-  sample_interval: 1000
-  save_interval: 5000
+  sample_interval: 25
+  save_interval: 100
   n_samples: 8
 
   # ---------- VAE ----------
