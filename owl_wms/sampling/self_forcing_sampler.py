@@ -89,7 +89,7 @@ class SelfForcingSampler:
     
         
         # -- gradient optimisation
-        self.kv_cache = KVCache(self.model_config, rank=self.device.index).to(self.device.type, self.device.index)
+        self.kv_cache = KVCache(self.model_config, rank=self.device.index).to(device=self.device.type, rank=self.device.index)
         self.kv_cache.reset(self.batch_size)
         self.frame_gradient_cutoff = frame_gradient_cutoff
         self.start_grad_at = max(0, self.num_gen_frames - self.frame_gradient_cutoff)
