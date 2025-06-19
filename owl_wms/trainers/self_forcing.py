@@ -315,7 +315,7 @@ class SelfForcingTrainer(BaseTrainer):
             wandb.log({
                 'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
                 'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8, prefix='groundtruth_')
-            }, step=self.total_step_counter, commit=True)
+            }, step=self.total_step_counter, commit=False)
             print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:
             import traceback
@@ -331,6 +331,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         wandb.log(self.metrics.pop(), step=self.total_step_counter, commit=False)
         wandb.log({'lr': self.scheduler.get_last_lr()[0]}, step=self.total_step_counter, commit=False)
+        wandb.log({}, commit=True)
         return 
 
     def train(self):
