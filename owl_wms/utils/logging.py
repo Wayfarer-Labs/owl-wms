@@ -41,12 +41,22 @@ class LogHelper:
             self.log(k,v)
 
     def pop(self):
-        reduced = {k : sum(v) for k,v in self.data.items()}
+        print(f"Rank {dist.get_rank()}: self.data keys: {list(self.data.keys())}")
+        
+        reduced = {}
+        for k, v in self.data.items():
+            try:
+                summed = sum(v)
+                print(f"Rank {dist.get_rank()}: {k} -> {type(summed)}, shape: {getattr(summed, 'shape', 'no shape')}")
+                reduced[k] = summed
+            except Exception as e:
+                print(f"Rank {dist.get_rank()}: ERROR summing {k}: {e}")
+                print(f"Rank {dist.get_rank()}: {k} contents: {v}")
+                reduced[k] = 0.0  # fallback
         
         if self.world_size > 1:
             gathered = [None for _ in range(self.world_size)]
             dist.all_gather_object(gathered, reduced)
-            
             final = {}
             for d in gathered:
                 for k,v in d.items():
