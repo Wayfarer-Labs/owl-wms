@@ -324,14 +324,21 @@ class SelfForcingTrainer(BaseTrainer):
         finally:               self.causal_model.train()
 
     @torch.no_grad()
-    def _log_step(self, info: dict):
-        if self.should_sample:  self.evaluate(info)
-        if not self.should_log: return
-        wandb.log({
-            **self.metrics.pop(),
-            'lr': self.scheduler.get_last_lr()[0]
-        }, step=self.total_step_counter, commit=True)
-        return 
+    def _log_step(self, info):
+        if self.should_sample:
+            self.evaluate(info)
+
+        # all ranks participate - keeps the communicator healthy
+        popped_metrics = self.metrics.pop()
+
+        # only rank-0 actually writes to wandb
+        if self.should_log:
+            wandb.log(
+                {**popped_metrics, 'lr': self.scheduler.get_last_lr()[0]},
+                step=self.total_step_counter,
+                commit=True,
+            )
+
 
     def train(self):
         timer = Timer()
