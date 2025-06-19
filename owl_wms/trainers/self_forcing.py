@@ -99,13 +99,13 @@ class SelfForcingTrainer(BaseTrainer):
         freeze(self.bidirectional_model)
 
         self.decoder: nn.Module = get_decoder_only(self.train_cfg.vae_id,
-                                                      self.train_cfg.vae_cfg_path,
-                                                      self.train_cfg.vae_ckpt_path)
+                                                   self.train_cfg.vae_cfg_path,
+                                                   self.train_cfg.vae_ckpt_path)
         self.decoder_fn         = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
         self.audio_decoder: nn.Module   = get_decoder_only(self.train_cfg.audio_vae_id,
-                                                      self.train_cfg.audio_vae_cfg_path,
-                                                      self.train_cfg.audio_vae_ckpt_path)
+                                                           self.train_cfg.audio_vae_cfg_path,
+                                                           self.train_cfg.audio_vae_ckpt_path)
         self.audio_decoder_fn           = make_batched_audio_decode_fn(self.audio_decoder, self.train_cfg.audio_vae_batch_size)
         
         freeze(self.decoder)
@@ -311,9 +311,10 @@ class SelfForcingTrainer(BaseTrainer):
             # -- decode the groundtruth
             groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16())
             groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16())
+
             wandb.log({
-                'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=True, max_samples=8),
-                'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=True, max_samples=8),
+                'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8),
+                'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8),
             }, step=self.total_step_counter, commit=True)
             print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:

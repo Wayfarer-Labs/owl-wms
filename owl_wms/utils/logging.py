@@ -120,8 +120,8 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     audio = audio[:max_samples].cpu().float().detach().numpy()
 
     if dist.is_initialized() and gather:
-        gathered_x = [None for _ in range(dist.get_world_size())]
-        gathered_audio = [None for _ in range(dist.get_world_size())]
+        gathered_x = [torch.zeros_like(x) for _ in range(dist.get_world_size())]
+        gathered_audio = [torch.zeros_like(audio) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_x, x)
         dist.all_gather(gathered_audio, audio)
         x = torch.cat(gathered_x, dim=0)
