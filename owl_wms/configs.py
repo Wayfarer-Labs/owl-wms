@@ -34,7 +34,7 @@ class TrainingConfig:
 
     target_batch_size : int = 128
     batch_size : int = 2
-
+    max_grad_norm : float = 5.0
     epochs : int = 200
 
     opt : str = "AdamW"
