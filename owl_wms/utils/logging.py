@@ -44,15 +44,16 @@ class LogHelper:
             available_keys = set(keys) - set(reduced.keys())
             filtered = {k: reduced[k] for k in available_keys}
 
-        self.data.clear()
         if self.world_size > 1:
-            keys   = sorted(filtered)
+            keys = sorted(filtered)
             destination = torch.tensor([filtered[k] for k in keys], device='cuda', dtype=torch.float32)
-            print(f'Rank {dist.get_rank()} - ENTER all-reduce')
+            print(f'Rank {dist.get_rank()} - ENTER all-reduce with keys {keys}')
             dist.all_reduce(destination, op=dist.ReduceOp.AVG)
             print(f'Rank {dist.get_rank()} - EXIT all-reduce')
             filtered = {k: v.item() for k, v in zip(keys, destination)}
 
+        # Clear data only after all operations are complete
+        self.data.clear()
         return filtered
 
 @torch.no_grad()
