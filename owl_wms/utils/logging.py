@@ -22,7 +22,8 @@ class LogHelper:
     def __init__(self):
         if dist.is_initialized(): self.world_size = dist.get_world_size()
         else:                     self.world_size = 1
-        
+
+        self.rank = dist.get_rank()
         self.data = defaultdict(list)
     
     def log(self, key, data):
@@ -46,10 +47,10 @@ class LogHelper:
 
         if self.world_size > 1:
             keys = sorted(filtered)
-            destination = torch.tensor([filtered[k] for k in keys], device='cuda', dtype=torch.float32)
-            print(f'Rank {dist.get_rank()} - ENTER all-reduce with keys {keys}')
+            destination = torch.tensor([filtered[k] for k in keys], device=f'cuda:{self.rank}', dtype=torch.float32)
+            print(f'Rank {self.rank} - ENTER all-reduce with keys {keys}')
             dist.all_reduce(destination, op=dist.ReduceOp.AVG)
-            print(f'Rank {dist.get_rank()} - EXIT all-reduce')
+            print(f'Rank {self.rank} - EXIT all-reduce')
             filtered = {k: v.item() for k, v in zip(keys, destination)}
 
         # Clear data only after all operations are complete
