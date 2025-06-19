@@ -1,7 +1,7 @@
 import torch.distributed as dist
 import wandb
 import torch
-
+from collections import defaultdict
 import einops as eo
 
 import numpy as np
@@ -20,39 +20,40 @@ class LogHelper:
     For gradient accumulation, ensure you divide by accum steps beforehand.
     """
     def __init__(self):
-        if dist.is_initialized():
-            self.world_size = dist.get_world_size()
-        else:
-            self.world_size = 1
+        if dist.is_initialized(): self.world_size = dist.get_world_size()
+        else:                     self.world_size = 1
         
-        self.data = {}
+        self.data = defaultdict(list)
     
     def log(self, key, data):
         if isinstance(data, torch.Tensor):
             data = data.detach().item()
-        val = data / self.world_size
-        if key in self.data:
-            self.data[key].append(val)
-        else:
-            self.data[key] = [val]
+
+        self.data[key].append(data)
 
     def log_dict(self, d):
-        for (k,v) in d.items():
-            self.log(k,v)
+        for (k,v) in d.items(): self.log(k,v)
 
-    def pop(self):
-        reduced = {k: sum(v) / self.world_size for k, v in self.data.items()}
+    def pop(self, *keys, *, strict = True):
+        reduced = {k: sum(v) for k, v in self.data.items()}
+
+        if strict:
+            assert all(k in reduced for k in keys), f"Keys {keys} not found in {reduced.keys()}"
+            filtered = {k: reduced[k] for k in keys}
+        else:
+            available_keys = set(keys) - set(reduced.keys())
+            filtered = {k: reduced[k] for k in available_keys}
+
         self.data.clear()
         if self.world_size > 1:
-            keys   = sorted(reduced)
-            tensor = torch.tensor([reduced[k] for k in keys],
-                                  device='cuda', dtype=torch.float32)
-            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            reduced = {k: v.item() for k, v in zip(keys, tensor)}
-            # NOTE assume it's here for now...
-            reduced['time']      /= self.world_size
-            reduced['grad_norm'] /= self.world_size
-        return reduced
+            keys   = sorted(filtered)
+            destination = torch.tensor([filtered[k] for k in keys], device='cuda', dtype=torch.float32)
+            print(f'Rank {dist.get_rank()} - ENTER all-reduce')
+            dist.all_reduce(destination, op=dist.ReduceOp.AVG)
+            print(f'Rank {dist.get_rank()} - EXIT all-reduce')
+            filtered = {k: v.item() for k, v in zip(keys, destination)}
+
+        return filtered
 
 @torch.no_grad()
 def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):

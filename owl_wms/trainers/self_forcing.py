@@ -330,7 +330,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         # all ranks participate - keeps the communicator healthy
         self.barrier() # -- evaluate can be time-consuming
-        popped_metrics = self.metrics.pop()
+        popped_metrics = self.metrics.pop('total_loss', 'grad_norm', 'time', strict=True)
 
         # only rank-0 actually writes to wandb
         if self.should_log:
