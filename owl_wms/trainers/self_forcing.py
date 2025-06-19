@@ -172,10 +172,10 @@ class SelfForcingTrainer(BaseTrainer):
         self.causal_model          = DistributedDataParallel(self.causal_model) if self.world_size > 1 else self.causal_model
 
     def init_hardware(self):
-        self.causal_model        = self.causal_model.cuda().train()
+        self.causal_model        = self.causal_model.to(self.device).train()
         self.bidirectional_model = self.bidirectional_model\
-                                                    .cuda().eval().bfloat16()
-        self.loss_fn             = self.loss_fn     .cuda().eval().bfloat16()
+                                                    .to(self.device).eval().bfloat16()
+        self.loss_fn             = self.loss_fn     .to(self.device).eval().bfloat16()
 
     def load_bidirectional(self):
         assert self.train_cfg.teacher_ckpt is not None

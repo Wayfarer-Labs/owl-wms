@@ -10,8 +10,7 @@ from owl_wms.nn.kv_cache import KVCache
 from owl_wms.configs import TransformerConfig as ModelConfig, TrainingConfig
 from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
 
-_SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.cuda()
-
+_SIGMA_TABLE = None # NOTE Set at run-time so it inherits the right device
 
 # NOTE t is one element tensor, or int
 @cache
@@ -68,6 +67,9 @@ class SelfForcingSampler:
             training: bool = False,
             autocast: torch.dtype = torch.bfloat16
         ):
+
+        global _SIGMA_TABLE
+
         self.training = training
         self.autocast = autocast
 
@@ -76,6 +78,7 @@ class SelfForcingSampler:
         self.model_config = model_config
         self.device = next(model.parameters()).device
         self.tokens_per_frame = self.model_config.tokens_per_frame
+        _SIGMA_TABLE = FlowMatchScheduler(num_inference_steps=1000, num_train_timesteps=1000).sigmas.to(self.device)
 
         # -- sampling
         self.t_schedule = t_schedule
