@@ -41,17 +41,19 @@ class LogHelper:
             self.log(k,v)
 
     def pop(self):
-        print(f"Rank {dist.get_rank()}: self.data keys: {list(self.data.keys())}")
+        rank = dist.get_rank() if dist.is_initialized() else 0
+
+        print(f"Rank {rank}: self.data keys: {list(self.data.keys())}")
         
         reduced = {}
         for k, v in self.data.items():
             try:
                 summed = sum(v)
-                print(f"Rank {dist.get_rank()}: {k} -> {type(summed)}, shape: {getattr(summed, 'shape', 'no shape')}")
+                print(f"Rank {rank}: {k} -> {type(summed)}, shape: {getattr(summed, 'shape', 'no shape')}")
                 reduced[k] = summed
             except Exception as e:
-                print(f"Rank {dist.get_rank()}: ERROR summing {k}: {e}")
-                print(f"Rank {dist.get_rank()}: {k} contents: {v}")
+                print(f"Rank {rank}: ERROR summing {k}: {e}")
+                print(f"Rank {rank}: {k} contents: {v}")
                 reduced[k] = 0.0  # fallback
         
         if self.world_size > 1:
@@ -122,7 +124,7 @@ def _to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples =
     return video, audio_samples
 
 @torch.no_grad()
-def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
+def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8, prefix = ''):
     # x is [b,n,c,h,w]
     # audio is [b,n,2]
     x = x.clamp(-1, 1)
@@ -145,7 +147,7 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     audio = [audio[i] for i in range(len(audio))]
 
     os.makedirs("temp_vids", exist_ok = True)
-    paths = [f'temp_vids/temp_{i}.mp4' for i in range(len(x))]
+    paths = [f'temp_vids/{prefix}temp_{i}.mp4' for i in range(len(x))]
     for i, path in enumerate(paths):
         write_video_with_audio(path, x[i], audio[i])
 

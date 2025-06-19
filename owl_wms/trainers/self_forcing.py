@@ -312,11 +312,10 @@ class SelfForcingTrainer(BaseTrainer):
             groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16())
             groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16())
 
-            # -- commit separately cause they point to the same named mp4s which get overwritten with each to_wandb_av call
-            wandb.log({'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8)},
-                        step=self.total_step_counter, commit=True)
-            wandb.log({'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8)},
-                        step=self.total_step_counter, commit=True)
+            wandb.log({
+                'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
+                'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8, prefix='groundtruth_')
+            }, step=self.total_step_counter, commit=True)
             print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:
             import traceback
