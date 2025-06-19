@@ -48,12 +48,9 @@ class LogHelper:
         if self.world_size > 1:
             keys = sorted(filtered)
             destination = torch.tensor([filtered[k] for k in keys], device=f'cuda:{self.rank}', dtype=torch.float32)
-            print(f'Rank {self.rank} - ENTER all-reduce with keys {keys}')
             dist.all_reduce(destination, op=dist.ReduceOp.AVG)
-            print(f'Rank {self.rank} - EXIT all-reduce')
             filtered = {k: v.item() for k, v in zip(keys, destination)}
 
-        # Clear data only after all operations are complete
         self.data.clear()
         return filtered
 

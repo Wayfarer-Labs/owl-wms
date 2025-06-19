@@ -76,7 +76,7 @@ class SelfForcingTrainer(BaseTrainer):
             world_size:     int = 1
         ):
         super().__init__(train_cfg, logging_cfg, model_cfg, global_rank, local_rank, world_size)
-        self.max_grad_norm = getattr(self.train_cfg, 'max_grad_norm', 1.0)
+        self.max_grad_norm = self.train_cfg.max_grad_norm
         
         model_id = self.model_cfg.model_id
 
@@ -290,9 +290,7 @@ class SelfForcingTrainer(BaseTrainer):
 
     @torch.no_grad()
     def evaluate(self, info: dict):
-        print(f'Rank {self.rank} - ENTER evaluate')
         if self.rank != 0:
-            print(f'Rank {self.rank} - SKIPPING evaluation')
             return
         try:
             self.causal_model.eval()
@@ -319,35 +317,27 @@ class SelfForcingTrainer(BaseTrainer):
                 'student_samples':     to_wandb_av(overlay_student,  overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
                 'groundtruth_samples': to_wandb_av(groundtruth_v,    groundtruth_a, mouse, btn, gather=False, max_samples=8, prefix='groundtruth_')
             }, step=self.total_step_counter, commit=False)
-            print(f'Evaluation committed at step {self.total_step_counter}')
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"Evaluation failed: {e}")
         finally:
             self.causal_model.train()
-            print(f'Evaluation complete - model set to train()')
 
     @torch.no_grad()
     def _log_step(self, info):
         if self.should_sample:
             self.evaluate(info)
 
-        # all ranks participate - keeps the communicator healthy
-        print(f'Rank {self.rank} - ENTER barrier')
         self.barrier() # -- evaluate can be time-consuming
-        print(f'Rank {self.rank} - EXIT barrier')
         popped_metrics = self.metrics.pop('total_loss', 'grad_norm', 'time', strict=True)
 
-        # only rank-0 actually writes to wandb
         if self.should_log:
-            print(f'Rank {self.rank} - ENTER wandb.log')
             wandb.log(
                 {**popped_metrics, 'lr': self.scheduler.get_last_lr()[0]},
                 step=self.total_step_counter,
                 commit=True,
             )
-            print(f'Rank {self.rank} - EXIT wandb.log')
 
     def train(self):
         timer = Timer()
@@ -362,7 +352,6 @@ class SelfForcingTrainer(BaseTrainer):
                 'grad_norm':    info['grad_norm'],
                 'time':         info['time']
             })
-            print(f'Rank {self.rank}: {loss_info}')
             self._log_step(info)
             self.total_step_counter += 1
             self.barrier()
