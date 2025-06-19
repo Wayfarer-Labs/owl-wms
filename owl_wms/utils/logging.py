@@ -34,7 +34,7 @@ class LogHelper:
     def log_dict(self, d):
         for (k,v) in d.items(): self.log(k,v)
 
-    def pop(self, *keys, *, strict = True):
+    def pop(self, *keys, strict = True):
         reduced = {k: sum(v) for k, v in self.data.items()}
 
         if strict:
