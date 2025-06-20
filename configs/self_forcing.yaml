@@ -32,15 +32,15 @@ train:
     bucket_name: cod-data-latent-360x640to4x4
 
   # ---------- batching ----------
-  target_batch_size: 256     # effective (across GPUs × grad-accum)
-  batch_size: 32             # clips / GPU
+  target_batch_size: 64     # effective (across GPUs × grad-accum)
+  batch_size: 8             # clips / GPU
   epochs: 200
 
   # ---------- optimizer ----------
   opt: AdamW
   opt_kwargs:
-    lr: 4.0e-6               # made this up
-    weight_decay: 0.005      # made this up
+    lr: 1.0e-6               # made this up
+    weight_decay: 0.0005      # made this up
     eps: 1.0e-8              # paper value
     betas: [0.0, 0.999]      # paper value
 
