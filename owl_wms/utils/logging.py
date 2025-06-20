@@ -20,19 +20,15 @@ class LogHelper:
     For gradient accumulation, ensure you divide by accum steps beforehand.
     """
     def __init__(self):
-        if dist.is_initialized(): self.world_size = dist.get_world_size()
-        else:                     self.world_size = 1
-
-        self.rank = dist.get_rank()
-        self.data = defaultdict(list)
+        self.world_size = dist.get_world_size() if dist.is_initialized() else 1
+        self.rank       = dist.get_rank()       if dist.is_initialized() else 0
+        self.data       = defaultdict(list)
     
     def log(self, key, data):
-        if isinstance(data, torch.Tensor):
-            data = data.detach().item()
-
+        if isinstance(data, torch.Tensor): data = data.detach().item()
         self.data[key].append(data)
 
-    def log_dict(self, d):
+    def log_dict(self, d: dict):
         for (k,v) in d.items(): self.log(k,v)
 
     def pop(self, *keys, strict = True):

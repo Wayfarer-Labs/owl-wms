@@ -103,7 +103,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                            self.train_cfg.vae_cfg_path,
                                                            self.train_cfg.vae_ckpt_path)
         self.decoder_fn                 = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
-        
+
         self.audio_decoder: nn.Module   = get_decoder_only(self.train_cfg.audio_vae_id,
                                                            self.train_cfg.audio_vae_cfg_path,
                                                            self.train_cfg.audio_vae_ckpt_path)
@@ -308,25 +308,12 @@ class SelfForcingTrainer(BaseTrainer):
                                                                              mouse              [:, -self.num_gen_frames:],
                                                                              audio              [:, -self.num_gen_frames:],
                                                                              latent_conditions)
-        
-        latent_video, latent_audio, scores_video, scores_audio, t_b = (rollout_info[k] for k in ['clean_latents_video', 'clean_latents_audio',
-                                                                                                 'scores_video',        'scores_audio',
-                                                                                                 'selected_timesteps'])
-        
         loss_info = self.loss_fn.forward(
             latent_video = rollout_info['clean_latents_video'],
             latent_audio = rollout_info['clean_latents_audio'],
             t            = rollout_info['selected_timesteps'],
             mouse        = mouse[:, -self.num_gen_frames:],
             btn          = btn  [:, -self.num_gen_frames:],
-        )
-
-        loss_info = self.loss_fn.forward(
-            score_student_clip  = scores_video,  # fully denoised frame latent from t->0
-            score_student_audio = scores_audio,  # fully denoised audio latent from t->0
-            t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
-            mouse               = mouse[:, -self.num_gen_frames:],
-            btn                 = btn  [:, -self.num_gen_frames:],
         )
 
         self.scaler.scale(loss_info['total_loss']).backward() ; self.scaler.unscale_(self.opt)
@@ -336,8 +323,8 @@ class SelfForcingTrainer(BaseTrainer):
         return {
             'groundtruth_clip': clip_bnchw,
             'groundtruth_audio':audio,
-            'student_clip':     scores_video,
-            'student_audio':    scores_audio,
+            'student_clip':     rollout_info['clean_latents_video'],
+            'student_audio':    rollout_info['clean_latents_audio'],
             'mouse':            mouse,
             'btn':              btn,
             'grad_norm':        grad_norm,
