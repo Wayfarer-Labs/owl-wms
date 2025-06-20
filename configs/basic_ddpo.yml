@@ -1,0 +1,75 @@
+# Config for DDPO trainer - based on basic.yml
+model:
+  model_id: game_rft
+  sample_size: 4
+  channels: 128
+  
+  n_layers: 17
+  n_heads: 16
+  d_model: 1024
+
+  tokens_per_frame: 16
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+  n_frames: 60
+
+train:
+  trainer_id: ddpo
+  data_id: cod_latent
+  data_kwargs:
+    window_length: 60
+    root: ../cod_data/BlackOpsColdWar
+    add_optical_flow: false
+
+  # DDPO-specific parameters
+  sampling_steps: 64
+  timestep_fraction: 0.5
+  clip_range: 0.2
+  adv_clip_max: 5.0
+  sample_batch_size: 4
+  num_batches_per_epoch: 4
+  num_inner_epochs: 1
+
+  # Standard training parameters
+  target_batch_size: 256
+  batch_size: 32
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 2.0e-4
+    weight_decay: 1.0e-4
+    eps: 1.0e-8
+    betas: [0.9, 0.999]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/ddpo
+  resume_ckpt: null
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  # VAE configuration (required for DDPO)
+  vae_id: 720pr3dc
+  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
+  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+  vae_scale: 0.35
+  vae_batch_size: 4
+
+  sampler_id: window
+  sampler_kwargs:
+    n_steps: 20
+    cfg_scale: 1.3
+    window_length: 60
+    num_frames: 60
+    noise_prev: 0.2
+    
+  n_samples: 8
+
+wandb:
+  name: shahbuland
+  project: video_models
+  run_name: ddpo_basic
