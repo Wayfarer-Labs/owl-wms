@@ -87,16 +87,10 @@ class SelfForcingTrainer(BaseTrainer):
         teacher_cfg.causal = False
         # -- models
         self.causal_model: GameRFTAudio = get_model_cls(model_id)(student_cfg)
-        if self.train_cfg.student_ckpt is not None:
-            assert self.train_cfg.student_ckpt is not None
-            student_state_dict = versatile_load(self.train_cfg.student_ckpt)
-            self.causal_model.core.load_state_dict(student_state_dict)
-        unfreeze(self.causal_model)
-
         self.bidirectional_model: GameRFTAudio = get_model_cls(model_id)(teacher_cfg)
-        teacher_state_dict = versatile_load(self.train_cfg.teacher_ckpt)
-        self.bidirectional_model.core.load_state_dict(teacher_state_dict)
-        freeze(self.bidirectional_model)
+        # -- auto-load
+        self.load_bidirectional()  # always has to load cause an assumption we make is that it always exists
+        self.load_causal()         # only loads if we have a checkpoint to resume from or if student is specified
 
         self.decoder: nn.Module = get_decoder_only(self.train_cfg.vae_id,
                                                    self.train_cfg.vae_cfg_path,
@@ -108,8 +102,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                            self.train_cfg.audio_vae_ckpt_path)
         self.audio_decoder_fn           = make_batched_audio_decode_fn(self.audio_decoder, self.train_cfg.audio_vae_batch_size)
         
-        freeze(self.decoder)
-        freeze(self.audio_decoder)
+        unfreeze(self.causal_model) ; freeze(self.bidirectional_model) ; freeze(self.decoder) ; freeze(self.audio_decoder)
 
         if self.rank == 0:
             n_params = sum(p.numel() for p in self.causal_model.parameters())
@@ -134,9 +127,6 @@ class SelfForcingTrainer(BaseTrainer):
         self.t_schedule = self.train_cfg.t_schedule
         self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
 
-        # -- auto-load
-        self.load_bidirectional()  # always has to load cause an assumption we make is that it always exists
-        self.load_causal()         # only loads if we have a checkpoint to resume from or if student is specified
         
         # -- hardware - done after loading models so it casts to bfloat16
         self.device = torch.device("cuda", self.local_rank)
@@ -182,24 +172,20 @@ class SelfForcingTrainer(BaseTrainer):
         self.bidirectional_model.core.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
 
     def load_causal(self):
-        has_ckpt = False
-        try:
-            if self.train_cfg.student_ckpt is not None:
-                save_dict = super().load_causal(self.train_cfg.student_ckpt)
-                has_ckpt = True
-        except:
-            print("Error loading checkpoint")
-        
-        if not has_ckpt:
-            print("No checkpoint could be detected, initializing from scratch")
+        if self.train_cfg.student_ckpt is None:
+            print(f'Student checkpoint not specified, using bi-directional teacher weights.')
+            # -- note don't use deepcopy just for debugging purposes,
+            #  e.g. if config.causal=True vs False affects some architectural changes,
+            #  this would catch them when the time comes, instead of introducing a sneaky bug
+            self.causal_model.load_state_dict(self.bidirectional_model.state_dict())
             return
-
+        
+        save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
         self.causal_model       .load_state_dict(save_dict.get('causal_model') or save_dict['model'])
         self.ema                .load_state_dict(save_dict['ema'])
         self.opt                .load_state_dict(save_dict['opt'])
         self.scaler             .load_state_dict(save_dict['scaler'])
-        if 'scheduler' in save_dict:
-            self.scheduler      .load_state_dict(save_dict['scheduler'])
+        self.scheduler          .load_state_dict(save_dict['scheduler'])
         self.decoder            .load_state_dict(save_dict['decoder'])
         self.total_step_counter = save_dict['steps']
 
