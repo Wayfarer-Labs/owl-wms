@@ -86,24 +86,33 @@ class GameRFTAudio(nn.Module):
                 mouse: torch.Tensor | None = None,
                 btn:   torch.Tensor | None = None,
                 audio: torch.Tensor | None = None,
-                kv_cache: KVCache | None = None) -> tuple[Tensor, Tensor]:
+                kv_cache: KVCache   | None = None,
+                cfg_weight: float          = 0.0) -> tuple[Tensor, Tensor]:
         """
-        Return ε-score for the *video* branch at noise level t.
-        Matches the target (z − x) / σ used at training time.
+        Return ε-score with optional CFG
         """
         B, N, _, _, _ = x_t.shape
+
         if audio is None:        # every call from Self-Forcing passes video only
-            audio = torch.zeros(B, N, self.config.audio_channels,
-                                device=x_t.device, dtype=x_t.dtype)
-
+            audio = torch.zeros(B, N, self.config.audio_channels, device=x_t.device, dtype=x_t.dtype)
         if mouse is None:
-            mouse = torch.zeros(B, N, 2,             device=x_t.device, dtype=x_t.dtype)
+            mouse = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
         if btn is None:
-            btn   = torch.zeros(B, N, self.config.n_buttons,
-                                device=x_t.device, dtype=x_t.dtype)
+            btn   = torch.zeros(B, N, self.config.n_buttons, device=x_t.device, dtype=x_t.dtype)
 
-        # core returns (pred_video, pred_audio)
-        score_video, score_audio = self.core(x_t, audio, t, mouse, btn, kv_cache)
+
+        score_video_cond, score_audio_cond = self.core(x_t, audio, t, mouse, btn, kv_cache)
+
+        if cfg_weight > 0.0:
+            null_mouse  = torch.zeros_like(mouse)
+            null_btn    = torch.zeros_like(btn)
+            score_video_uncond, score_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache)
+            # -- apply cfg
+            score_video = score_video_uncond + cfg_weight * (score_video_cond - score_video_uncond)
+            score_audio = score_audio_uncond + cfg_weight * (score_audio_cond - score_audio_uncond)
+        else:
+            score_video, score_audio = score_video_cond, score_audio_cond
+        
         return score_video, score_audio
 
 

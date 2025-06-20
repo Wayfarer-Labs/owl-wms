@@ -27,33 +27,40 @@ from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, q_sample
 class Loss_DistributionMatchingDistillation(nn.Module):
 
     def __init__(self,
-                 teacher_model: nn.Module,
-                 q_sample_fn: Callable[[Tensor, ...], tuple[Tensor, Tensor]] = q_sample,
-                 teacher_score_fn: Callable[[Tensor, Tensor], Tensor] | None = None):
-
+            teacher_score_fn:   Callable[[Tensor, Tensor], Tensor],
+            student_score_fn:   Callable[[Tensor, Tensor], Tensor],
+            teacher_cfg_weight: float = 3.0,
+            student_cfg_weight: float = 0.0,
+            q_sample_fn:        Callable[[Tensor, Tensor], tuple[Tensor, Tensor]] = q_sample,
+        ):
         super().__init__()
-        self.teacher_model = teacher_model
-        # -- teacher score fn
-        if not teacher_score_fn and hasattr(teacher_model, 'score_fn'):
-            self.teacher_score_fn = teacher_model.score_fn
-        assert self.teacher_score_fn is not None
-        self.teacher_score_fn: Callable[[Tensor, Tensor], Tensor] = torch.no_grad()(self.teacher_score_fn)
         self.q_sample_fn = q_sample_fn
+        self.student_score_fn = student_score_fn
+        self.teacher_score_fn = teacher_score_fn
+        self.teacher_score_fn: Callable[[Tensor, Tensor], Tensor] = torch.no_grad()(self.teacher_score_fn)
+        # -- cfg
+        self.teacher_cfg_weight = teacher_cfg_weight
+        self.student_cfg_weight = student_cfg_weight
 
     def forward(self,
-            score_student_clip:  Tensor,  # [B, N, C, H, W]
-            score_student_audio: Tensor,  # [B, N, C] 
-            t:                   Tensor,  # [B, N] containing initial denoising timestep for its corresponding frame in scores
-            mouse:               Tensor,  # [B, N, 2]
-            btn:                 Tensor,  # [B, N, n_buttons]
+            latent_video:       Tensor,  # [B, N, C, H, W]
+            latent_audio:       Tensor,  # [B, N, C] 
+            t:                  Tensor,  # [B, N] containing initial denoising timestep for its corresponding frame in scores
+            mouse:              Tensor,  # [B, N, 2]
+            btn:                Tensor,  # [B, N, n_buttons]
         ) -> dict[str, Tensor]:
-        noisy_clip,  _ = self.q_sample_fn(score_student_clip,  t)
-        noisy_audio, _ = self.q_sample_fn(score_student_audio, t)
         
-        with torch.no_grad():
+        noisy_clip,  _ = self.q_sample_fn(latent_video,  t)
+        noisy_audio, _ = self.q_sample_fn(latent_audio,  t)
+        
+        score_student_clip, score_student_audio     = self.student_score_fn(noisy_clip, t,
+                                                                            mouse, btn, noisy_audio,
+                                                                            cfg_weight=self.student_cfg_weight)
+
+        with torch.no_grad(): # -- redundant to do it twice but it;s ok :)
             score_teacher_clip, score_teacher_audio = self.teacher_score_fn(noisy_clip, t,
-                                                                            mouse, btn,
-                                                                            noisy_audio)
+                                                                            mouse, btn, noisy_audio,
+                                                                            cfg_weight=self.teacher_cfg_weight)
 
         clip_loss  = 0.5 * ((score_student_clip  - score_teacher_clip.detach())  ** 2).mean()
         audio_loss = 0.5 * ((score_student_audio - score_teacher_audio.detach()) ** 2).mean()
@@ -92,10 +99,10 @@ class SelfForcingTrainer(BaseTrainer):
         self.load_bidirectional()  # always has to load cause an assumption we make is that it always exists
         self.load_causal()         # only loads if we have a checkpoint to resume from or if student is specified
 
-        self.decoder: nn.Module = get_decoder_only(self.train_cfg.vae_id,
-                                                   self.train_cfg.vae_cfg_path,
-                                                   self.train_cfg.vae_ckpt_path)
-        self.decoder_fn         = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
+        self.decoder: nn.Module         = get_decoder_only(self.train_cfg.vae_id,
+                                                           self.train_cfg.vae_cfg_path,
+                                                           self.train_cfg.vae_ckpt_path)
+        self.decoder_fn                 = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
 
         self.audio_decoder: nn.Module   = get_decoder_only(self.train_cfg.audio_vae_id,
                                                            self.train_cfg.audio_vae_cfg_path,
@@ -125,7 +132,7 @@ class SelfForcingTrainer(BaseTrainer):
         
         # -- loss
         self.t_schedule = self.train_cfg.t_schedule
-        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model)
+        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model.score_fn, self.causal_model.score_fn)
 
         
         # -- hardware - done after loading models so it casts to bfloat16
@@ -212,48 +219,6 @@ class SelfForcingTrainer(BaseTrainer):
             self.train_loader = iter(self.train_loader)
             return self._format_batch()
 
-    def _construct_primers(self,
-                           clip_bnchw: Tensor,
-                           mouse: Tensor,
-                           btn: Tensor,
-                           audio: Tensor) -> list[dict[str, Tensor]]:
-
-        return [ dict(latent = clip_bnchw[:, i:i+1],
-                       mouse = mouse     [:, i:i+1],
-                       btn   = btn       [:, i:i+1],
-                       audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
-
-    def _train_step(self):
-        clip_bnchw, audio, mouse, btn   = self._format_batch()
-        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames]
-        scores_video, scores_audio, t_b = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
-                                                                             mouse              [:, -self.num_gen_frames:],
-                                                                             audio              [:, -self.num_gen_frames:],
-                                                                             latent_conditions)
-        
-        loss_info = self.loss_fn.forward(
-            score_student_clip  = scores_video,  # fully denoised frame latent from t->0
-            score_student_audio = scores_audio,  # fully denoised audio latent from t->0
-            t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
-            mouse               = mouse[:, -self.num_gen_frames:],
-            btn                 = btn  [:, -self.num_gen_frames:],
-        )
-
-        self.scaler.scale(loss_info['total_loss']).backward() ; self.scaler.unscale_(self.opt)
-        grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
-        self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
-
-        return {
-            'groundtruth_clip': clip_bnchw,
-            'groundtruth_audio':audio,
-            'student_clip':     scores_video,
-            'student_audio':    scores_audio,
-            'mouse':            mouse,
-            'btn':              btn,
-            'grad_norm':        grad_norm,
-            **loss_info,
-        }
-
     @property
     def should_log(self):
         return self.rank == 0 and self.total_step_counter % self.train_cfg.log_interval == 0
@@ -325,6 +290,59 @@ class SelfForcingTrainer(BaseTrainer):
                 commit=True,
             )
 
+    def _construct_primers(self,
+                           clip_bnchw: Tensor,
+                           mouse: Tensor,
+                           btn: Tensor,
+                           audio: Tensor) -> list[dict[str, Tensor]]:
+
+        return [ dict(latent = clip_bnchw[:, i:i+1],
+                       mouse = mouse     [:, i:i+1],
+                       btn   = btn       [:, i:i+1],
+                       audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
+
+    def _train_step(self):
+        clip_bnchw, audio, mouse, btn   = self._format_batch()
+        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames]
+        rollout_info                    = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
+                                                                             mouse              [:, -self.num_gen_frames:],
+                                                                             audio              [:, -self.num_gen_frames:],
+                                                                             latent_conditions)
+        
+        latent_video, latent_audio, scores_video, scores_audio, t_b = (rollout_info[k] for k in ['clean_latents_video', 'clean_latents_audio',
+                                                                                                 'scores_video',        'scores_audio',
+                                                                                                 'selected_timesteps'])
+        
+        loss_info = self.loss_fn.forward(
+            latent_video = rollout_info['clean_latents_video'],
+            latent_audio = rollout_info['clean_latents_audio'],
+            t            = rollout_info['selected_timesteps'],
+            mouse        = mouse[:, -self.num_gen_frames:],
+            btn          = btn  [:, -self.num_gen_frames:],
+        )
+
+        loss_info = self.loss_fn.forward(
+            score_student_clip  = scores_video,  # fully denoised frame latent from t->0
+            score_student_audio = scores_audio,  # fully denoised audio latent from t->0
+            t                   = t_b,           # [B, 1] containing initial denoising timestep for its corresponding frame in scores
+            mouse               = mouse[:, -self.num_gen_frames:],
+            btn                 = btn  [:, -self.num_gen_frames:],
+        )
+
+        self.scaler.scale(loss_info['total_loss']).backward() ; self.scaler.unscale_(self.opt)
+        grad_norm = clip_grad_norm_(self.causal_model.parameters(), self.max_grad_norm)
+        self.scaler.step(self.opt)         ; self.opt.zero_grad() ; self.scaler.update()
+
+        return {
+            'groundtruth_clip': clip_bnchw,
+            'groundtruth_audio':audio,
+            'student_clip':     scores_video,
+            'student_audio':    scores_audio,
+            'mouse':            mouse,
+            'btn':              btn,
+            'grad_norm':        grad_norm,
+            **loss_info,
+        }
     def train(self):
         timer = Timer()
         while not self.should_break:

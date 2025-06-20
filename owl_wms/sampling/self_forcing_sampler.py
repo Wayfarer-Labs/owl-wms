@@ -119,7 +119,7 @@ class SelfForcingSampler:
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor,
-                               latent_conditioning: list[dict[str, Tensor]]) -> tuple[Tensor, Tensor, Tensor]:
+                               latent_conditioning: list[dict[str, Tensor]]) -> dict[str, Tensor]:
         assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
             f'btn, mouse, and audio must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
@@ -182,17 +182,14 @@ class SelfForcingSampler:
                     audio_t, _ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
                 else: break # reached fully-denoised
 
-            # -- we never use these for gradients in self-forcing. this is because, to get the teacher's score,
-            # we take the scores_video/scores_audio, re-noise them, and then get the score from the teacher on
-            # the re-noised frames. these are only needed for inference.
-            clean_latents_video += [x_0.detach()]
-            clean_latents_audio += [audio_0.detach()]
+            clean_latents_video += [x_0     if grad_frame else x_0.detach()]
+            clean_latents_audio += [audio_0 if grad_frame else audio_0.detach()]
 
-        if self.training:
-            return (torch.cat(scores_video,          dim=1),
-                    torch.cat(scores_audio,          dim=1),
-                    torch.tensor(selected_timesteps, device=device).repeat(B, 1))
 
-        return (torch.cat(clean_latents_video,   dim=1),
-                torch.cat(clean_latents_audio,   dim=1),
-                torch.tensor(selected_timesteps, device=device).repeat(B, 1))
+        return {
+            'clean_latents_video':  torch.cat(clean_latents_video, dim=1),
+            'clean_latents_audio':  torch.cat(clean_latents_audio, dim=1),
+            'scores_video':         torch.cat(scores_video,        dim=1),
+            'scores_audio':         torch.cat(scores_audio,        dim=1),
+            'selected_timesteps':   torch.tensor(selected_timesteps, device=device).repeat(B, 1),
+        }
