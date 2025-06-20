@@ -103,7 +103,7 @@ class SelfForcingTrainer(BaseTrainer):
                                                            self.train_cfg.vae_cfg_path,
                                                            self.train_cfg.vae_ckpt_path)
         self.decoder_fn                 = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
-
+        
         self.audio_decoder: nn.Module   = get_decoder_only(self.train_cfg.audio_vae_id,
                                                            self.train_cfg.audio_vae_cfg_path,
                                                            self.train_cfg.audio_vae_ckpt_path)
