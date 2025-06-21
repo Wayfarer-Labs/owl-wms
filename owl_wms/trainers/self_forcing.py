@@ -142,8 +142,7 @@ class Loss_SelfForcing(nn.Module):
             # -- normalize by magnitude of target
             normalizer_clip  = torch.abs(target_flow_clip).mean(dim=[1,2,3,4], keepdim=True)
             normalizer_audio = torch.abs(target_flow_audio).mean(dim=[1,2], keepdim=True)
-            # 00 
-            flow_clip.div_(normalizer_clip + self.normalize_eps).nan_to_num_()
+            flow_clip .div_(normalizer_clip + self.normalize_eps).nan_to_num_()
             flow_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
 
         return {
@@ -466,6 +465,7 @@ class SelfForcingTrainer(BaseTrainer):
             t                   = rollout_info['selected_timesteps'],
             mouse               = mouse       [:, -self.num_gen_frames:],
             btn                 = btn         [:, -self.num_gen_frames:],
+            normalize=True
         )
 
         grad_norm = self._optimizer_step(loss_info['total_loss'], self.opt_critic, self.critic_model)

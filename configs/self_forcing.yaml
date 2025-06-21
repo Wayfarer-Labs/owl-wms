@@ -61,8 +61,8 @@ train:
   vae_id: null
   vae_batch_size: 4
   vae_scale: 0.13
-  vae_cfg_path: /mnt/data/checkpoints/owl_vaes/kl_fix/cod_128x_klfix.yml
-  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/kl_fix/500m_cod128x_50k_ema.pt
+  vae_cfg_path: configs/owl_vaes/cod_128x.yml
+  vae_ckpt_path: /mnt/data/checkpoints/cod_128x.pt
 
   audio_vae_id: null
   audio_vae_batch_size: 4
