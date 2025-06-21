@@ -27,19 +27,17 @@ from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, q_sample, 
 class Loss_SelfForcing(nn.Module):
 
     def __init__(self,
-            teacher_score_fn:   Callable[[Tensor, Tensor], tuple[Tensor, Tensor]], # TODO is this necessary
-            student_score_fn:   Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
+            teacher_score_fn:   Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
             critic_score_fn:    Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
             teacher_cfg_weight: float = 3.0,
             student_cfg_weight: float = 0.0,
-            critic_cfg_weight:  float = 0.0, # TODO is this necessary
+            critic_cfg_weight:  float = 0.0,
             q_sample_fn:        Callable[[Tensor, Tensor], tuple[Tensor, Tensor]] = q_sample,
             normalize:          bool = False,
             normalize_eps: float      = 1e-6,
         ):
         super().__init__()
         self.q_sample_fn = q_sample_fn
-        self.student_score_fn   = student_score_fn
         self.critic_score_fn    = critic_score_fn
         self.teacher_score_fn   = teacher_score_fn
         self.teacher_score_fn   = torch.no_grad()(self.teacher_score_fn)
@@ -117,8 +115,10 @@ class Loss_SelfForcing(nn.Module):
             t:                   Tensor, # [B, N] containing initial denoising timestep for its corresponding frame in scores
             mouse:               Tensor, # [B, N, 2]
             btn:                 Tensor, # [B, N, n_buttons]
+            normalize:           bool = True,
         ) -> dict[str, Tensor]:
         # see https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/model/dmd.py#L237-L333
+        normalize = normalize if normalize is not None else self.normalize
         noisy_causal_clip,  noise_c, *_, sigma_c = self.q_sample_fn(causal_latent_video, t)
         noisy_causal_audio, noise_a, *_, sigma_a = self.q_sample_fn(causal_latent_audio, t)
 
@@ -137,6 +137,14 @@ class Loss_SelfForcing(nn.Module):
 
         flow_clip  = self._flow(score_clip_critic,  noisy_causal_clip,  sigma_c, full_precision=True)
         flow_audio = self._flow(score_audio_critic, noisy_causal_audio, sigma_a, full_precision=True)
+
+        if normalize:
+            # -- normalize by magnitude of target
+            normalizer_clip  = torch.abs(target_flow_clip).mean(dim=[1,2,3,4], keepdim=True)
+            normalizer_audio = torch.abs(target_flow_audio).mean(dim=[1,2], keepdim=True)
+            # 00 
+            flow_clip.div_(normalizer_clip + self.normalize_eps).nan_to_num_()
+            flow_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
 
         return {
             'clip_loss':  (loss_clip  := torch.mean((flow_clip  - target_flow_clip)  ** 2)),
@@ -210,7 +218,6 @@ class SelfForcingTrainer(BaseTrainer):
         self.cfg_scale: float   = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
         self.t_schedule         = self.train_cfg.t_schedule
         self.loss_module        = Loss_SelfForcing(self.bidirectional_model.score_fn,
-                                                   self.causal_model.score_fn,
                                                    self.critic_model.score_fn,
                                                    teacher_cfg_weight=self.cfg_scale,
                                                    normalize=True)

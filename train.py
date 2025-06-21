@@ -25,4 +25,4 @@ if __name__ == "__main__":
 
     trainer.train()
     cleanup()
-    # nohup torchrun --standalone --nnodes 1 --nproc_per_node 2 train.py --config_path configs/self_forcing.yaml &
+    # nohup torchrun --standalone --nnodes 1 --nproc_per_node 8 train.py --config_path configs/self_forcing.yaml &
