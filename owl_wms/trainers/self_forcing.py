@@ -22,7 +22,36 @@ import wandb
 from ..utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, q_sample, sigma
 
-
+def debug_tensor(name: str, tensor: Tensor, step: int = None) -> bool:
+    """
+    Debug helper to check for NaN/Inf and print stats.
+    Returns True if tensor has NaN/Inf (problematic), False if clean.
+    """
+    step_str = f"[Step {step}] " if step is not None else ""
+    
+    # Check for NaN/Inf
+    has_nan = torch.isnan(tensor).any().item()
+    has_inf = torch.isinf(tensor).any().item()
+    
+    if has_nan or has_inf:
+        print(f"🚨 {step_str}{name} - NaN: {has_nan}, Inf: {has_inf}")
+        print(f"   Shape: {tensor.shape}")
+        if has_nan:
+            nan_count = torch.isnan(tensor).sum().item()
+            print(f"   NaN count: {nan_count}/{tensor.numel()}")
+        if has_inf:
+            inf_count = torch.isinf(tensor).sum().item()
+            print(f"   Inf count: {inf_count}/{tensor.numel()}")
+        return True
+    else:
+        # Print stats for clean tensors
+        min_val = tensor.min().item()
+        max_val = tensor.max().item()
+        mean_val = tensor.mean().item()
+        std_val = tensor.std().item()
+        print(f"✅ {step_str}{name} - min: {min_val:.4f}, max: {max_val:.4f}, mean: {mean_val:.4f}, std: {std_val:.4f}")
+        return False
+    
 
 class Loss_SelfForcing(nn.Module):
 
@@ -116,11 +145,24 @@ class Loss_SelfForcing(nn.Module):
             mouse:               Tensor, # [B, N, 2]
             btn:                 Tensor, # [B, N, n_buttons]
             normalize:           bool = True,
+            debug_step:          int  = 0,
         ) -> dict[str, Tensor]:
         # see https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/model/dmd.py#L237-L333
         normalize = normalize if normalize is not None else self.normalize
+        
+        debug_tensor("input_video", causal_latent_video, debug_step)
+        debug_tensor("input_audio", causal_latent_audio, debug_step)
+        debug_tensor("timesteps", t, debug_step)
+
         noisy_causal_clip,  noise_c, *_, sigma_c = self.q_sample_fn(causal_latent_video, t)
         noisy_causal_audio, noise_a, *_, sigma_a = self.q_sample_fn(causal_latent_audio, t)
+
+        debug_tensor("sigma_c", sigma_c, debug_step)
+        debug_tensor("sigma_a", sigma_a, debug_step)
+        debug_tensor("noisy_clip", noisy_causal_clip, debug_step)
+        debug_tensor("noisy_audio", noisy_causal_audio, debug_step)
+        debug_tensor("noise_c", noise_c, debug_step)
+        debug_tensor("noise_a", noise_a, debug_step)
 
         # TODO SAMI - I don't understand this, but it seems central to flow loss, so it might be a Claude question:
         #               we are trying to match the velocity field of the *student* by using this as a target?
@@ -131,24 +173,47 @@ class Loss_SelfForcing(nn.Module):
         target_flow_clip  = noise_c - causal_latent_video
         target_flow_audio = noise_a - causal_latent_audio
 
+        debug_tensor("target_flow_clip", target_flow_clip, debug_step)
+        debug_tensor("target_flow_audio", target_flow_audio, debug_step)
+
         score_clip_critic, score_audio_critic = self.critic_score_fn(noisy_causal_clip, t,
                                                    mouse, btn, noisy_causal_audio,
                                                    cfg_weight=self.critic_cfg_weight)
 
+        debug_tensor("score_clip_critic", score_clip_critic, debug_step)
+        debug_tensor("score_audio_critic", score_audio_critic, debug_step)
+
         flow_clip  = self._flow(score_clip_critic,  noisy_causal_clip,  sigma_c, full_precision=True)
         flow_audio = self._flow(score_audio_critic, noisy_causal_audio, sigma_a, full_precision=True)
+
+        debug_tensor("flow_clip", flow_clip, debug_step)
+        debug_tensor("flow_audio", flow_audio, debug_step)
 
         if normalize:
             # -- normalize by magnitude of target
             normalizer_clip  = torch.abs(target_flow_clip).mean(dim=[1,2,3,4], keepdim=True)
             normalizer_audio = torch.abs(target_flow_audio).mean(dim=[1,2], keepdim=True)
+            debug_tensor("normalizer_clip", normalizer_clip, debug_step)
+            debug_tensor("normalizer_audio", normalizer_audio, debug_step)
+            
             flow_clip .div_(normalizer_clip + self.normalize_eps).nan_to_num_()
             flow_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
 
+            debug_tensor("flow_clip_normalized", flow_clip, debug_step)
+            debug_tensor("flow_audio_normalized", flow_audio, debug_step)
+        
+        loss_clip  = torch.mean((flow_clip  - target_flow_clip)  ** 2)
+        loss_audio = torch.mean((flow_audio - target_flow_audio) ** 2)
+        total_loss = loss_clip + loss_audio
+        
+        debug_tensor("loss_clip", loss_clip, debug_step)
+        debug_tensor("loss_audio", loss_audio, debug_step)
+        debug_tensor("total_loss", total_loss, debug_step)
+
         return {
-            'clip_loss':  (loss_clip  := torch.mean((flow_clip  - target_flow_clip)  ** 2)),
-            'audio_loss': (loss_audio := torch.mean((flow_audio - target_flow_audio) ** 2)),
-            'total_loss': loss_clip + loss_audio,
+            'clip_loss':  loss_clip,
+            'audio_loss': loss_audio,
+            'total_loss': total_loss,
         }
 
 

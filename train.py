@@ -16,6 +16,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg = Config.from_yaml(args.config_path)
+    if 'debug' in args.config_path:
+        cfg.wandb.run_name += 'manual_debug_'
 
     global_rank, local_rank, world_size = setup()
 
