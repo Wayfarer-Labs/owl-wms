@@ -63,8 +63,8 @@ class Loss_SelfForcing(nn.Module):
 
         normalize               = normalize if normalize is not None else self.normalize
 
-        noisy_causal_clip, _   = self.q_sample_fn(causal_latent_video, t)
-        noisy_causal_audio, _  = self.q_sample_fn(causal_latent_audio, t)
+        noisy_causal_clip,  *_  = self.q_sample_fn(causal_latent_video, t)
+        noisy_causal_audio, *_  = self.q_sample_fn(causal_latent_audio, t)
         
         # -- critic score predicts on student noisy data
         score_clip_critic, score_audio_critic   = self.critic_score_fn(noisy_causal_clip, t,
@@ -139,8 +139,8 @@ class Loss_SelfForcing(nn.Module):
         flow_audio = self._flow(score_audio_critic, noisy_causal_audio, sigma_a, full_precision=True)
 
         return {
-            'loss_clip':  (loss_clip  := torch.mean((flow_clip  - target_flow_clip)  ** 2)),
-            'loss_audio': (loss_audio := torch.mean((flow_audio - target_flow_audio) ** 2)),
+            'clip_loss':  (loss_clip  := torch.mean((flow_clip  - target_flow_clip)  ** 2)),
+            'audio_loss': (loss_audio := torch.mean((flow_audio - target_flow_audio) ** 2)),
             'total_loss': loss_clip + loss_audio,
         }
 
@@ -225,8 +225,8 @@ class SelfForcingTrainer(BaseTrainer):
         self.opt_critic         = torch.optim.AdamW(self.critic_model.parameters(), **self.train_cfg.opt_kwargs)
         self.scaler             = torch.amp.GradScaler()
         self.ctx                = torch.amp.autocast(self.device.type, torch.float32)
-        self.scheduler_causal   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_causal,   **self.train_cfg.scheduler_kwargs)
-        self.scheduler_critic   = get_scheduler_cls(self.train_cfg.scheduler)(self.critic_model, **self.train_cfg.scheduler_kwargs)
+        self.scheduler_causal   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_causal, **self.train_cfg.scheduler_kwargs)
+        self.scheduler_critic   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_critic, **self.train_cfg.scheduler_kwargs)
         
         # -- sampler - initialize this after the hardware so it detects the device
         self.batch_size            = self.train_cfg.batch_size
@@ -363,7 +363,7 @@ class SelfForcingTrainer(BaseTrainer):
             wandb.log({
                 'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
                 'groundtruth_samples': to_wandb_av(groundtruth_v,   groundtruth_a, mouse, btn, gather=False, max_samples=8, prefix='groundtruth_')
-            }, step=self.total_step_counter, commit=False)
+            }, step=self.log_step_counter, commit=False)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -380,12 +380,12 @@ class SelfForcingTrainer(BaseTrainer):
             self.evaluate(info)
 
         self.barrier() # -- evaluate can be time-consuming
-        popped_metrics = self.metrics.pop('total_loss', 'grad_norm', 'time', strict=True)
+        popped_metrics = self.metrics.pop()
 
         if self.should_log:
             wandb.log(
                 popped_metrics,
-                step=self.total_step_counter,
+                step=self.log_step_counter,
                 commit=True,
             )
 
@@ -497,7 +497,7 @@ class SelfForcingTrainer(BaseTrainer):
                 'causal_lr':         self.scheduler_causal.get_last_lr()[0]
             })
 
-            self._log_step(causal_info, maybe_evaluate=True) ; self.log_step_counter += 1
+            self._log_step(causal_info, maybe_evaluate=True) ; self.log_step_counter += int(self.should_log)
 
             for step_info, _time in zip(critic_info, critic_time):
                 self.metrics.log_dict({
@@ -505,13 +505,14 @@ class SelfForcingTrainer(BaseTrainer):
                     'critic_audio_loss': step_info['audio_loss'],
                     'critic_clip_loss':  step_info['clip_loss'],
                     'critic_grad_norm':  step_info['grad_norm'],
-                    'critic_lr':         self.scheduler_critic.get_last_lr[0],
+                    'critic_lr':         self.scheduler_critic.get_last_lr()[0],
                     'critic_time':       _time
                 })
-                self._log_step(step_info, maybe_evaluate=False) ; self.log_step_counter += 1
+                self._log_step(step_info, maybe_evaluate=False) ; self.log_step_counter += int(self.should_log)
 
             self.barrier()
             if self.should_save: self.save()
+            print(f'Step {self.total_step_counter} - critic loss {step_info["total_loss"]} - causal loss {causal_info["total_loss"]}')
             self.total_step_counter += 1
 
         self.save()

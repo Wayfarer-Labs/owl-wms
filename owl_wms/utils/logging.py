@@ -31,24 +31,17 @@ class LogHelper:
     def log_dict(self, d: dict):
         for (k,v) in d.items(): self.log(k,v)
 
-    def pop(self, *keys, strict = True):
+    def pop(self):
         reduced = {k: sum(v) for k, v in self.data.items()}
 
-        if strict:
-            assert all(k in reduced for k in keys), f"Keys {keys} not found in {reduced.keys()}"
-            filtered = {k: reduced[k] for k in keys}
-        else:
-            available_keys = set(keys) - set(reduced.keys())
-            filtered = {k: reduced[k] for k in available_keys}
-
         if self.world_size > 1:
-            keys = sorted(filtered)
-            destination = torch.tensor([filtered[k] for k in keys], device=f'cuda:{self.rank}', dtype=torch.float32)
+            keys = sorted(reduced)
+            destination = torch.tensor([reduced[k] for k in keys], device=f'cuda:{self.rank}', dtype=torch.float32)
             dist.all_reduce(destination, op=dist.ReduceOp.AVG)
-            filtered = {k: v.item() for k, v in zip(keys, destination)}
+            reduced = {k: v.item() for k, v in zip(keys, destination)}
 
         self.data.clear()
-        return filtered
+        return reduced
 
 @torch.no_grad()
 def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):

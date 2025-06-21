@@ -51,7 +51,7 @@ class TrainingConfig:
     frame_gradient_cutoff : int = 12
     student_ckpt : str = None
     teacher_ckpt : str = None
-    fake_bidir_ckpt: str = None
+    critic_ckpt: str = None
     # -- 
 
     # Distillation related

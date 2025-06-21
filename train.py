@@ -7,7 +7,7 @@ from owl_wms.utils.ddp import cleanup, setup
 
 if __name__ == "__main__":
     import sys
-    sys.argv[1:] = ["--config_path", "configs/self_forcing.yaml"]
+    sys.argv[1:] = ["--config_path", "configs/debug_self_forcing.yaml"]
 
     parser = argparse.ArgumentParser()
 

@@ -145,7 +145,7 @@ class SelfForcingSampler:
             grad_frame  = i >= start_grad_at                        # last L₁ frames
             s_t         = random.choice(t_schedule)      # chosen step to keep grads on for
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
-            audio_t     = torch.randn(B, 1, N,       device=device)
+            audio_t     = torch.randn(B, 1, A,       device=device)
             for t in reversed(t_schedule):
                 # enable grad **only** on the chosen timestep
                 keep_grad = grad_frame and (t == s_t) and self.training

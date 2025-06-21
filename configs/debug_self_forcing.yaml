@@ -49,6 +49,7 @@ train:
   checkpoint_dir: checkpoints/self-forcing/
   teacher_ckpt: checkpoints/av_wm/debug_small_bidir.pt
   student_ckpt: null
+  critic_ckpt: null
 
   # ---------- logging / sampling ----------
   log_interval: 1
