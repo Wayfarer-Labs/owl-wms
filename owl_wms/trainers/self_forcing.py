@@ -175,7 +175,7 @@ class SelfForcingTrainer(BaseTrainer):
         # -- models. order of loading matters. 
         self.bidirectional_model: GameRFTAudio = get_model_cls(model_id)(teacher_cfg) ; self.load_bidirectional()
         self.causal_model:        GameRFTAudio = get_model_cls(model_id)(student_cfg) ; self.load_causal()
-        self.critic_model:    GameRFTAudio = deepcopy(self.bidirectional_model)   ; self.load_critic()
+        self.critic_model:        GameRFTAudio = deepcopy(self.bidirectional_model)   ; self.load_critic()
 
         self.decoder: nn.Module         = get_decoder_only(self.train_cfg.vae_id,
                                                            self.train_cfg.vae_cfg_path,

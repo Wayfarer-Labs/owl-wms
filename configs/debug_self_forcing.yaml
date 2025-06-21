@@ -16,7 +16,7 @@ model:
 
 train:
   trainer_id: self_forcing
-  t_schedule: [1000, 750, 500, 250]
+  t_schedule: [0.975, .75, .5, .25]
   frame_gradient_cutoff: 4 # TODO set this carefully in case it interferes with context length and num_gen_frames
   latent_shape: [128, 4, 4]
   scheduler: constant

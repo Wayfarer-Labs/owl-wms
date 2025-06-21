@@ -14,7 +14,10 @@ _SIGMA_TABLE = None # NOTE Set at run-time so it inherits the right device
 
 # NOTE t is one element tensor, or int
 @cache
-def sigma(t: int | Tensor) -> Tensor: 
+def sigma(t: int | Tensor | float) -> Tensor: 
+    if isinstance(t, float):
+        t = int(t*1000)
+    
     if isinstance(t, Tensor): return _SIGMA_TABLE[(t - 1).long()].to(torch.float32)
     else:                     return _SIGMA_TABLE[int(t) - 1].to(torch.float32)
 
