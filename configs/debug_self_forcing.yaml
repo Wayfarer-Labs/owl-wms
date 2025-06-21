@@ -1,0 +1,75 @@
+model:
+  model_id: game_rft_audio
+  sample_size: 4
+  channels: 128
+  audio_channels: 64
+  n_layers: 25
+  n_heads: 8
+  d_model: 256
+  tokens_per_frame: 17
+  n_buttons: 11
+  n_mouse_axes: 2
+  cfg_prob: 0.1
+  context_length: 18
+  n_frames: 36  # n_frames - context_length is how many frames we generate at once
+  causal: false          # bidirectional teacher; set true for the student
+
+train:
+  trainer_id: self_forcing
+  t_schedule: [1000, 750, 500, 250]
+  frame_gradient_cutoff: 4 # TODO set this carefully in case it interferes with context length and num_gen_frames
+  latent_shape: [128, 4, 4]
+  scheduler: constant
+  scheduler_kwargs:
+    factor: 1.0
+    total_iters: 1
+
+  max_grad_norm: 5.0
+  # ---------- data ----------
+  data_id: cod_s3_audio
+  data_kwargs:
+    window_length: 36
+    bucket_name: cod-data-latent-360x640to4x4
+
+  # ---------- batching ----------
+  target_batch_size: 4     # effective (across GPUs × grad-accum)
+  batch_size: 4             # clips / GPU
+  epochs: 200
+
+  # ---------- optimizer ----------
+  opt: AdamW
+  opt_kwargs:
+    lr: 4.0e-6               # made this up
+    weight_decay: 0.005      # made this up
+    eps: 1.0e-8              # paper value
+    betas: [0.0, 0.999]      # paper value
+
+
+  # ---------- checkpoints ----------
+  checkpoint_dir: checkpoints/self-forcing/
+  teacher_ckpt: checkpoints/av_wm/debug_small_bidir.pt
+  student_ckpt: null
+
+  # ---------- logging / sampling ----------
+  log_interval: 1
+  sample_interval: 25
+  save_interval: 100
+  n_samples: 8
+
+  # ---------- VAE ----------
+  vae_id: null
+  vae_batch_size: 4
+  vae_scale: 0.13
+  vae_cfg_path: configs/owl_vaes/cod_128x.yml
+  vae_ckpt_path: checkpoints/owl_vaes/cod_128x_30k_ema.pt
+
+  audio_vae_id: null
+  audio_vae_batch_size: 4
+  audio_vae_scale: 0.17
+  audio_vae_cfg_path: configs/owl_vaes/cod_audio.yml
+  audio_vae_ckpt_path: checkpoints/owl_vaes/cod_audio_20k_ema.pt
+
+wandb:
+  name: samibg
+  project: video_world_models
+  run_name: self_forcing_360p4x4

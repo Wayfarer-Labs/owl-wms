@@ -51,7 +51,7 @@ def q_sample(x: Tensor, t_bn: Tensor) -> Tensor:
         raise ValueError(f"Unsupported tensor shape: {x.shape}")
     
     eps = torch.randn_like(x)
-    return (alphas * x) + (sigmas * eps), eps
+    return (alphas * x) + (sigmas * eps), eps, alphas, sigmas
 
 
 class SelfForcingSampler:
@@ -126,6 +126,7 @@ class SelfForcingSampler:
         
         B             = self.batch_size
         C, H, W       = self.latent_shape       # dims of latent of upstream autoencoder
+        A             = audio.shape[-1]         # dims of audio
         t_schedule    = self.t_schedule         # few-step distillation schedule
         device        = self.device
         N             = self.num_gen_frames     # number of frames to generate that are outside the context
@@ -144,22 +145,23 @@ class SelfForcingSampler:
             grad_frame  = i >= start_grad_at                        # last L₁ frames
             s_t         = random.choice(t_schedule)      # chosen step to keep grads on for
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
-
+            audio_t     = torch.randn(B, 1, N,       device=device)
             for t in reversed(t_schedule):
                 # enable grad **only** on the chosen timestep
                 keep_grad = grad_frame and (t == s_t) and self.training
-                x_t.detach_()                   # always detach x_t, so it starts as a leaf node
-                x_t.requires_grad_(keep_grad)   # but reattach if keep_grad
+                # always detach so it starts as a leaf node, but reattach if keep_grad
+                x_t    .detach_() ; x_t     .requires_grad_(keep_grad)   
+                audio_t.detach_() ; audio_t .requires_grad_(keep_grad)
                 with torch.autocast(device_type=device.type, dtype=self.autocast):
                     self.kv_cache.enable_cache_updates()
-                    # NOTE: ignore audio as _ for now? ask shab to double check :( 
+
                     x_0, audio_0 = self.model.core(
                         x        = x_t,
                         t        = t * torch.ones((self.batch_size, 1), device=self.device),
                         kv_cache = self.kv_cache,
                         mouse    = mouse [:, i:i+1],
                         btn      = btn   [:, i:i+1],
-                        audio    = audio [:, i:i+1],
+                        audio    = audio_t,
                     )
                     self.kv_cache.disable_cache_updates()
                     cache_overflow = len(self.kv_cache) - tokens_per_context
@@ -178,13 +180,12 @@ class SelfForcingSampler:
 
                 # move to the previous timestep unless we hit t=0
                 if t != 0:
-                    x_t,     _ = q_sample(x_0,     t * torch.ones((B, 1), device=x_t.device))
-                    audio_t, _ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
+                    x_t,     *_ = q_sample(x_0,     t * torch.ones((B, 1), device=x_t.device))
+                    audio_t, *_ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
                 else: break # reached fully-denoised
 
             clean_latents_video += [x_0     if grad_frame else x_0.detach()]
             clean_latents_audio += [audio_0 if grad_frame else audio_0.detach()]
-
 
         return {
             'clean_latents_video':  torch.cat(clean_latents_video, dim=1),

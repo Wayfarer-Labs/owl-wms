@@ -1,4 +1,3 @@
-# The original code is illegible but is used in self-forcing so I'm just gonna put it here.
 import torch
 
 class FlowMatchScheduler():

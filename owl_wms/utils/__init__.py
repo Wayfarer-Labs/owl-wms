@@ -11,6 +11,16 @@ def unfreeze(module : nn.Module):
     for param in module.parameters():
         param.requires_grad = True
 
+
+class SamiTimer:
+    def __init__(self):
+        self.prev_time = time.time()
+    
+    def hit(self):
+        ping = (new_time := time.time()) - self.prev_time
+        self.prev_time = new_time
+        return ping
+
 class Timer:
     def reset(self):
         self.start_time = time.time()
