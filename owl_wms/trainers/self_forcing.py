@@ -131,8 +131,9 @@ class SelfForcingTrainer(BaseTrainer):
         self.train_loader   = iter(self.train_loader)
         
         # -- loss
-        self.t_schedule = self.train_cfg.t_schedule
-        self.loss_fn    = Loss_DistributionMatchingDistillation(self.bidirectional_model.score_fn, self.causal_model.score_fn)
+        self.t_schedule     = self.train_cfg.t_schedule
+        self.fake_score_fn  = deepcopy(self.bidirectional_model)
+        self.loss_fn        = Loss_DistributionMatchingDistillation(self.bidirectional_model.score_fn, self.causal_model.score_fn)
 
         
         # -- hardware - done after loading models so it casts to bfloat16
