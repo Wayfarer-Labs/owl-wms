@@ -29,10 +29,16 @@ def alpha(t: int | Tensor) -> Tensor:
     return (1 - sigma(t).square()).sqrt()
 
 
-# NOTE In sampling, t_bn is a tensor of shape [B, 1]
-# NOTE In training, t_bn is a tensor of shape [B, N]
-# NOTE In both cases, columns are identical across batch elements
-# NOTE In both cases, x can be audio ([B, N, D]) or video ([B,N,C,H,W])
+def timestep_shift(t: Tensor, shift_factor: int = 5) -> Tensor:
+    k = shift_factor
+    # from https://arxiv.org/pdf/2506.08009 section A - Implementation Details
+    return (k*t).div(1000)\
+                .div(1 + (t*(k-1)).div(1000))
+
+def fwd_process(x: Tensor, t: Tensor) -> Tensor:
+    eps = torch.randn_like(x, device=x.device)
+    # from https://arxiv.org/pdf/2506.08009 section A - Implementation Details
+    return timestep_shift(t).div(1000).mul(x) + (1 - timestep_shift(t)).div(1000).mul(eps)
 
 def q_sample(x: Tensor, t_bn: Tensor) -> Tensor:
     # x: [B, N, ...], t_bn: [B, 1] (sampling) or [B, N] (training)
@@ -161,11 +167,14 @@ class SelfForcingSampler:
             x_t         = torch.randn(B, 1, C, H, W, device=device) # sample x_t at the *largest* timestep
             audio_t     = torch.randn(B, 1, A,       device=device)
             for t in reversed(t_schedule):
-                # enable grad **only** on the chosen timestep
+                # https://arxiv.org/pdf/2506.08009 last paragraph of Section 3.2
+                # use the denoised output of the s-th step as the final output
+                if t < s_t: break
+
                 keep_grad = grad_frame and (t == s_t) and self.training
-                # always detach so it starts as a leaf node, but reattach if keep_grad
-                x_t    .detach_() ; x_t     .requires_grad_(keep_grad)   
-                audio_t.detach_() ; audio_t .requires_grad_(keep_grad)
+
+                x_t.detach_()                 ; audio_t.detach_()                 # always detach so it starts as a leaf node
+                x_t.requires_grad_(keep_grad) ; audio_t.requires_grad_(keep_grad) # but reattach if keep_grad
                 with torch.autocast(device_type=device.type, dtype=self.autocast):
                     self.kv_cache.enable_cache_updates()
 
