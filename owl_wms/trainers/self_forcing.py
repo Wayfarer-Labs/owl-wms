@@ -150,20 +150,20 @@ class Loss_SelfForcing(nn.Module):
         ) -> dict[str, Tensor]:
         # see https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/model/dmd.py#L237-L333
         normalize = normalize if normalize is not None else self.normalize
-        
-        debug_tensor("input_video", causal_latent_video, debug_step)
-        debug_tensor("input_audio", causal_latent_audio, debug_step)
-        debug_tensor("timesteps", t, debug_step)
+        # Throughout training:
+        debug_tensor("input_video", causal_latent_video, debug_step)  # min: -23.1250, max: 16.6250, mean: -11.2500, std: 7.7188
+        debug_tensor("input_audio", causal_latent_audio, debug_step)  # min: -43.7500, max: 42.0000, mean: -2.5312, std: 23.2500
+        debug_tensor("timesteps", t, debug_step)                      # timesteps - min: 0.2500, max: 0.9750, mean: 0.6196, std: 0.2472
 
         noisy_causal_clip,  noise_c, *_, sigma_c = self.q_sample_fn(causal_latent_video, t)
         noisy_causal_audio, noise_a, *_, sigma_a = self.q_sample_fn(causal_latent_audio, t)
 
-        debug_tensor("sigma_c", sigma_c, debug_step)
-        debug_tensor("sigma_a", sigma_a, debug_step)
-        debug_tensor("noisy_clip", noisy_causal_clip, debug_step)
-        debug_tensor("noisy_audio", noisy_causal_audio, debug_step)
-        debug_tensor("noise_c", noise_c, debug_step)
-        debug_tensor("noise_a", noise_a, debug_step)
+        debug_tensor("sigma_c", sigma_c, debug_step) # sigma_c - min: 0.0794, max: 0.9007, mean: 0.4673, std: 0.2757
+        debug_tensor("sigma_a", sigma_a, debug_step) # sigma_a - min: 0.0794, max: 0.9007, mean: 0.4673, std: 0.2757
+        debug_tensor("noisy_clip", noisy_causal_clip, debug_step) # noisy_clip - min: -23.9138, max: 15.3224, mean: -9.2866, std: 6.7524
+        debug_tensor("noisy_audio", noisy_causal_audio, debug_step) # noisy_audio - min: -44.6832, max: 45.6296, mean: -2.0809, std: 19.7656
+        debug_tensor("noise_c", noise_c, debug_step) # noise_c - min: -4.6250, max: 4.5625, mean: -0.0016, std: 1.0000
+        debug_tensor("noise_a", noise_a, debug_step) # noise_a - min: -4.1875, max: 3.9844, mean: 0.0112, std: 0.9961
 
         # TODO SAMI - I don't understand this, but it seems central to flow loss, so it might be a Claude question:
         #               we are trying to match the velocity field of the *student* by using this as a target?
@@ -171,45 +171,45 @@ class Loss_SelfForcing(nn.Module):
         #               My understanding is that this simply moves both the student and critic closer together.
         #               Therefore, if the critic is closer to the teacher, then we want to update it more frequently
         #                 (hence the update_ratio is 5:1 critic:causal)
-        target_flow_clip  = noise_c - causal_latent_video
-        target_flow_audio = noise_a - causal_latent_audio
+        target_flow_clip  = noise_c - causal_latent_video 
+        target_flow_audio = noise_a - causal_latent_audio 
 
-        debug_tensor("target_flow_clip", target_flow_clip, debug_step)
-        debug_tensor("target_flow_audio", target_flow_audio, debug_step)
+        debug_tensor("target_flow_clip", target_flow_clip, debug_step) # target_flow_clip - min: -18.1250, max: 26.0000, mean: 11.1875, std: 7.8125
+        debug_tensor("target_flow_audio", target_flow_audio, debug_step) # target_flow_audio - min: -49.0000, max: 46.7500, mean: 2.5312, std: 23.5000
 
         score_clip_critic, score_audio_critic = self.critic_score_fn(noisy_causal_clip, t,
                                                    mouse, btn, noisy_causal_audio,
                                                    cfg_weight=self.critic_cfg_weight)
 
-        debug_tensor("score_clip_critic", score_clip_critic, debug_step)
-        debug_tensor("score_audio_critic", score_audio_critic, debug_step)
+        debug_tensor("score_clip_critic", score_clip_critic, debug_step)  #score_clip_critic - min: -27.3312, max: 13.2249, mean: -10.0527, std: 6.5369
+        debug_tensor("score_audio_critic", score_audio_critic, debug_step)  #score_audio_critic - min: -44.0751, max: 43.7929, mean: -2.0275, std: 21.1251
 
         flow_clip  = self._flow(score_clip_critic,  noisy_causal_clip,  sigma_c, full_precision=True)
         flow_audio = self._flow(score_audio_critic, noisy_causal_audio, sigma_a, full_precision=True)
 
-        debug_tensor("flow_clip", flow_clip, debug_step)
-        debug_tensor("flow_audio", flow_audio, debug_step)
+        debug_tensor("flow_clip", flow_clip, debug_step) # flow_clip - min: -53.2940, max: 100.3009, mean: 3.7866, std: 10.5843
+        debug_tensor("flow_audio", flow_audio, debug_step) # flow_audio - min: -165.5958, max: 142.6516, mean: -0.3394, std: 27.6600
 
         if normalize:
             # -- normalize by magnitude of target
             normalizer_clip  = torch.abs(target_flow_clip).mean(dim=[1,2,3,4], keepdim=True)
             normalizer_audio = torch.abs(target_flow_audio).mean(dim=[1,2], keepdim=True)
-            debug_tensor("normalizer_clip", normalizer_clip, debug_step)
-            debug_tensor("normalizer_audio", normalizer_audio, debug_step)
+            debug_tensor("normalizer_clip", normalizer_clip, debug_step) # normalizer_clip - min: 12.5625, max: 13.3750, mean: 13.1250, std: 0.2754
+            debug_tensor("normalizer_audio", normalizer_audio, debug_step) # normalizer_audio - min: 21.6250, max: 23.3750, mean: 22.7500, std: 0.6055
             
             flow_clip .div_(normalizer_clip + self.normalize_eps).nan_to_num_()
             flow_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
 
-            debug_tensor("flow_clip_normalized", flow_clip, debug_step)
-            debug_tensor("flow_audio_normalized", flow_audio, debug_step)
+            debug_tensor("flow_clip_normalized", flow_clip, debug_step) # flow_clip_normalized - min: -4.2423, max: 7.5343, mean: 0.2876, std: 0.8041
+            debug_tensor("flow_audio_normalized", flow_audio, debug_step) # flow_audio_normalized - min: -7.1998, max: 6.5966, mean: -0.0150, std: 1.2166
         
-        loss_clip  = torch.mean((flow_clip  - target_flow_clip)  ** 2)
-        loss_audio = torch.mean((flow_audio - target_flow_audio) ** 2)
-        total_loss = loss_clip + loss_audio
+        loss_clip  = torch.mean((flow_clip  - target_flow_clip)  ** 2)  # TODO NOTE: Issue is that flow_clip is normalized by target_flow but then subtracted from it
+        loss_audio = torch.mean((flow_audio - target_flow_audio) ** 2)  # So we get a normalized number divby unnormalized number and it explodes, see loss_clip below
+        total_loss = loss_clip + loss_audio                             # compared to flow_clip above. 
         
-        debug_tensor("loss_clip", loss_clip, debug_step)
-        debug_tensor("loss_audio", loss_audio, debug_step)
-        debug_tensor("total_loss", total_loss, debug_step)
+        debug_tensor("loss_clip", loss_clip, debug_step) # loss_clip - min: 179.5438, max: 179.5438, mean: 179.5438, std: nan
+        debug_tensor("loss_audio", loss_audio, debug_step) # loss_audio - min: 542.1827, max: 542.1827, mean: 542.1827, std: nan
+        debug_tensor("total_loss", total_loss, debug_step) # total_loss - min: 721.7265, max: 721.7265, mean: 721.7265, std: nan
 
         return {
             'clip_loss':  loss_clip,
@@ -527,7 +527,7 @@ class SelfForcingTrainer(BaseTrainer):
 
     def _train_critic_step(self):
         return self._train_step(self.critic_model,
-                                partial(self.loss_module.loss_flow_prediction, normalize=True),
+                                partial(self.loss_module.loss_flow_prediction, normalize=False),
                                 self.opt_critic)
 
     def train(self):
