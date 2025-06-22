@@ -3,10 +3,11 @@ import random
 from copy import deepcopy
 from ema_pytorch import EMA
 import torch ; from torch import Tensor
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from .base import BaseTrainer
+from functools import partial
 from ..models.gamerft_audio import GameRFTAudio
 from ..models import get_model_cls
 from ..utils import (
@@ -124,9 +125,9 @@ class Loss_SelfForcing(nn.Module):
         }
 
     def _flow(self,
-            causal:       Tensor,  # in SF: [B, C, H, W], here, maybe [B, N, C, H, W] ?
-            noisy_causal: Tensor,  # in SF: [B, C, H, W],
-            sigma_:       Tensor,  # What should this be
+            causal:       Tensor,  # [B, N, C, H, W]
+            noisy_causal: Tensor,  # [B, N, C, H, W]
+            sigma_:       Tensor,  #
             full_precision: bool = True
         ) -> Tensor:
         prev_dtype = causal.dtype
@@ -277,23 +278,30 @@ class SelfForcingTrainer(BaseTrainer):
                                          **self.train_cfg.data_kwargs)
         self.train_loader   = iter(self.train_loader)
         
-        # -- loss & more
-        self.update_ratio: int  = getattr(self.train_cfg, 'update_ratio', 5)  # how many steps to update the critic bidir model before running one causal model update
-        self.cfg_scale: float   = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
-        self.t_schedule         = self.train_cfg.t_schedule
-        self.loss_module        = Loss_SelfForcing(self.bidirectional_model.score_fn,
-                                                   self.critic_model.score_fn,
-                                                   teacher_cfg_weight=self.cfg_scale,
-                                                   normalize=True)
+        # -- dmd2-style loss (https://arxiv.org/pdf/2405.14867) 
+        # - two time-scale update rule (section 4.2)
+        # - TODO ensure whether the self-forcing paper has a GAN term (4.3), i don't think they do?
+        # - multi-step generator, based on t-schedule (section 4.4) 
+        # - i believe section 4.5 (reducing train-inference mismatch) is implicit in the autoregressive step of self-forcing as a whole
+        self.update_ratio: int  = getattr(self.train_cfg, 'update_ratio', 5)
+        # -- make sure critic learning rate is 5x less (corresponding to update ratio) than the causal (generator, in DMD) student
+        self.causal_lr: float = self.train_cfg.opt_kwargs.lr
+        self.critic_lr: float = self.causal_lr / self.update_ratio
+        self.cfg_scale: float = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
+        self.t_schedule       = self.train_cfg.t_schedule
+        self.loss_module      = Loss_SelfForcing(self.bidirectional_model.score_fn,
+                                                 self.critic_model.score_fn,
+                                                 teacher_cfg_weight=self.cfg_scale,
+                                                 normalize=True)
 
         # -- hardware - done after loading models so it casts to bfloat16
         self.device = torch.device("cuda", self.local_rank)
         self.init_hardware()
 
         # -- optim tomfoolery, shenanigans, etc. - needs to be done after init_hardware so device casting calls work as intended
-        self.ema                = EMA(self.causal_model, beta=0.999, update_after_step=0, update_every=1)
-        self.opt_causal         = torch.optim.AdamW(self.causal_model.parameters(), **self.train_cfg.opt_kwargs)
-        self.opt_critic         = torch.optim.AdamW(self.critic_model.parameters(), **self.train_cfg.opt_kwargs)
+        self.ema                = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
+        self.opt_causal         = torch.optim.AdamW(self.causal_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.causal_lr}))
+        self.opt_critic         = torch.optim.AdamW(self.critic_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.critic_lr}))
         self.scaler             = torch.amp.GradScaler()
         self.ctx                = torch.amp.autocast(self.device.type, torch.float32)
         self.scheduler_causal   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_causal, **self.train_cfg.scheduler_kwargs)
@@ -413,8 +421,8 @@ class SelfForcingTrainer(BaseTrainer):
         try:
             self.causal_model.eval()
             # -- get relevant samples
-            student_clip      = info['causal_clip']
-            student_audio     = info['causal_audio']
+            student_clip      = info['clip']
+            student_audio     = info['audio']
             groundtruth_clip  = info['groundtruth_clip']
             groundtruth_audio = info['groundtruth_audio']
             mouse, btn        = info['mouse'], info['btn']
@@ -480,9 +488,11 @@ class SelfForcingTrainer(BaseTrainer):
         self.scaler.step(optimizer)         ; optimizer.zero_grad() ; self.scaler.update()
         return grad_norm
 
-
-    def _train_causal_step(self):
-        self.opt_causal.zero_grad(set_to_none=True)
+    def _train_step(self,
+                    model: GameRFTAudio,
+                    loss_fn: Callable[[Any], dict[str, Tensor]],
+                    optim: torch.optim.Optimizer):
+        optim.zero_grad(set_to_none=True)
 
         clip_bnchw, audio, mouse, btn = self._format_batch()
         latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames] # 30, 60
@@ -490,61 +500,35 @@ class SelfForcingTrainer(BaseTrainer):
                                                                             mouse             [:, -self.num_gen_frames:],
                                                                             audio             [:, -self.num_gen_frames:],
                                                                             latent_conditions)
-        
-        loss_info = self.loss_module.loss_distribution_matching_distillation(
-            causal_latent_video = rollout_info['clean_latents_video'],
-            causal_latent_audio = rollout_info['clean_latents_audio'],
-            t                   = rollout_info['selected_timesteps'],
-            mouse               = mouse     [:, -self.num_gen_frames:],
-            btn                 = btn       [:, -self.num_gen_frames:],
-        )
+        # todo - typeddict 
+        loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
+                            causal_latent_audio = rollout_info['clean_latents_audio'],
+                            t                   = rollout_info['selected_timesteps'],
+                            mouse               = mouse       [:, -self.num_gen_frames:],
+                            btn                 = btn         [:, -self.num_gen_frames:])
 
-        grad_norm = self._optimizer_step(loss_info['total_loss'], self.opt_causal, self.causal_model)
+        grad_norm = self._optimizer_step(loss_info['total_loss'], optim, model)
 
         return {
             'groundtruth_clip':  clip_bnchw,
             'groundtruth_audio': audio,
-            'causal_clip':       rollout_info['clean_latents_video'],
-            'causal_audio':      rollout_info['clean_latents_audio'],
+            'clip':              rollout_info['clean_latents_video'],
+            'audio':             rollout_info['clean_latents_audio'],
             'mouse':             mouse,
             'btn':               btn,
-            'grad_norm':         grad_norm,
-            **loss_info,
+            'grad_norm':         grad_norm,       
+            **loss_info
         }
+
+    def _train_causal_step(self):
+        return self._train_step(self.causal_model,
+                                partial(self.loss_module.loss_distribution_matching_distillation, normalize=True),
+                                self.opt_causal)
 
     def _train_critic_step(self):
-        self.opt_critic.zero_grad(set_to_none=True)
-
-        clip_bnchw, audio, mouse, btn   = self._format_batch()
-        latent_conditions               = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames] # 30, 60
-        rollout_info                    = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
-                                                                             mouse              [:, -self.num_gen_frames:],
-                                                                             audio              [:, -self.num_gen_frames:],
-                                                                             latent_conditions)
-
-        # -- technically, the loss fwd would only need the generated frames, timesteps, and conditionals
-        # -- not sure if this abstraction fits the mental model of other researchers but it makes sense to me?
-        loss_info = self.loss_module.loss_flow_prediction(
-            causal_latent_video = rollout_info['clean_latents_video'],
-            causal_latent_audio = rollout_info['clean_latents_audio'],
-            t                   = rollout_info['selected_timesteps'],
-            mouse               = mouse       [:, -self.num_gen_frames:],
-            btn                 = btn         [:, -self.num_gen_frames:],
-            normalize=True
-        )
-
-        grad_norm = self._optimizer_step(loss_info['total_loss'], self.opt_critic, self.critic_model)
-
-        return {
-            'groundtruth_clip':  clip_bnchw,
-            'groundtruth_audio': audio,
-            'critic_clip':       rollout_info['clean_latents_video'],
-            'critic_audio':      rollout_info['clean_latents_audio'],
-            'mouse':             mouse,
-            'btn':               btn,
-            'grad_norm':         grad_norm,
-            **loss_info,
-        }
+        return self._train_step(self.critic_model,
+                                partial(self.loss_module.loss_flow_prediction, normalize=True),
+                                self.opt_critic)
 
     def train(self):
         timer = Timer()

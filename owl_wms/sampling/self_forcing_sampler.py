@@ -18,6 +18,10 @@ def sigma(t: int | Tensor | float) -> Tensor:
     if isinstance(t, float):
         t = int(t*1000)
     
+    if isinstance(t, Tensor) and t.dtype in {torch.float32, torch.bfloat16}:
+        t = (1000 * t)
+
+    # -- by this point, t is an int | Tensor[int] between 0-1000
     if isinstance(t, Tensor): return _SIGMA_TABLE[(t - 1).long()].to(torch.float32)
     else:                     return _SIGMA_TABLE[int(t) - 1].to(torch.float32)
 
@@ -135,6 +139,13 @@ class SelfForcingSampler:
         N             = self.num_gen_frames     # number of frames to generate that are outside the context
         start_grad_at = self.start_grad_at      # frame_idx past which we start keeping track of grads (vanishing error accumulation horizon)        
 
+        # TODO is KV-Cache warmed up with a randomly generated t? No, it is generated with t=0.
+        # See https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/pipeline/self_forcing_training.py#L114-L128
+        # And it doesn't matter, see below:
+        # TODO is the initial conditioning noised? otherwise, we aren't denoising anything?
+        #      ANSWER - SAMI: I think it doesn't matter if our denoising is valid, because the noise would be the Query and the latents
+        #                     would be the Key and Value. As long as those get computed, we will get cache benefits,
+        #                     and not whether we generate a valid output.
         if latent_conditioning:
             self._warmup_kv(latent_conditioning)
 
