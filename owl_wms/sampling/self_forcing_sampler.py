@@ -169,7 +169,7 @@ class SelfForcingSampler:
             for t in reversed(t_schedule):
                 # https://arxiv.org/pdf/2506.08009 last paragraph of Section 3.2
                 # use the denoised output of the s-th step as the final output
-                if t < s_t: break
+                if t > s_t: break
 
                 keep_grad = grad_frame and (t == s_t) and self.training
 
@@ -207,8 +207,8 @@ class SelfForcingSampler:
                     audio_t, *_ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
                 else: break # reached fully-denoised
 
-            clean_latents_video += [x_0     if grad_frame else x_0.detach()]
-            clean_latents_audio += [audio_0 if grad_frame else audio_0.detach()]
+            clean_latents_video += [x_0     if keep_grad else x_0    .detach()]
+            clean_latents_audio += [audio_0 if keep_grad else audio_0.detach()]
 
         return {
             'clean_latents_video':  torch.cat(clean_latents_video, dim=1),
