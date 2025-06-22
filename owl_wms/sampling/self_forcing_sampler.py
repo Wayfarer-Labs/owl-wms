@@ -207,6 +207,8 @@ class SelfForcingSampler:
                     audio_t, *_ = q_sample(audio_0, t * torch.ones((B, 1), device=audio_0.device))
                 else: break # reached fully-denoised
 
+            # -- technically, it is always keep_grad by the time we get here, because we break
+            # right after our sampled timestep s
             clean_latents_video += [x_0     if keep_grad else x_0    .detach()]
             clean_latents_audio += [audio_0 if keep_grad else audio_0.detach()]
 

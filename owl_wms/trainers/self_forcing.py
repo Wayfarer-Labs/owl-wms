@@ -5,7 +5,7 @@ from ema_pytorch import EMA
 import torch ; from torch import Tensor
 from typing import Callable, Optional, Any
 import torch.nn as nn
-from torch.nn.utils import clip_grad_norm_
+from torch.nn.utils import clip_grad_norm_, get_total_norm
 from .base import BaseTrainer
 from functools import partial
 from ..models.gamerft_audio import GameRFTAudio
@@ -484,16 +484,18 @@ class SelfForcingTrainer(BaseTrainer):
     def _optimizer_step(self,
                         loss: Tensor,
                         optimizer: torch.optim.Optimizer,
-                        model: GameRFTAudio) -> None:
+                        model: GameRFTAudio,
+                        clip_grad: bool = True) -> None:
         self.scaler.scale(loss).backward()  ; self.scaler.unscale_(optimizer)
-        grad_norm = clip_grad_norm_(model.parameters(), self.max_grad_norm)
+        grad_norm = clip_grad_norm_(model.parameters(), self.max_grad_norm) if clip_grad else get_total_norm(model.parameters())
         self.scaler.step(optimizer)         ; optimizer.zero_grad() ; self.scaler.update()
         return grad_norm
 
     def _train_step(self,
                     model: GameRFTAudio,
                     loss_fn: Callable[[Any], dict[str, Tensor]],
-                    optim: torch.optim.Optimizer):
+                    optim: torch.optim.Optimizer, 
+                    clip_grad: bool = True):
         optim.zero_grad(set_to_none=True)
 
         clip_bnchw, audio, mouse, btn = self._format_batch()
@@ -509,7 +511,7 @@ class SelfForcingTrainer(BaseTrainer):
                             mouse               = mouse       [:, -self.num_gen_frames:],
                             btn                 = btn         [:, -self.num_gen_frames:])
 
-        grad_norm = self._optimizer_step(loss_info['total_loss'], optim, model)
+        grad_norm = self._optimizer_step(loss_info['total_loss'], optim, model, clip_grad=clip_grad)
 
         return {
             'groundtruth_clip':  clip_bnchw,
@@ -530,7 +532,8 @@ class SelfForcingTrainer(BaseTrainer):
     def _train_critic_step(self):
         return self._train_step(self.critic_model,
                                 partial(self.loss_module.loss_flow_prediction, normalize=False),
-                                self.opt_critic)
+                                self.opt_critic,
+                                clip_grad=False)
 
     def train(self):
         timer = Timer()
