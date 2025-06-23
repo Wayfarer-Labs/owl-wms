@@ -39,3 +39,6 @@ wget https://model-checkpoints.fly.storage.tigris.dev/av_dfot_85k_ema_200m.pt -O
 ## Testing Models for Sanity Check:
 Use popular video models for sanity checking methodology:
 1. https://github.com/Wan-Video/Wan2.1
+
+## Notes:
+Use this PR to enable FP8 Rowwise scaling, need to use torch nightly: https://github.com/pytorch/pytorch/pull/155991
