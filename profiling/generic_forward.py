@@ -1,5 +1,6 @@
 from physicsnemo.utils.profiling import Profiler
 import torch
+import copy
 
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 
@@ -103,9 +104,9 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
 
     try:
-        profile_torch_compile_inductor(world_model.clone(), img_dec.clone(), audio_dec.clone(), dummy, dummy_pred_audio)
+        profile_torch_compile_inductor(copy.deepcopy(world_model), copy.deepcopy(img_dec), copy.deepcopy(audio_dec), dummy, dummy_pred_audio)
 
-        profile_torch_compile_inductor_fp8_torchao(world_model.clone(), img_dec.clone(), audio_dec.clone(), dummy, dummy_pred_audio)
+        profile_torch_compile_inductor_fp8_torchao(copy.deepcopy(world_model), copy.deepcopy(img_dec), copy.deepcopy(audio_dec), dummy, dummy_pred_audio)
     except Exception as e:
         print(f"Error in inductor compile: {e}")
 
