@@ -91,7 +91,7 @@ if __name__ == "__main__":
     torch._inductor.config.use_fast_math = True
     torch._inductor.config.cuda.use_fast_math = True
     torch._inductor.config.freezing = True  # only use for inference, no weights updates allowed after this.
-    torch._inductor.config.freezing_discard_parameters = True  # only use for inference, this will simply get rid of the eager model Parameters of nn.Module to save memory.
+    # torch._inductor.config.freezing_discard_parameters = True  # only use for inference, this will simply get rid of the eager model Parameters of nn.Module to save memory.
     torch._inductor.config.cpp.weight_prepack = True
     torch._inductor.config.aggressive_fusion = True
 
