@@ -23,3 +23,4 @@ alias-free-torch
 git+https://github.com/shahbuland/PerceptualSimilarity.git
 git+https://github.com/sypsyp97/convnext_perceptual_loss.git
 git+https://github.com/KellerJordan/Muon.git
+gemlite   # for quantization with gemlite triton kernels

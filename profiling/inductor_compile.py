@@ -25,28 +25,25 @@ def profile_torch_compile_inductor(world_model, img_dec, audio_dec, dummy, dummy
     ## Torch Compile with Inductor
 
     compiled_world_model = torch.compile(world_model, mode='max-autotune', dynamic=False, fullgraph=True)
-    # compiled_img_dec = torch.compile(img_dec, mode='max-autotune', dynamic=False, fullgraph=True)
-    # compiled_audio_dec = torch.compile(audio_dec, mode='max-autotune', dynamic=False, fullgraph=True)
+    compiled_img_dec = torch.compile(img_dec, mode='max-autotune', dynamic=False, fullgraph=True)
+    compiled_audio_dec = torch.compile(audio_dec, mode='max-autotune', dynamic=False, fullgraph=True)
 
     res_wm = profile_fn(compiled_world_model, dummy)
     print_results(res_wm, "Torch Compile - WM")
 
-    # res_img = profile_fn(compiled_img_dec, dummy[0][0])
-    # print_results(res_img, "Torch Compile - IMG")
+    res_img = profile_fn(compiled_img_dec, dummy[0][0])
+    print_results(res_img, "Torch Compile - IMG")
 
-    # res_audio = profile_fn(compiled_audio_dec, dummy_pred_audio)
-    # print_results(res_audio, "Torch Compile - AUDIO")
+    res_audio = profile_fn(compiled_audio_dec, dummy_pred_audio)
+    print_results(res_audio, "Torch Compile - AUDIO")
 
 
 def profile_torch_compile_inductor_fp8_torchao(world_model, img_dec, audio_dec, dummy, dummy_pred_audio):
     ## Torch Compile with Inductor + FP8 with torchao
 
     compiled_world_model = torch.compile(world_model, mode='max-autotune', dynamic=False, fullgraph=True)
-    # compiled_img_dec = torch.compile(img_dec, mode='max-autotune', dynamic=False, fullgraph=True)
-    # compiled_audio_dec = torch.compile(audio_dec, mode='max-autotune', dynamic=False, fullgraph=True)
-
-    res_wm = profile_fn(compiled_world_model, dummy)
-    print_results(res_wm, "Torch Compile - WM")
+    compiled_img_dec = torch.compile(img_dec, mode='max-autotune', dynamic=False, fullgraph=True)
+    compiled_audio_dec = torch.compile(audio_dec, mode='max-autotune', dynamic=False, fullgraph=True)
 
     compiled_world_model = torchao.quantization.autoquant(
         compiled_world_model,
@@ -55,15 +52,25 @@ def profile_torch_compile_inductor_fp8_torchao(world_model, img_dec, audio_dec, 
         set_inductor_config=False
     )
 
-    # quantize_(compiled_world_model, Float8WeightOnlyConfig())  # works fine, leads to a slight decrease in FPS.
-    # quantize_(compiled_img_dec, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
-    # quantize_(compiled_audio_dec, Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()))
+    compiled_img_dec = torchao.quantization.autoquant(
+        compiled_img_dec,
+        example_input=dummy[0][0],
+        qtensor_class_list=ALL_AUTOQUANT_CLASS_LIST,
+        set_inductor_config=False
+    )
+
+    compiled_audio_dec = torchao.quantization.autoquant(
+        compiled_audio_dec,
+        example_input=dummy_pred_audio,
+        qtensor_class_list=ALL_AUTOQUANT_CLASS_LIST,
+        set_inductor_config=False
+    )
 
     res_wm = profile_fn(compiled_world_model, dummy)
-    print_results(res_wm, "Torch Compile + FP8 TorchAO - WM")
+    print_results(res_wm, "Torch Compile + TorchAO AutoQuant - WM")
 
-    # res_img = profile_fn(compiled_img_dec, dummy[0][0])
-    # print_results(res_img, "Torch Compile + FP8 TorchAO - IMG")
+    res_img = profile_fn(compiled_img_dec, dummy[0][0])
+    print_results(res_img, "Torch Compile + TorchAO AutoQuant - IMG")
 
-    # res_audio = profile_fn(compiled_audio_dec, dummy_pred_audio)
-    # print_results(res_audio, "Torch Compile + FP8 TorchAO - AUDIO")
+    res_audio = profile_fn(compiled_audio_dec, dummy_pred_audio)
+    print_results(res_audio, "Torch Compile + TorchAO AutoQuant - AUDIO")
