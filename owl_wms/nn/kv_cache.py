@@ -17,7 +17,7 @@ class KVCache:
         self.max_length = config.tokens_per_frame * config.n_frames
         self.noise_caches = 0.0
 
-    def enable_cache_updates(self):
+    def enable_cache_updates(self): # TODO Does this do anything..?
         self.should_update = True
     
     def disable_cache_updates(self):
@@ -77,7 +77,7 @@ class KVCache:
 
     def __len__(self):
         assert self.cache is not None, "Must reset cache before using"
-        return self.cache[0][0].shape[2]
+        return self.cache[0][0].shape[2] # get the key of the first layer, and then get the number of tokens
 
     def shape(self):
         return self.shape

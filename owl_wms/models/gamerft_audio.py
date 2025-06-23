@@ -33,7 +33,7 @@ class GameRFTAudioCore(nn.Module):
 
         self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
 
-    def forward(self, x, audio, t, mouse, btn, kv_cache = None):
+    def forward(self, x, audio, t, mouse, btn, kv_cache = None, additive_attn_mask = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # t is [b,n]
@@ -56,7 +56,7 @@ class GameRFTAudioCore(nn.Module):
         x = eo.rearrange(x, 'b n f d -> b (n f) d')
 
         x = self.pos_enc(x)
-        x = self.transformer(x, cond, kv_cache)
+        x = self.transformer(x, cond, kv_cache, additive_attn_mask=additive_attn_mask)
 
         # Split into video and audio tokens
         x = eo.rearrange(x, 'b (n f) d -> b n f d', n=n)
@@ -87,6 +87,7 @@ class GameRFTAudio(nn.Module):
                 btn:   torch.Tensor | None = None,
                 audio: torch.Tensor | None = None,
                 kv_cache: KVCache   | None = None,
+                attn_mask: Tensor   | None = None,
                 cfg_weight: float          = 0.0) -> tuple[Tensor, Tensor]:
         """
         Return ε-score with optional CFG
@@ -106,7 +107,7 @@ class GameRFTAudio(nn.Module):
         if cfg_weight > 0.0:
             null_mouse  = torch.zeros_like(mouse)
             null_btn    = torch.zeros_like(btn)
-            score_video_uncond, score_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache)
+            score_video_uncond, score_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache, attn_mask)
             # -- apply cfg
             score_video = score_video_uncond + cfg_weight * (score_video_cond - score_video_uncond)
             score_audio = score_audio_uncond + cfg_weight * (score_audio_cond - score_audio_uncond)
@@ -116,7 +117,16 @@ class GameRFTAudio(nn.Module):
         return score_video, score_audio
 
 
-    def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None):
+    def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None, additive_attn_mask = None):
+        # TODO SAMI - I am a bit confused about the shapes here.
+        # in causvid, we take in an entire sequence of 'noise' and generate the next sequence.
+        # this sequence is from a sliding window, where the last frame is pure noise and the prior frames
+        # are noised clean frames. Therefore, N > 1 because we generate multiple frames at a time.
+        # However, with self-forcing, this is different because we generate only 1 frame, however,
+        # the conditioning are clean frames that were generated from autoregression. However, I see 
+        # that we pass in N = 1 - is this correct? Or should N = num_frames still, except 0:N-1 be fetched from
+        # KV Cache?
+
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # mouse is [b,n,2]
@@ -150,7 +160,7 @@ class GameRFTAudio(nn.Module):
             lerpd_audio = audio * (1. - ts_exp_audio) + z_audio * ts_exp_audio
             target_audio = z_audio - audio
             
-        pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn)
+        pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn, additive_attn_mask)
         
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)

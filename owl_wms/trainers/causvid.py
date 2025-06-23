@@ -184,6 +184,8 @@ class CausVidTrainer(BaseTrainer):
                 ts = torch.randn(b,n,device=vid.device,dtype=vid.dtype).sigmoid()
                 z = torch.randn_like(vid)
                 ts_exp = ts[:,:,None,None,None]
+            
+            # NOTE SAMI: looks like rectified flow (linear interpolation)
             lerpd = vid * (1. - ts_exp) + z * ts_exp
 
             null_mouse = torch.zeros_like(mouse)

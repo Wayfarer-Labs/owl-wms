@@ -21,7 +21,7 @@ from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBCon
 from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb_av
-from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, q_sample, sigma
+from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
 
 def debug_tensor(name: str, tensor: Tensor, step: int = None) -> bool:
     """
@@ -52,8 +52,6 @@ def debug_tensor(name: str, tensor: Tensor, step: int = None) -> bool:
         std_val = tensor.std().item()
         print(f"✅ {step_str}{name} - min: {min_val:.4f}, max: {max_val:.4f}, mean: {mean_val:.4f}, std: {std_val:.4f}")
         return False
-    
-
 
 
 class Loss_SelfForcing(nn.Module):
@@ -61,10 +59,10 @@ class Loss_SelfForcing(nn.Module):
     def __init__(self,
             teacher_score_fn:   Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
             critic_score_fn:    Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
-            teacher_cfg_weight: float = 3.0,
+            teacher_cfg_weight: float = 1.3,
             student_cfg_weight: float = 0.0,
             critic_cfg_weight:  float = 0.0,
-            q_sample_fn:        Callable[[Tensor, Tensor], tuple[Tensor, Tensor]] = q_sample,
+            q_sample_fn:        Callable[[Tensor, Tensor], tuple[Tensor, Tensor]] = fwd_rectified_flow,
             normalize:          bool = False,
             normalize_eps: float      = 1e-6,
         ):
@@ -294,6 +292,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.loss_module      = Loss_SelfForcing(self.bidirectional_model.score_fn,
                                                  self.critic_model.score_fn,
                                                  teacher_cfg_weight=self.cfg_scale,
+                                                 q_sample_fn=fwd_rectified_flow,
                                                  normalize=True)
 
         # -- hardware - done after loading models so it casts to bfloat16
@@ -474,12 +473,12 @@ class SelfForcingTrainer(BaseTrainer):
                            clip_bnchw: Tensor,
                            mouse: Tensor,
                            btn: Tensor,
-                           audio: Tensor) -> list[dict[str, Tensor]]:
-
-        return [ dict(latent = clip_bnchw[:, i:i+1],
-                       mouse = mouse     [:, i:i+1],
-                       btn   = btn       [:, i:i+1],
-                       audio = audio     [:, i:i+1]) for i in range(btn.shape[1]) ]
+                           audio: Tensor,
+                           num_frames: int) -> dict[str, Tensor]:
+        return dict(latent = clip_bnchw[:, :num_frames],
+                    mouse  = mouse     [:, :num_frames],
+                    btn    = btn       [:, :num_frames],
+                    audio  = audio     [:, :num_frames],)
 
     def _optimizer_step(self,
                         loss: Tensor,
@@ -499,12 +498,12 @@ class SelfForcingTrainer(BaseTrainer):
         optim.zero_grad(set_to_none=True)
 
         clip_bnchw, audio, mouse, btn = self._format_batch()
-        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio)[   :self.num_gen_frames] # 30, 60
+        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio, num_frames=self.context_len)
         rollout_info                  = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
                                                                             mouse             [:, -self.num_gen_frames:],
                                                                             audio             [:, -self.num_gen_frames:],
                                                                             latent_conditions)
-        # todo - typeddict 
+        # todo - typeddict ?
         loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
                             causal_latent_audio = rollout_info['clean_latents_audio'],
                             t                   = rollout_info['selected_timesteps'],

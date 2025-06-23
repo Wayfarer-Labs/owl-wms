@@ -19,18 +19,18 @@ def create_block_causal_mask(tokens, tokens_per_frame):
     frames = tokens // tokens_per_frame
     
     # Create base causal mask, nothing is masked
-    mask = torch.zeros(tokens, tokens)
+    mask = torch.zeros(tokens, tokens, dtype=torch.float32)
     
     # Allow attention within each frame
     for i in range(frames):
         start = i * tokens_per_frame
         end = (i + 1) * tokens_per_frame
-        mask[start:end, end:] = True # It can't see anything after its end
+        mask[start:end, end:] = float('-inf') # It can't see anything after its end
         
     return mask
 
 class Attn(nn.Module):
-    def __init__(self, config : 'TransformerConfig'):
+    def __init__(self, config : 'TransformerConfig', layer_ind: int | None = None):
         super().__init__()
 
         self.n_heads = config.n_heads
@@ -39,24 +39,43 @@ class Attn(nn.Module):
         self.out = nn.Linear(config.d_model, config.d_model)
 
         self.qk_norm = QKNorm(config.d_model // config.n_heads)
-        self.layer_ind = None
+        self.layer_ind = layer_ind
 
         self.rope = FlatVideoRoPE(config)
 
         self.tokens_per_frame = config.tokens_per_frame
         self.causal = config.causal
 
-    def forward(self, x, kv_cache = None):
+    def forward(self, x, kv_cache = None, additive_attn_mask = None):
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
-
+        # TODO FIXME think abt this when its not 4am.
+        # i can solve it if i figure out attn and shapes during both cache warmups and during autoregression
         if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
-            mask = None
+            if kv_cache is not None and len(kv_cache) > 0:
+                # Autoregressive case: q_len = current tokens, kv_len = cached + current
+                q_len = x.shape[1]  # current frame tokens
+                kv_len = len(kv_cache) # cached + current
+                mask = torch.zeros(q_len, kv_len).to(device=x.device, dtype=x.dtype)
+            else:
+                # warmup case: all tokens processed at once, so they all pay attn to each other
+                num_tokens = x.shape[1]
+                mask = torch.zeros(num_tokens, num_tokens).to(device=x.device, dtype=x.dtype)
+
+            print(f'mask none shapes: {self.causal=} {x.shape=} {q.shape=} {k.shape=} {v.shape=} kvc={len(kv_cache) if kv_cache is not None else 0}')
         else:
-            mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
-            mask = mask.to(device=x.device,dtype=x.dtype)
-            mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
-            mask = mask.unsqueeze(1)
+            print(f'mask causal shapes: {self.causal=} {x.shape=} {q.shape=} {k.shape=} {v.shape=}')
+            # causal case w no kv_cache means we have access to all the tokens directly in x
+            mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame)
+            mask = mask
+        
+        # add batch dim, repeat, then add frame dim
+        mask = mask.to(device=x.device,dtype=x.dtype).unsqueeze(0).repeat(x.shape[0], 1, 1).unsqueeze(1)
+
+        if additive_attn_mask is not None:
+            assert additive_attn_mask.shape == mask.shape, f'{additive_attn_mask.shape=} {mask.shape=}'
+            # 0s are unmasked, float('-inf') are masked
+            mask += additive_attn_mask
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)
@@ -72,7 +91,7 @@ class Attn(nn.Module):
 
             # Add rope here if we do use it
             x = F.scaled_dot_product_attention(q, new_k, new_v, attn_mask = mask)
-            x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now)
+            x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now) TODO SAMI address this.
         else:
             q,k = self.rope(q,k)
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
@@ -82,12 +101,12 @@ class Attn(nn.Module):
         return x
 
 class DiTBlock(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, layer_ind: int | None = None):
         super().__init__()
 
         dim = config.d_model
 
-        self.attn = Attn(config)
+        self.attn = Attn(config, layer_ind=layer_ind)
         self.mlp = MLP(config)
 
         self.adaln1 = AdaLN(dim)
@@ -95,10 +114,10 @@ class DiTBlock(nn.Module):
         self.adaln2 = AdaLN(dim)
         self.gate2 = Gate(dim)
 
-    def forward(self, x, cond, kv_cache = None):
+    def forward(self, x, cond, kv_cache = None, additive_attn_mask = None):
         res1 = x.clone()
         x = self.adaln1(x, cond)
-        x = self.attn(x, kv_cache)
+        x = self.attn(x, kv_cache, additive_attn_mask)
         x = self.gate1(x, cond)
         x = res1 + x
         
@@ -116,13 +135,12 @@ class DiT(nn.Module):
 
         blocks = []
         for i in range(config.n_layers):
-            blocks.append(DiTBlock(config))
-            blocks[-1].attn.layer_ind = i
+            blocks.append(DiTBlock(config, layer_ind=i))
         self.blocks = nn.ModuleList(blocks)
 
-    def forward(self, x, cond, kv_cache = None):
+    def forward(self, x, cond, kv_cache = None, additive_attn_mask = None):
         for block in self.blocks:
-            x = block(x, cond, kv_cache)
+            x = block(x, cond, kv_cache, additive_attn_mask)
 
         return x
 
@@ -132,8 +150,7 @@ class UViT(nn.Module):
 
         blocks = []
         for i in range(config.n_layers):
-            blocks.append(DiTBlock(config))
-            blocks[-1].attn.layer_ind = i
+            blocks.append(DiTBlock(config, layer_ind=i))
 
         self.blocks = nn.ModuleList(blocks)
 
@@ -144,7 +161,7 @@ class UViT(nn.Module):
             skip_projs.append(nn.Linear(config.d_model * 2, config.d_model))
         self.skip_projs = nn.ModuleList(skip_projs)
 
-    def forward(self, x, cond, kv_cache = None):
+    def forward(self, x, cond, kv_cache = None, additive_attn_mask = None):
         # Cache early block outputs for skip connections
         early_features = []
         n_blocks = len(self.blocks)
@@ -152,11 +169,11 @@ class UViT(nn.Module):
 
         # Early blocks
         for i in range(mid_idx):
-            x = self.blocks[i](x, cond, kv_cache)
+            x = self.blocks[i](x, cond, kv_cache, additive_attn_mask)
             early_features.append(x)
 
         # Middle block (if odd number of layers)
-        x = self.blocks[mid_idx](x, cond, kv_cache)
+        x = self.blocks[mid_idx](x, cond, kv_cache, additive_attn_mask)
 
         # Late blocks with skip connections
         for i in range(mid_idx + 1, n_blocks):
@@ -169,7 +186,7 @@ class UViT(nn.Module):
             x = torch.cat([x, early_feat], dim=-1)
             x = self.skip_projs[skip_idx](x)
             
-            x = self.blocks[i](x, cond, kv_cache)
+            x = self.blocks[i](x, cond, kv_cache, additive_attn_mask)
 
         return x
 
