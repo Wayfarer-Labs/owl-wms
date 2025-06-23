@@ -45,7 +45,11 @@ Use this PR to enable FP8 Rowwise scaling, need to use torch nightly: https://gi
 
 ## TODO:
 1. Debug FP8 autotune to wrap up FP8 inference.
-2. Patch torch to use nightly or at least support row-wise scaling + cutlass code for FP8 on 5090.
-3. FP8 training using torchao.
+2. Patch torch to use nightly or at least support row-wise scaling + cutlass code for FP8 on 5090.  -> low priority if not that much speed up. Although, just need to use nightly.
 
+^ autoquant with all dtypes working -> best possible in native torch. now move on to tensorRT.
+
+TensorRT:
 4. Torch -> Compile/optimize with Torch TensorRT -> ONNX with serving on TensorRT backend or ONNX backend with TensorRT.
+
+FP8 training using torchao.  -> training is low priority, we need fast models.
