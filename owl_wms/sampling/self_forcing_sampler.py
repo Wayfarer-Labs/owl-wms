@@ -70,7 +70,7 @@ class SelfForcingSampler:
     @torch.no_grad()
     def _warmup_kv(self, primers: list[dict[str, Tensor]]):
         """Fill rolling KV cache without tracking grads."""
-        self.kv_cache.reset()
+        self.kv_cache.reset(self.batch_size)
         self.kv_cache.enable_cache_updates()
         # TODO This is still dubious. What is the *very first* primer frame?
         _ = self.model.core(
