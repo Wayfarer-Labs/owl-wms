@@ -42,3 +42,10 @@ Use popular video models for sanity checking methodology:
 
 ## Notes:
 Use this PR to enable FP8 Rowwise scaling, need to use torch nightly: https://github.com/pytorch/pytorch/pull/155991
+
+## TODO:
+1. Debug FP8 autotune to wrap up FP8 inference.
+2. Patch torch to use nightly or at least support row-wise scaling + cutlass code for FP8 on 5090.
+3. FP8 training using torchao.
+
+4. Torch -> Compile/optimize with Torch TensorRT -> ONNX with serving on TensorRT backend or ONNX backend with TensorRT.
