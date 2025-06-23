@@ -73,22 +73,26 @@ if __name__ == "__main__":
     print("-------------------------------- Inductor Compile --------------------------------")
     torch._dynamo.reset()
     torch._inductor.config.conv_1x1_as_mm = True
-    # fuse to prevent conversion to higher dtype even when output is lower dtype
     torch._inductor.config.force_fuse_int_mm_with_mul = True
     torch._inductor.config.use_mixed_mm = True
-
-    # search in all directions in kernel space
     torch._inductor.config.coordinate_descent_tuning = True
     torch._inductor.config.coordinate_descent_check_all_directions = True
-    # some people recommend to disable epilogue and prologue fusion to allow better kernel search by inductor, apparently fusion reduces search performance
-    torch._inductor.config.epilogue_fusion = False
-    torch._inductor.config.prologue_fusion = False
+    torch._inductor.config.epilogue_fusion = True
+    torch._inductor.config.prologue_fusion = True
     torch._inductor.config.benchmark_fusion = True
     torch._inductor.config.benchmark_kernel = True
-
+    torch._inductor.config.benchmark_epilogue_fusion = True
+    torch._inductor.config.benchmark_harness = True
+    torch._inductor.config.combo_kernels = True
+    torch._inductor.config.benchmark_combo_kernel = True
+    torch._inductor.config.max_autotune_gemm = True
+    torch._inductor.config.force_layout_optimization = True
+    torch._inductor.config.max_autotune_pointwise = True
     torch._inductor.config.use_fast_math = True
     torch._inductor.config.cuda.use_fast_math = True
-    torch._inductor.config.freezing = True
+    torch._inductor.config.freezing = True  # only use for inference, no weights updates allowed after this.
+    torch._inductor.config.freezing_discard_parameters = True  # only use for inference, this will simply get rid of the eager model Parameters of nn.Module to save memory.
+    torch._inductor.config.cpp.weight_prepack = True
     torch._inductor.config.aggressive_fusion = True
 
     torch.set_float32_matmul_precision("medium")  # use bf16 or TF32 for fp32 matmul

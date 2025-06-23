@@ -48,13 +48,13 @@ def profile_torch_compile_inductor_fp8_torchao(world_model, img_dec, audio_dec, 
     res_wm = profile_fn(compiled_world_model, dummy)
     print_results(res_wm, "Torch Compile - WM")
 
-    compiled_world_model = torchao.quantization.autoquant(compiled_world_model, set_inductor_config=False)
+    # compiled_world_model = torchao.quantization.autoquant(compiled_world_model, set_inductor_config=False)
     # quantize_(compiled_world_model, Float8DynamicActivationFloat8WeightConfig())
     # quantize_(compiled_img_dec, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
     # quantize_(compiled_audio_dec, Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor()))
 
-    res_wm = profile_fn(compiled_world_model, dummy)
-    print_results(res_wm, "Torch Compile + FP8 TorchAO - WM")
+    # res_wm = profile_fn(compiled_world_model, dummy)
+    # print_results(res_wm, "Torch Compile + FP8 TorchAO - WM")
 
     # res_img = profile_fn(compiled_img_dec, dummy[0][0])
     # print_results(res_img, "Torch Compile + FP8 TorchAO - IMG")
