@@ -1,11 +1,11 @@
 import yaml
 from omegaconf import OmegaConf
 from dataclasses import dataclass, field
-
+from typing import Optional
 
 @dataclass
 class TransformerConfig:
-    model_id : str = None
+    model_id : Optional[str] = None
     channels : int = 128
     sample_size : int = 16
     patch_size : int = 1
@@ -29,8 +29,8 @@ class TransformerConfig:
 
 @dataclass
 class TrainingConfig:
-    trainer_id : str = None
-    data_id : str = None
+    trainer_id : Optional[str] = None
+    data_id : Optional[str] = None
 
     target_batch_size : int = 128
     batch_size : int = 2
@@ -38,25 +38,24 @@ class TrainingConfig:
     epochs : int = 200
 
     opt : str = "AdamW"
-    opt_kwargs : dict = None
+    opt_kwargs : Optional[dict] = None
 
-    loss_weights : dict = None
+    loss_weights : Optional[dict] = None
 
-    scheduler : str = None
-    scheduler_kwargs : dict = None
+    scheduler : Optional[str] = None
+    scheduler_kwargs : Optional[dict] = None
 
     checkpoint_dir : str = "checkpoints/v0" # Where checkpoints saved
-    resume_ckpt : str = None
+    resume_ckpt : Optional[str] = None
+
     # -- self forcing only:
-    frame_gradient_cutoff : int = 4
-    student_ckpt : str = None
-    teacher_ckpt : str = None
-    critic_ckpt: str = None
+    student_ckpt : Optional[str] = None
+    critic_ckpt: Optional[str] = None
     # -- 
 
     # Distillation related
-    teacher_ckpt : str = None
-    teacher_cfg : str = None
+    teacher_ckpt : Optional[str] = None
+    teacher_cfg : Optional[str] = None
 
     log_interval : int = 100
     sample_interval : int = 1000
@@ -64,18 +63,18 @@ class TrainingConfig:
 
     n_samples: int = 8 # For sampling
 
-    sampler_id : str = None
-    sampler_kwargs : dict = None
+    sampler_id : Optional[str] = None
+    sampler_kwargs : Optional[dict] = None
 
-    vae_id : str = None
-    vae_cfg_path : str = None
-    vae_ckpt_path : str = None
+    vae_id : Optional[str] = None
+    vae_cfg_path : Optional[str] = None
+    vae_ckpt_path : Optional[str] = None
     vae_scale : float = 0.34
     vae_batch_size: int = 4
 
-    audio_vae_id : str = None
-    audio_vae_cfg_path : str = None
-    audio_vae_ckpt_path : str = None
+    audio_vae_id : Optional[str] = None
+    audio_vae_cfg_path : Optional[str] = None
+    audio_vae_ckpt_path : Optional[str] = None
     audio_vae_scale : float = 0.17
 
     # -- self forcing stuff:
@@ -86,9 +85,9 @@ class TrainingConfig:
 
 @dataclass
 class WANDBConfig:
-    name : str = None
-    project : str = None
-    run_name : str = None 
+    name : Optional[str] = None
+    project : Optional[str] = None
+    run_name : Optional[str] = None 
 
 @dataclass
 class Config:
@@ -97,7 +96,7 @@ class Config:
     wandb: WANDBConfig
 
     @classmethod
-    def from_yaml(cls, path):
+    def from_yaml(cls, path: str) -> 'Config':
         with open(path) as f:
             raw_cfg = yaml.safe_load(f)
         
