@@ -114,12 +114,12 @@ class SelfForcingSampler:
         
         clean_latents_video, clean_latents_audio = [], []  # N frames, one for each N
         selected_timesteps                       = []      # N values, one for each t sampled from t_schedule
+        s_t         = random.choice(t_schedule)            # chosen step to keep grads on for - TODO It seems s is sampled a "train_step" level meaning at batch level, otherwise kv cache frames wont be fully denoised
 
         for i in range(N):
             # -- ignore gradients for frames that are too far backwards, as calculated by frame_gradient_cutoff
             # in self-forcing's repo this never happens as per their config.
             grad_frame  = i >= start_grad_at                        # last L₁ frames
-            s_t         = random.choice(t_schedule)                 # chosen step to keep grads on for
             x_t         = torch.randn(B, F, C, H, W, device=device) # sample x_t at the *largest* timestep
             audio_t     = torch.randn(B, F, A,       device=device)
             
