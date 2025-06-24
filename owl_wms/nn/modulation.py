@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from .normalization import LayerNorm
+from owl_wms.nn.normalization import LayerNorm
 
 class AdaLN(nn.Module):
     def __init__(self, dim):

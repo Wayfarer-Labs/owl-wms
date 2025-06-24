@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_, get_total_norm
 from torch.nn.parallel import DistributedDataParallel
-from .base import BaseTrainer
+from owl_wms.base import BaseTrainer
 from functools import partial
 from owl_wms.models.gamerft_audio import GameRFTAudio
 from owl_wms.models import get_model_cls

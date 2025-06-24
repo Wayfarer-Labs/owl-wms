@@ -2,13 +2,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from .normalization import LayerNorm, RMSNorm, QKNorm
-from .mlp import MLP
+from owl_wms.nn.normalization import LayerNorm, RMSNorm, QKNorm
+from owl_wms.nn.mlp import MLP
 
 import einops as eo
 
-from .modulation import AdaLN, Gate
-from .rope import FlatVideoRoPE
+from owl_wms.nn.modulation import AdaLN, Gate
+from owl_wms.nn.rope import FlatVideoRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -209,7 +209,7 @@ def test_attn_mask():
 
 @torch.no_grad()
 def test_kv_cache():
-    from .kv_cache import KVCache
+    from owl_wms.nn.kv_cache import KVCache
     from owl_wms.configs import TransformerConfig
 
     # Create test configs

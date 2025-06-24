@@ -6,7 +6,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import einops as eo
 
-from .base import BaseTrainer
+from owl_wms.base import BaseTrainer
 
 from owl_wms.utils import freeze, Timer, find_unused_params
 from owl_wms.schedulers import get_scheduler_cls

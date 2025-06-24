@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import math
 
 import einops as eo
-from .mlp import MLPCustom
+from owl_wms.nn.mlp import MLPCustom
 
 from rotary_embedding_torch import (
     RotaryEmbedding,

@@ -7,7 +7,7 @@ import torch.distributed as dist
 import einops as eo
 from copy import deepcopy
 
-from .base import BaseTrainer
+from owl_wms.trainers.base import BaseTrainer
 
 from owl_wms.utils import freeze, unfreeze, Timer, find_unused_params, versatile_load
 from owl_wms.schedulers import get_scheduler_cls
