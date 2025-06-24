@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "owl-wms"
+version = "0.1.0"
+description = "OWL WMS - Warehouse Management System"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python",
+    "wandb",
+    "einops",
+    "rotary-embedding-torch",
+    "ema-pytorch",
+    "omegaconf",
+    "multimethod",
+    "diffusers",
+    "vector-quantize-pytorch",
+    "torchtyping",
+    "imageio",
+    "numpy",
+    "imageio[ffmpeg]",
+    "fastapi",
+    "uvicorn[standard]",
+    "accelerate",
+    "boto3",
+    "python-dotenv",
+    "wandb[media]",
+    "alias-free-torch",
+    "taskgroup",
+    "moviepy==1.0.3",
+    "jupyter>=1.1.1",
+    "ipykernel>=6.29.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["owl_wms*"]
