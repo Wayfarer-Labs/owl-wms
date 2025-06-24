@@ -210,7 +210,7 @@ def test_attn_mask():
 @torch.no_grad()
 def test_kv_cache():
     from .kv_cache import KVCache
-    from ..configs import TransformerConfig
+    from owl_wms.configs import TransformerConfig
 
     # Create test configs
     config = TransformerConfig(

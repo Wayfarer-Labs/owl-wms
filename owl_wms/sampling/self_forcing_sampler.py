@@ -133,7 +133,7 @@ class SelfForcingSampler:
                 keep_grad = grad_frame and (t == s_t) and self.training
                 grad_ctxt = torch.enable_grad() if keep_grad else torch.no_grad()
                 
-                with torch.autocast(device_type=device.type, dtype=self.autocast), grad_ctxt:
+                with torch.autocast(device_type=device.type, dtype=self.autocast):
                     self.kv_cache.disable_cache_updates() # -- do not update cache while we are denoising?
                     velocity_x_t, velocity_audio_t = self.model.core(
                         x                  = x_t,

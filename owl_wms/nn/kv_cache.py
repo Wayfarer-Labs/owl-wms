@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from ..configs import TransformerConfig
+from owl_wms.configs import TransformerConfig
 
 class KVCache:
     def __init__(self, config : TransformerConfig, rank: int = 0):

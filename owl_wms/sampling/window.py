@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from tqdm import tqdm
 
-from ..utils import batch_permute_to_length
+from owl_wms.utils import batch_permute_to_length
 
 def zlerp(x, alpha):
     z = torch.randn_like(x)

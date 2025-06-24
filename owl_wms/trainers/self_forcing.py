@@ -12,19 +12,19 @@ from torch.nn.utils import clip_grad_norm_, get_total_norm
 from torch.nn.parallel import DistributedDataParallel
 from .base import BaseTrainer
 from functools import partial
-from ..models.gamerft_audio import GameRFTAudio
-from ..models import get_model_cls
-from ..utils import (
+from owl_wms.models.gamerft_audio import GameRFTAudio
+from owl_wms.models import get_model_cls
+from owl_wms.utils import (
     freeze, unfreeze,
     SamiTimer as Timer, versatile_load
 )
-from ..data import get_loader
-from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn, make_batched_audio_decode_fn
-from ..schedulers import get_scheduler_cls
-from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
+from owl_wms.data import get_loader
+from owl_wms.utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn, make_batched_audio_decode_fn
+from owl_wms.schedulers import get_scheduler_cls
+from owl_wms.configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
 import wandb
-from ..utils.logging import LogHelper, to_wandb_av
-from ..sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
+from owl_wms.utils.logging import LogHelper, to_wandb_av
+from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
 
 
 class Loss_SelfForcing(nn.Module):
@@ -462,14 +462,14 @@ class SelfForcingTrainer(BaseTrainer):
                                         normalize=True,
                                         mask_frame_idx=1), # ignore the first frame
                                 self.opt_causal,
-                                debug_basic=True)
+                                debug_basic=False)
 
     def _train_critic_step(self):
         return self._train_step(self.critic_model,
                                 self.loss_module.loss_rectified_flow,
                                 self.opt_critic,
                                 clip_grad=True,
-                                debug_basic=True)
+                                debug_basic=False)
 
     def train(self):
         timer = Timer()

@@ -8,12 +8,12 @@ import torch.nn.functional as F
 
 import einops as eo
 
-from ..nn.embeddings import (
+from owl_wms.nn.embeddings import (
     TimestepEmbedding,
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import UViT, FinalLayer
+from owl_wms.nn.attn import UViT, FinalLayer
 
 class GameRFTCore(nn.Module):
     def __init__(self, config):
@@ -99,7 +99,7 @@ class GameRFT(nn.Module):
             }
 
 if __name__ == "__main__":
-    from ..configs import Config
+    from owl_wms.configs import Config
 
     cfg = Config.from_yaml("configs/basic.yml").model
     model = GameRFT(cfg).cuda().bfloat16()

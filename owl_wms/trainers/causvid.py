@@ -9,14 +9,14 @@ from copy import deepcopy
 
 from .base import BaseTrainer
 
-from ..utils import freeze, unfreeze, Timer, find_unused_params, versatile_load
-from ..schedulers import get_scheduler_cls
-from ..models import get_model_cls
-from ..sampling import get_sampler_cls
-from ..data import get_loader
-from ..utils.logging import LogHelper, to_wandb
-from ..muon import init_muon
-from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
+from owl_wms.utils import freeze, unfreeze, Timer, find_unused_params, versatile_load
+from owl_wms.schedulers import get_scheduler_cls
+from owl_wms.models import get_model_cls
+from owl_wms.sampling import get_sampler_cls
+from owl_wms.data import get_loader
+from owl_wms.utils.logging import LogHelper, to_wandb
+from owl_wms.muon import init_muon
+from owl_wms.utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 
 class CausVidTrainer(BaseTrainer):
     """

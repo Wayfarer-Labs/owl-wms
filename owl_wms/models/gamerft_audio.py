@@ -8,14 +8,14 @@ import torch.nn.functional as F
 from torch import Tensor
 import einops as eo
 
-from ..nn.embeddings import (
+from owl_wms.nn.embeddings import (
     TimestepEmbedding,
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..configs import TransformerConfig
-from ..nn.attn import DiT, FinalLayer
-from ..nn.kv_cache import KVCache
+from owl_wms.configs import TransformerConfig
+from owl_wms.nn.attn import DiT, FinalLayer
+from owl_wms.nn.kv_cache import KVCache
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config: TransformerConfig):
@@ -183,7 +183,7 @@ class GameRFTAudio(nn.Module):
             }
 
 if __name__ == "__main__":
-    from ..configs import Config
+    from owl_wms.configs import Config
 
     cfg = Config.from_yaml("configs/basic.yml").model
     model = GameRFT(cfg).cuda().bfloat16()

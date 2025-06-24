@@ -227,7 +227,7 @@ class MMUViT(nn.Module):
 
 
 def test_fwd_with_cache():
-    from ..configs import TransformerConfig
+    from owl_wms.configs import TransformerConfig
     from .kv_cache import KVCache
 
     import matplotlib.pyplot as plt

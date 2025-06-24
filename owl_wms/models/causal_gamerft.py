@@ -8,13 +8,13 @@ import torch.nn.functional as F
 import einops as eo
 from copy import deepcopy
 
-from ..nn.embeddings import (
+from owl_wms.nn.embeddings import (
     TimestepEmbedding,
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import UViT, FinalLayer
-from ..nn.kv_cache import KVCache
+from owl_wms.nn.attn import UViT, FinalLayer
+from owl_wms.nn.kv_cache import KVCache
 
 class CausalGameRFTCore(nn.Module):
     """
@@ -268,7 +268,7 @@ class CausalGameRFT(nn.Module):
 
 
 if __name__ == "__main__":
-    from ..configs import Config
+    from owl_wms.configs import Config
     from copy import deepcopy
 
     # Test causal model
