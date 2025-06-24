@@ -46,38 +46,17 @@ class Attn(nn.Module):
         self.tokens_per_frame = config.tokens_per_frame
         self.causal = config.causal
 
-    def forward(self, x, kv_cache = None, additive_attn_mask = None):
+    def forward(self, x, kv_cache = None, additive_attn_mask = None, is_cache_warmup = False):
         q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
         q,k = self.qk_norm(q,k)
-        
-        is_cache_warmup     = (kv_cache is None or len(kv_cache) == 0)
-        # TODO need to check the len of cache at our current layer index otherwise we get a false negative on cache warmup
-        # since cache warmup is a multilayer process. self-forcing uses current_start so idk if they went thru this before. 
-        is_autoregressive   = (kv_cache is not None and len(kv_cache) > 0)
 
-        if not self.causal or is_cache_warmup:
-            # cache warmup: all tokens attend to each other
-            num_tokens = x.shape[1]  # should be 306 during warmup
-            mask = torch.zeros(num_tokens, num_tokens).to(device=x.device, dtype=x.dtype)
-            print(f'warmup mode: processing {num_tokens} tokens')
-        elif is_autoregressive:
-            q_len = x.shape[1]  # should be small (17) during autoregressive
-            cached_len = len(kv_cache)
-            kv_len = cached_len + q_len
-            mask = torch.zeros(q_len, kv_len).to(device=x.device, dtype=x.dtype)
-            print(f'autoregressive mode: q_len={q_len}, cached_len={cached_len}, total_kv_len={kv_len}')
+        if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
+            mask = None
         else:
-            print(f'mask causal shapes: {self.causal=} {x.shape=} {q.shape=} {k.shape=} {v.shape=}')
-            # causal case w no kv_cache means we have access to all the tokens directly in x
-            mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame)
-        
-        # add batch dim, repeat, then add frame dim
-        mask = mask.to(device=x.device,dtype=x.dtype).unsqueeze(0).repeat(x.shape[0], 1, 1).unsqueeze(1)
-
-        if additive_attn_mask is not None:
-            assert additive_attn_mask.shape == mask.shape, f'{additive_attn_mask.shape=} {mask.shape=}'
-            # 0s are unmasked, float('-inf') are masked
-            mask += additive_attn_mask
+            mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
+            mask = mask.to(device=x.device,dtype=x.dtype)
+            mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
+            mask = mask.unsqueeze(1)
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)
@@ -93,8 +72,7 @@ class Attn(nn.Module):
 
             # Add rope here if we do use it
             x = F.scaled_dot_product_attention(q, new_k, new_v, attn_mask = mask)
-            print('success')
-            x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now) TODO SAMI address this.
+            x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now)
         else:
             q,k = self.rope(q,k)
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
@@ -102,6 +80,7 @@ class Attn(nn.Module):
         x = eo.rearrange(x, 'b h n d -> b n (h d)')
         x = self.out(x)
         return x
+
 
 class DiTBlock(nn.Module):
     def __init__(self, config, layer_ind: int | None = None):

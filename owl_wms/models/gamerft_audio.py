@@ -39,7 +39,6 @@ class GameRFTAudioCore(nn.Module):
         # t is [b,n]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
-
         ctrl_cond = self.control_embed(mouse, btn)
         t_cond = self.t_embed(t)
 
@@ -157,11 +156,12 @@ class GameRFTAudio(nn.Module):
             # Audio noise
             ts_exp_audio = ts.unsqueeze(-1)
             z_audio = torch.randn_like(audio)
+            # calculates rectified flow velocity, distance from noise to clean
             lerpd_audio = audio * (1. - ts_exp_audio) + z_audio * ts_exp_audio
             target_audio = z_audio - audio
             
         pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn, additive_attn_mask)
-        
+        # F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)
         diff_loss = video_loss + audio_loss

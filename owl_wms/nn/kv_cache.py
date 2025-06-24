@@ -11,10 +11,10 @@ class KVCache:
         self.cache = None
         self.device = torch.device('cuda', rank) # NOTE: This is the device that the cache will be on
         self.dtype = torch.bfloat16
-        
+        self.tokens_per_frame = config.tokens_per_frame
         self.should_update = False
 
-        self.max_length = config.tokens_per_frame * config.n_frames
+        self.max_length = self.tokens_per_frame * config.n_frames
         self.noise_caches = 0.0
 
     def enable_cache_updates(self): # TODO Does this do anything..?

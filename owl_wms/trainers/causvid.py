@@ -186,6 +186,7 @@ class CausVidTrainer(BaseTrainer):
                 ts_exp = ts[:,:,None,None,None]
             
             # NOTE SAMI: looks like rectified flow (linear interpolation)
+            # ----- TEACHER CFG+Rectified Flow
             lerpd = vid * (1. - ts_exp) + z * ts_exp
 
             null_mouse = torch.zeros_like(mouse)
@@ -194,7 +195,7 @@ class CausVidTrainer(BaseTrainer):
             s_real_uncond = s_real_fn(lerpd, ts, null_mouse, null_btn)
             s_real_cond = s_real_fn(lerpd, ts, mouse, btn)
             s_real = s_real_uncond + self.cfg_scale * (s_real_cond - s_real_uncond)
-
+            # ----- Critic Rectified Flow, no CFG needed?
             s_fake = s_fake_fn(lerpd, ts, mouse, btn)
 
             grad = (s_fake - s_real)
@@ -219,6 +220,7 @@ class CausVidTrainer(BaseTrainer):
 
         loader = iter(loader)
         while True:
+            # -- SAMI: This is thecritic update step, because we freeze the causal student and unfreeze the critic
             freeze(self.model)
             unfreeze(self.score_fake)
             for _ in range(self.update_ratio):
@@ -226,11 +228,13 @@ class CausVidTrainer(BaseTrainer):
                 with ctx:
                     with torch.no_grad():
                         samples = sample_from_gen(batch_vid, batch_mouse, batch_btn)
+                        # -- SAMI: This calculates RF Loss:         # F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
                     s_fake_loss = self.score_fake(samples, batch_mouse, batch_btn)
 
                 optimizer_step(s_fake_loss, self.score_fake, self.s_fake_scaler, self.s_fake_opt)
 
             metrics.log('s_fake_loss', s_fake_loss)
+            # -- SAMI: This is the causal update step, because we unfreeze the causal student and freeze the critic
             unfreeze(self.model)
             freeze(self.score_fake)
         

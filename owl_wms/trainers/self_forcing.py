@@ -1,11 +1,15 @@
 from __future__ import annotations
+from ast import BoolOp
 import random
 from copy import deepcopy
 from ema_pytorch import EMA
 import torch ; from torch import Tensor
 from typing import Callable, Optional, Any
+import einops as eo
+import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_, get_total_norm
+from torch.nn.parallel import DistributedDataParallel
 from .base import BaseTrainer
 from functools import partial
 from ..models.gamerft_audio import GameRFTAudio
@@ -18,59 +22,29 @@ from ..data import get_loader
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn, make_batched_audio_decode_fn
 from ..schedulers import get_scheduler_cls
 from ..configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
-from torch.nn.parallel import DistributedDataParallel
 import wandb
 from ..utils.logging import LogHelper, to_wandb_av
-from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
-
-def debug_tensor(name: str, tensor: Tensor, step: int = None) -> bool:
-    """
-    Debug helper to check for NaN/Inf and print stats.
-    Returns True if tensor has NaN/Inf (problematic), False if clean.
-    """
-    step_str = f"[Step {step}] " if step is not None else ""
-    
-    # Check for NaN/Inf
-    has_nan = torch.isnan(tensor).any().item()
-    has_inf = torch.isinf(tensor).any().item()
-    
-    if has_nan or has_inf:
-        print(f"🚨 {step_str}{name} - NaN: {has_nan}, Inf: {has_inf}")
-        print(f"   Shape: {tensor.shape}")
-        if has_nan:
-            nan_count = torch.isnan(tensor).sum().item()
-            print(f"   NaN count: {nan_count}/{tensor.numel()}")
-        if has_inf:
-            inf_count = torch.isinf(tensor).sum().item()
-            print(f"   Inf count: {inf_count}/{tensor.numel()}")
-        return True
-    else:
-        # Print stats for clean tensors
-        min_val = tensor.min().item()
-        max_val = tensor.max().item()
-        mean_val = tensor.mean().item()
-        std_val = tensor.std().item()
-        print(f"✅ {step_str}{name} - min: {min_val:.4f}, max: {max_val:.4f}, mean: {mean_val:.4f}, std: {std_val:.4f}")
-        return False
+from ..sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
 
 
 class Loss_SelfForcing(nn.Module):
 
     def __init__(self,
-            teacher_score_fn:   Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
-            critic_score_fn:    Callable[[Tensor, Tensor], tuple[Tensor, Tensor]],
+            teacher:   GameRFTAudio,
+            critic:    GameRFTAudio,
+            student:   GameRFTAudio,
             teacher_cfg_weight: float = 1.3,
             student_cfg_weight: float = 0.0,
             critic_cfg_weight:  float = 0.0,
-            q_sample_fn:        Callable[[Tensor, Tensor], tuple[Tensor, Tensor]] = fwd_rectified_flow,
+            q_sample_fn:        Callable[[Tensor, Tensor, bool], tuple[Tensor, Tensor]] = fwd_rectified_flow,
             normalize:          bool = False,
             normalize_eps: float      = 1e-6,
         ):
         super().__init__()
-        self.q_sample_fn = q_sample_fn
-        self.critic_score_fn    = critic_score_fn
-        self.teacher_score_fn   = teacher_score_fn
-        self.teacher_score_fn   = torch.no_grad()(self.teacher_score_fn)
+        self.q_sample_fn        = q_sample_fn
+        self.critic    = critic
+        self.teacher   = teacher ; freeze(self.teacher)
+        self.student   = student
 
         # -- cfg
         self.teacher_cfg_weight = teacher_cfg_weight
@@ -86,37 +60,47 @@ class Loss_SelfForcing(nn.Module):
             t:                   Tensor,  # [B, N] containing initial denoising timestep for its corresponding frame in scores
             mouse:               Tensor,  # [B, N, 2]
             btn:                 Tensor,  # [B, N, n_buttons]
-            normalize:  Optional[bool] = None,
+            normalize:           Optional[bool] = None,
+            mask_frame_idx:      Optional[int]  = None, # index uptil frames are ignored. "2" will ignore the first two frames
         ) -> dict[str, Tensor]:
-
         normalize               = normalize if normalize is not None else self.normalize
 
-        noisy_causal_clip,  *_  = self.q_sample_fn(causal_latent_video, t)
-        noisy_causal_audio, *_  = self.q_sample_fn(causal_latent_audio, t)
+        if mask_frame_idx is not None:
+            causal_latent_video = causal_latent_video[:, mask_frame_idx:]
+            causal_latent_audio = causal_latent_audio[:, mask_frame_idx:]
+            t                   = t                  [:, mask_frame_idx:]
+            mouse               = mouse              [:, mask_frame_idx:]
+            btn                 = btn                [:, mask_frame_idx:]
+
+        noisy_causal_clip,  *_  = self.q_sample_fn(causal_latent_video, eo.repeat(t, 'b n -> b n 1 1 1'))
+        noisy_causal_audio, *_  = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
         
-        # -- critic score predicts on student noisy data
-        score_clip_critic, score_audio_critic   = self.critic_score_fn(noisy_causal_clip, t,
-                                                                        mouse, btn, noisy_causal_audio,
-                                                                        cfg_weight=self.critic_cfg_weight)
-        # -- teacher predicts on groundtruth noisy data
-        score_clip_teacher, score_audio_teacher = self.teacher_score_fn(noisy_causal_clip, t,
+        # -- teacher predicts on groundtruth noisy data, with cfg
+        score_clip_teacher, score_audio_teacher = self.teacher.score_fn(noisy_causal_clip, t,
                                                                         mouse, btn, noisy_causal_audio,
                                                                         cfg_weight=self.teacher_cfg_weight)
+
+        # -- critic score predicts on student noisy data, without cfg
+        score_clip_critic, score_audio_critic   = self.critic.score_fn(noisy_causal_clip, t,
+                                                                        mouse, btn, noisy_causal_audio,
+                                                                        cfg_weight=self.critic_cfg_weight)
         grad_clip: Tensor  = score_clip_critic  - score_clip_teacher
         grad_audio: Tensor = score_audio_critic - score_audio_teacher
 
         if normalize:
             # normalize by magnitude of real prediction
-            p_gt_clip   = causal_latent_video - score_clip_teacher.detach()
-            p_gt_audio  = causal_latent_audio - score_audio_teacher.detach()
+            p_gt_clip   = causal_latent_video - score_clip_teacher
+            p_gt_audio  = causal_latent_audio - score_audio_teacher
             # --
             normalizer_clip  = torch.abs(p_gt_clip) .mean(dim=[1,2,3,4], keepdim=True)
             normalizer_audio = torch.abs(p_gt_audio).mean(dim=[1,2],     keepdim=True)
             grad_clip .div_(normalizer_clip  + self.normalize_eps).nan_to_num_()
             grad_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
 
-        clip_loss  = 0.5 * (grad_clip  ** 2).mean()
-        audio_loss = 0.5 * (grad_audio ** 2).mean()
+        clip_loss  = 0.5 * F.mse_loss(causal_latent_video.double(),
+                                      causal_latent_video.double() - grad_clip.double())
+        audio_loss = 0.5 * F.mse_loss(causal_latent_audio.double(),
+                                      causal_latent_audio.double() - grad_audio.double())
 
         return {
             'clip_loss':  clip_loss,
@@ -124,99 +108,31 @@ class Loss_SelfForcing(nn.Module):
             'total_loss': clip_loss + audio_loss,
         }
 
-    def _flow(self,
-            causal:       Tensor,  # [B, N, C, H, W]
-            noisy_causal: Tensor,  # [B, N, C, H, W]
-            sigma_:       Tensor,  #
-            full_precision: bool = True
-        ) -> Tensor:
-        prev_dtype = causal.dtype
-        calc_dtype = torch.double if full_precision else causal.dtype
-        # -- cast to higher precision
-        causal      .to(dtype=calc_dtype)
-        noisy_causal.to(dtype=calc_dtype) 
-        sigma_      .to(dtype=calc_dtype)
-
-        return (noisy_causal - causal).div_(sigma_).to(dtype=prev_dtype)
-
-    def loss_flow_prediction(self,         
+    def loss_rectified_flow(self,         
             causal_latent_video: Tensor, # [B, N, C, H, W]
             causal_latent_audio: Tensor, # [B, N, C] 
             t:                   Tensor, # [B, N] containing initial denoising timestep for its corresponding frame in scores
             mouse:               Tensor, # [B, N, 2]
             btn:                 Tensor, # [B, N, n_buttons]
-            normalize:           bool = True,
             debug_step:          int  = 0,
         ) -> dict[str, Tensor]:
-        # see https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/model/dmd.py#L237-L333
-        normalize = normalize if normalize is not None else self.normalize
-        # Throughout training:
-        debug_tensor("input_video", causal_latent_video, debug_step)  # min: -23.1250, max: 16.6250, mean: -11.2500, std: 7.7188
-        debug_tensor("input_audio", causal_latent_audio, debug_step)  # min: -43.7500, max: 42.0000, mean: -2.5312, std: 23.2500
-        debug_tensor("timesteps", t, debug_step)                      # timesteps - min: 0.2500, max: 0.9750, mean: 0.6196, std: 0.2472
+        noisy_causal_clip,  noise_c = self.q_sample_fn(causal_latent_video, eo.repeat(t, 'b n -> b n 1 1 1'))
+        noisy_causal_audio, noise_a = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
+        # TODO SAMI Might be a bit more complicated cause the causal video must be generated with no-grad?
 
-        noisy_causal_clip,  noise_c, *_, sigma_c = self.q_sample_fn(causal_latent_video, t)
-        noisy_causal_audio, noise_a, *_, sigma_a = self.q_sample_fn(causal_latent_audio, t)
-
-        debug_tensor("sigma_c", sigma_c, debug_step) # sigma_c - min: 0.0794, max: 0.9007, mean: 0.4673, std: 0.2757
-        debug_tensor("sigma_a", sigma_a, debug_step) # sigma_a - min: 0.0794, max: 0.9007, mean: 0.4673, std: 0.2757
-        debug_tensor("noisy_clip", noisy_causal_clip, debug_step) # noisy_clip - min: -23.9138, max: 15.3224, mean: -9.2866, std: 6.7524
-        debug_tensor("noisy_audio", noisy_causal_audio, debug_step) # noisy_audio - min: -44.6832, max: 45.6296, mean: -2.0809, std: 19.7656
-        debug_tensor("noise_c", noise_c, debug_step) # noise_c - min: -4.6250, max: 4.5625, mean: -0.0016, std: 1.0000
-        debug_tensor("noise_a", noise_a, debug_step) # noise_a - min: -4.1875, max: 3.9844, mean: 0.0112, std: 0.9961
-
-        # TODO SAMI - I don't understand this, but it seems central to flow loss, so it might be a Claude question:
-        #               we are trying to match the velocity field of the *student* by using this as a target?
-        # 
-        #               My understanding is that this simply moves both the student and critic closer together.
-        #               Therefore, if the critic is closer to the teacher, then we want to update it more frequently
-        #                 (hence the update_ratio is 5:1 critic:causal)
-        target_flow_clip  = noise_c - causal_latent_video 
-        target_flow_audio = noise_a - causal_latent_audio 
-
-        debug_tensor("target_flow_clip", target_flow_clip, debug_step) # target_flow_clip - min: -18.1250, max: 26.0000, mean: 11.1875, std: 7.8125
-        debug_tensor("target_flow_audio", target_flow_audio, debug_step) # target_flow_audio - min: -49.0000, max: 46.7500, mean: 2.5312, std: 23.5000
-
-        score_clip_critic, score_audio_critic = self.critic_score_fn(noisy_causal_clip, t,
-                                                   mouse, btn, noisy_causal_audio,
-                                                   cfg_weight=self.critic_cfg_weight)
-
-        debug_tensor("score_clip_critic", score_clip_critic, debug_step)  #score_clip_critic - min: -27.3312, max: 13.2249, mean: -10.0527, std: 6.5369
-        debug_tensor("score_audio_critic", score_audio_critic, debug_step)  #score_audio_critic - min: -44.0751, max: 43.7929, mean: -2.0275, std: 21.1251
-
-        flow_clip  = self._flow(score_clip_critic,  noisy_causal_clip,  sigma_c, full_precision=True)
-        flow_audio = self._flow(score_audio_critic, noisy_causal_audio, sigma_a, full_precision=True)
-
-        debug_tensor("flow_clip", flow_clip, debug_step) # flow_clip - min: -53.2940, max: 100.3009, mean: 3.7866, std: 10.5843
-        debug_tensor("flow_audio", flow_audio, debug_step) # flow_audio - min: -165.5958, max: 142.6516, mean: -0.3394, std: 27.6600
-
-        if normalize:
-            # -- normalize by magnitude of target
-            normalizer_clip  = torch.abs(target_flow_clip).mean(dim=[1,2,3,4], keepdim=True)
-            normalizer_audio = torch.abs(target_flow_audio).mean(dim=[1,2], keepdim=True)
-            debug_tensor("normalizer_clip", normalizer_clip, debug_step) # normalizer_clip - min: 12.5625, max: 13.3750, mean: 13.1250, std: 0.2754
-            debug_tensor("normalizer_audio", normalizer_audio, debug_step) # normalizer_audio - min: 21.6250, max: 23.3750, mean: 22.7500, std: 0.6055
-            
-            flow_clip .div_(normalizer_clip + self.normalize_eps).nan_to_num_()
-            flow_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
-
-            debug_tensor("flow_clip_normalized", flow_clip, debug_step) # flow_clip_normalized - min: -4.2423, max: 7.5343, mean: 0.2876, std: 0.8041
-            debug_tensor("flow_audio_normalized", flow_audio, debug_step) # flow_audio_normalized - min: -7.1998, max: 6.5966, mean: -0.0150, std: 1.2166
+        velocity_clip_critic, velocity_audio_critic   = self.critic.score_fn(noisy_causal_clip, t,
+                                                                            mouse, btn, noisy_causal_audio,
+                                                                            cfg_weight=self.critic_cfg_weight)
         
-        loss_clip  = torch.mean((flow_clip  - target_flow_clip)  ** 2)  # TODO NOTE: Issue is that flow_clip is normalized by target_flow but then subtracted from it
-        loss_audio = torch.mean((flow_audio - target_flow_audio) ** 2)  # So we get a normalized number divby unnormalized number and it explodes, see loss_clip below
-        total_loss = loss_clip + loss_audio                             # compared to flow_clip above. 
-        
-        debug_tensor("loss_clip", loss_clip, debug_step) # loss_clip - min: 179.5438, max: 179.5438, mean: 179.5438, std: nan
-        debug_tensor("loss_audio", loss_audio, debug_step) # loss_audio - min: 542.1827, max: 542.1827, mean: 542.1827, std: nan
-        debug_tensor("total_loss", total_loss, debug_step) # total_loss - min: 721.7265, max: 721.7265, mean: 721.7265, std: nan
-
+        loss_clip  = F.mse_loss(velocity_clip_critic,  noise_c - causal_latent_video)
+        loss_audio = F.mse_loss(velocity_audio_critic, noise_a - causal_latent_audio)
+        total_loss = loss_clip + loss_audio
+    
         return {
             'clip_loss':  loss_clip,
             'audio_loss': loss_audio,
             'total_loss': total_loss,
         }
-
 
 class SelfForcingTrainer(BaseTrainer):
     def __init__(
@@ -289,8 +205,9 @@ class SelfForcingTrainer(BaseTrainer):
         self.critic_lr: float = self.causal_lr / self.update_ratio
         self.cfg_scale: float = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
         self.t_schedule       = self.train_cfg.t_schedule
-        self.loss_module      = Loss_SelfForcing(self.bidirectional_model.score_fn,
-                                                 self.critic_model.score_fn,
+        self.loss_module      = Loss_SelfForcing(self.bidirectional_model,
+                                                 self.critic_model,
+                                                 self.causal_model,
                                                  teacher_cfg_weight=self.cfg_scale,
                                                  q_sample_fn=fwd_rectified_flow,
                                                  normalize=True)
@@ -298,13 +215,13 @@ class SelfForcingTrainer(BaseTrainer):
         # -- hardware - done after loading models so it casts to bfloat16
         self.device = torch.device("cuda", self.local_rank)
         self.init_hardware()
-
+        self.dtype = torch.bfloat16
         # -- optim tomfoolery, shenanigans, etc. - needs to be done after init_hardware so device casting calls work as intended
         self.ema                = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
         self.opt_causal         = torch.optim.AdamW(self.causal_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.causal_lr}))
         self.opt_critic         = torch.optim.AdamW(self.critic_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.critic_lr}))
-        self.scaler             = torch.amp.GradScaler()
-        self.ctx                = torch.amp.autocast(self.device.type, torch.float32)
+        self.scaler             = torch.amp.GradScaler(enabled = self.dtype != torch.bfloat16)
+        self.ctx                = torch.amp.autocast(self.device.type, self.dtype)
         self.scheduler_causal   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_causal, **self.train_cfg.scheduler_kwargs)
         self.scheduler_critic   = get_scheduler_cls(self.train_cfg.scheduler)(self.opt_critic, **self.train_cfg.scheduler_kwargs)
         
@@ -323,7 +240,7 @@ class SelfForcingTrainer(BaseTrainer):
             num_gen_frames=self.num_gen_frames,
             frame_gradient_cutoff=self.frame_gradient_cutoff,
             training=True,
-            autocast=torch.bfloat16
+            autocast=self.dtype
         )
 
         # -- ddp
@@ -389,7 +306,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         super().save(save_dict)
 
-    def _format_batch(self) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    def _format_batch(self) -> tuple[Tensor, ...]:
         try:
             batch: tuple[Tensor, ...] = next(self.train_loader)
             return tuple(item.to(self.device).float() for item in batch)
@@ -469,22 +386,12 @@ class SelfForcingTrainer(BaseTrainer):
                 commit=True,
             )
 
-    def _construct_primers(self,
-                           clip_bnchw: Tensor,
-                           mouse: Tensor,
-                           btn: Tensor,
-                           audio: Tensor,
-                           num_frames: int) -> dict[str, Tensor]:
-        return dict(latent = clip_bnchw[:, :num_frames],
-                    mouse  = mouse     [:, :num_frames],
-                    btn    = btn       [:, :num_frames],
-                    audio  = audio     [:, :num_frames],)
 
     def _optimizer_step(self,
                         loss: Tensor,
                         optimizer: torch.optim.Optimizer,
                         model: GameRFTAudio,
-                        clip_grad: bool = True) -> None:
+                        clip_grad: bool = True) -> Tensor:
         self.scaler.scale(loss).backward()  ; self.scaler.unscale_(optimizer)
         grad_norm = clip_grad_norm_(model.parameters(), self.max_grad_norm) if clip_grad else get_total_norm(model.parameters())
         self.scaler.step(optimizer)         ; optimizer.zero_grad() ; self.scaler.update()
@@ -495,15 +402,22 @@ class SelfForcingTrainer(BaseTrainer):
                     loss_fn: Callable[[Any], dict[str, Tensor]],
                     optim: torch.optim.Optimizer, 
                     clip_grad: bool = True):
+        assert self.context_len + self.num_gen_frames == self.model_cfg.n_frames, \
+            f'context_len + num_gen_frames must equal n_frames: {self.context_len=} + {self.num_gen_frames=} != {self.model_cfg.n_frames=}'
+        
         optim.zero_grad(set_to_none=True)
 
         clip_bnchw, audio, mouse, btn = self._format_batch()
-        latent_conditions             = self._construct_primers(clip_bnchw, mouse, btn, audio, num_frames=self.context_len)
-        rollout_info                  = self.sampler.autoregressive_rollout(btn               [:, -self.num_gen_frames:],
-                                                                            mouse             [:, -self.num_gen_frames:],
-                                                                            audio             [:, -self.num_gen_frames:],
-                                                                            latent_conditions)
-        # todo - typeddict ?
+        # -- warmup the KV cache with the context frames
+        self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
+                                audio       [:, :self.context_len],
+                                mouse       [:, :self.context_len],
+                                btn         [:, :self.context_len])
+        
+        # -- generate the frames, with the warm cache
+        rollout_info = self.sampler.autoregressive_rollout(btn     [:, -self.num_gen_frames:],
+                                                           mouse   [:, -self.num_gen_frames:],
+                                                           audio   [:, -self.num_gen_frames:])
         loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
                             causal_latent_audio = rollout_info['clean_latents_audio'],
                             t                   = rollout_info['selected_timesteps'],
@@ -525,14 +439,16 @@ class SelfForcingTrainer(BaseTrainer):
 
     def _train_causal_step(self):
         return self._train_step(self.causal_model,
-                                partial(self.loss_module.loss_distribution_matching_distillation, normalize=True),
+                                partial(self.loss_module.loss_distribution_matching_distillation,
+                                        normalize=True,
+                                        mask_frame_idx=1), # ignore the first frame
                                 self.opt_causal)
 
     def _train_critic_step(self):
         return self._train_step(self.critic_model,
-                                partial(self.loss_module.loss_flow_prediction, normalize=False),
+                                self.loss_module.loss_rectified_flow,
                                 self.opt_critic,
-                                clip_grad=False)
+                                clip_grad=True)
 
     def train(self):
         timer = Timer()
@@ -540,7 +456,9 @@ class SelfForcingTrainer(BaseTrainer):
             critic_time: list[float] = []
             info: list[dict]         = []
             with self.ctx:
+                unfreeze(self.causal_model) ; freeze(self.critic_model)
                 info        += [self._train_causal_step()] ; gen_time     = timer.hit()
+                unfreeze(self.critic_model) ; freeze(self.causal_model)
                 for _ in range(self.update_ratio):
                     info    += [self._train_critic_step()] ; critic_time += [timer.hit()]
 
