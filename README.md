@@ -19,6 +19,9 @@ docker run --gpus all -it \
 PyTorch container reference commit:
 https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-04.html
 
+5228986c395dc79f90d2a2b991deea1eef188260 is the PyTorch 25.06 container's commit.
+git format-patch 5228986c395dc79f90d2a2b991deea1eef188260..HEAD --stdout > torch_nightly.patch
+
 **From NVIDIA docker-examples**:
 "
 Apply patches to the source code in NVIDIA's PyTorch container image and to rebuild PyTorch.
