@@ -19,7 +19,7 @@ RUN apt-get update && \
 COPY torch_nightly.patch /tmp
 
 # Change working directory to PyTorch source path
-WORKDIR /opt/pytorch
+WORKDIR /opt/pytorch/pytorch
 
 # Apply modifications
 RUN patch -p1 < /tmp/torch_nightly.patch
@@ -52,3 +52,11 @@ RUN python -m pip install -r requirements.txt
 RUN git submodule update --init --recursive
 
 CMD ["/bin/bash"]
+
+The text leading up to this was:
+    --------------------------
+    |diff --git a/torch/onnx/ops/_symbolic_impl.py b/torch/onnx/ops/_symbolic_impl.py
+    |index 7dd1370720a..4876612ad97 100644
+    |--- a/torch/onnx/ops/_symbolic_impl.py
+    |+++ b/torch/onnx/ops/_symbolic_impl.py
+    --------------------------
