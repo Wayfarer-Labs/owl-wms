@@ -104,7 +104,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
 
     try:
-        profile_torch_compile_inductor(copy.deepcopy(world_model), copy.deepcopy(img_dec), copy.deepcopy(audio_dec), dummy, dummy_pred_audio)
+        # profile_torch_compile_inductor(copy.deepcopy(world_model), copy.deepcopy(img_dec), copy.deepcopy(audio_dec), dummy, dummy_pred_audio)
 
         profile_torch_compile_inductor_fp8_torchao(copy.deepcopy(world_model), copy.deepcopy(img_dec), copy.deepcopy(audio_dec), dummy, dummy_pred_audio)
     except Exception as e:
