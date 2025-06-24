@@ -15,6 +15,11 @@ RUN apt-get update && \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /tmp
+RUN git clone git@github.com:pytorch/pytorch.git
+
+79aa17489c3fc5ed6d5e972e9ffddf73e6dd0a5c
+
 # Bring in changes from outside container to /tmp (assumes my-pytorch-modifications.patch is in same directory as Dockerfile)
 COPY torch_nightly.patch /tmp
 
@@ -22,7 +27,7 @@ COPY torch_nightly.patch /tmp
 WORKDIR /opt/pytorch/pytorch
 
 # Apply modifications
-RUN patch -p1 < /tmp/torch_nightly.patch
+RUN patch -p1 --force --ignore-whitespace < /tmp/torch_nightly.patch
 
 # Rebuild PyTorch
 RUN cd pytorch && \
@@ -52,11 +57,3 @@ RUN python -m pip install -r requirements.txt
 RUN git submodule update --init --recursive
 
 CMD ["/bin/bash"]
-
-The text leading up to this was:
-    --------------------------
-    |diff --git a/torch/onnx/ops/_symbolic_impl.py b/torch/onnx/ops/_symbolic_impl.py
-    |index 7dd1370720a..4876612ad97 100644
-    |--- a/torch/onnx/ops/_symbolic_impl.py
-    |+++ b/torch/onnx/ops/_symbolic_impl.py
-    --------------------------
