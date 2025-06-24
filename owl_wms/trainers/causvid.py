@@ -166,7 +166,7 @@ class CausVidTrainer(BaseTrainer):
 
         # Simplifiying assumptions: data will never stop iter, no grad accum
 
-        def sample_from_gen(vid, mouse, btn):
+        def sample_from_gen(vid, mouse, btn):  # Returns real video, cause noise - velocity
             model_out = self.model(vid, mouse, btn, return_dict = True)
             ts = model_out['ts'][:,None,None,None] # [b,n,c,h,w]
             lerpd = model_out['lerpd'] # [b,n,c,h,w]
@@ -175,7 +175,9 @@ class CausVidTrainer(BaseTrainer):
             samples = lerpd - pred*ts
             return samples
 
-        def get_dmd_loss(vid, mouse, btn):
+        def get_dmd_loss(vid, # sampled from student, real videos and not velocities
+                         mouse,
+                         btn,):
             s_real_fn = self.score_real.core
             s_fake_fn = self.score_fake.module.core
 
@@ -187,16 +189,17 @@ class CausVidTrainer(BaseTrainer):
             
             # NOTE SAMI: looks like rectified flow (linear interpolation)
             # ----- TEACHER CFG+Rectified Flow
-            lerpd = vid * (1. - ts_exp) + z * ts_exp
+            # keep track of the noise. "z" is only used in lerpd, so we can ignore the noise from q-sample-fn
+            lerpd = vid * (1. - ts_exp) + z * ts_exp # noisy_causal_clip 
 
             null_mouse = torch.zeros_like(mouse)
             null_btn = torch.zeros_like(btn)
 
             s_real_uncond = s_real_fn(lerpd, ts, null_mouse, null_btn)
             s_real_cond = s_real_fn(lerpd, ts, mouse, btn)
-            s_real = s_real_uncond + self.cfg_scale * (s_real_cond - s_real_uncond)
+            s_real = s_real_uncond + self.cfg_scale * (s_real_cond - s_real_uncond) # -- correct so far
             # ----- Critic Rectified Flow, no CFG needed?
-            s_fake = s_fake_fn(lerpd, ts, mouse, btn)
+            s_fake = s_fake_fn(lerpd, ts, mouse, btn) # critic.core(noised_clip), no cfg, correct so far.
 
             grad = (s_fake - s_real)
 
@@ -228,8 +231,10 @@ class CausVidTrainer(BaseTrainer):
                 with ctx:
                     with torch.no_grad():
                         samples = sample_from_gen(batch_vid, batch_mouse, batch_btn)
-                        # -- SAMI: This calculates RF Loss:         # F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
-                    s_fake_loss = self.score_fake(samples, batch_mouse, batch_btn)
+                        # -- SAMI: This calculates RF Loss: F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
+                    # this is gamerft.fwd which is mse(pred_velocity, noise - samples),
+                    # pred_velocity comes from gamerft.core(noise_video,). NOTE: This looks right on my end
+                    s_fake_loss = self.score_fake(samples, batch_mouse, batch_btn) # this loss is mse(velocity_pred, noise - video)
 
                 optimizer_step(s_fake_loss, self.score_fake, self.s_fake_scaler, self.s_fake_opt)
 
@@ -240,7 +245,7 @@ class CausVidTrainer(BaseTrainer):
         
             batch_vid, batch_mouse, batch_btn = next(loader)
             with ctx:
-                samples = sample_from_gen(batch_vid, batch_mouse, batch_btn)
+                samples = sample_from_gen(batch_vid, batch_mouse, batch_btn) # autoreg rollout *frames* not velocities
                 dmd_loss = get_dmd_loss(samples, batch_mouse, batch_btn)
                 metrics.log('dmd_loss', dmd_loss)
                 

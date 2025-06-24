@@ -69,7 +69,7 @@ class GameRFTAudioCore(nn.Module):
         # Project audio tokens
         audio = eo.rearrange(audio, 'b n 1 d -> b n d')
         audio = self.audio_proj_out(audio, cond)
-
+        # TODO returns VELOCITIES and not the actual audio and video
         return video, audio
 
 class GameRFTAudio(nn.Module):
@@ -79,7 +79,7 @@ class GameRFTAudio(nn.Module):
         self.core = GameRFTAudioCore(config)
         self.cfg_prob = config.cfg_prob
     
-    def score_fn(self,
+    def velocity_fn(self,
                 x_t:   torch.Tensor,       # [B, N, C, H, W] noisy video latents
                 t:     torch.Tensor,       # [B, N] or scalar
                 mouse: torch.Tensor | None = None,
@@ -89,7 +89,7 @@ class GameRFTAudio(nn.Module):
                 attn_mask: Tensor   | None = None,
                 cfg_weight: float          = 0.0) -> tuple[Tensor, Tensor]:
         """
-        Return ε-score with optional CFG
+        Return velocities with optional CFG
         """
         B, N, _, _, _ = x_t.shape
 
@@ -100,20 +100,19 @@ class GameRFTAudio(nn.Module):
         if btn is None:
             btn   = torch.zeros(B, N, self.config.n_buttons, device=x_t.device, dtype=x_t.dtype)
 
-
-        score_video_cond, score_audio_cond = self.core(x_t, audio, t, mouse, btn, kv_cache)
+        velocity_video_cond, velocity_audio_cond = self.core(x_t, audio, t, mouse, btn, kv_cache)
 
         if cfg_weight > 0.0:
             null_mouse  = torch.zeros_like(mouse)
             null_btn    = torch.zeros_like(btn)
-            score_video_uncond, score_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache, attn_mask)
+            velocity_video_uncond, velocity_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache, attn_mask)
             # -- apply cfg
-            score_video = score_video_uncond + cfg_weight * (score_video_cond - score_video_uncond)
-            score_audio = score_audio_uncond + cfg_weight * (score_audio_cond - score_audio_uncond)
+            velocity_video = velocity_video_uncond + cfg_weight * (velocity_video_cond - velocity_video_uncond)
+            velocity_audio = velocity_audio_uncond + cfg_weight * (velocity_audio_cond - velocity_audio_uncond)
         else:
-            score_video, score_audio = score_video_cond, score_audio_cond
+            velocity_video, velocity_audio = velocity_video_cond, velocity_audio_cond
         
-        return score_video, score_audio
+        return velocity_video, velocity_audio
 
 
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None, additive_attn_mask = None):
@@ -159,17 +158,18 @@ class GameRFTAudio(nn.Module):
             # calculates rectified flow velocity, distance from noise to clean
             lerpd_audio = audio * (1. - ts_exp_audio) + z_audio * ts_exp_audio
             target_audio = z_audio - audio
-            
+        
+        # NOTE this is the velocity not the actual video
         pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn, additive_attn_mask)
         # F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)
         diff_loss = video_loss + audio_loss
 
-        if not return_dict:
+        if not return_dict:  # this trains with Rectified Flow (matching velocities) in AVRFTTrainer
             return diff_loss
         else:
-            return {
+            return {  # this is for CausVid, it fetches lerpd (noise) and pred (velocity?)
                 'diffusion_loss': diff_loss,
                 'video_loss': video_loss,
                 'audio_loss': audio_loss,

@@ -119,7 +119,7 @@ class AV_WindowInferencePipeline:
             ts_batch = torch.cat([ts, ts], dim=0)
 
             video_rollout, audio_rollout = self.model(x_batch,a_batch,ts_batch,mouse_batch,btn_batch)
-
+            # TODO SAMI: WTFFF is this doing? Is this even right???
             cond_pred_video, uncond_pred_video = video_rollout.chunk(2)
             cond_pred_audio, uncond_pred_audio = audio_rollout.chunk(2)
 

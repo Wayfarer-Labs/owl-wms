@@ -39,6 +39,7 @@ class Loss_SelfForcing(nn.Module):
             q_sample_fn:        Callable[[Tensor, Tensor, bool], tuple[Tensor, Tensor]] = fwd_rectified_flow,
             normalize:          bool = False,
             normalize_eps: float      = 1e-6,
+            debug_basic: bool = False,
         ):
         super().__init__()
         self.q_sample_fn        = q_sample_fn
@@ -53,7 +54,7 @@ class Loss_SelfForcing(nn.Module):
         # -- 
         self.normalize          = normalize
         self.normalize_eps      = normalize_eps
-
+        self.debug_basic        = debug_basic
     def loss_distribution_matching_distillation(self,
             causal_latent_video: Tensor,  # [B, N, C, H, W]
             causal_latent_audio: Tensor,  # [B, N, C] 
@@ -63,10 +64,15 @@ class Loss_SelfForcing(nn.Module):
             normalize:           Optional[bool] = None,
             mask_frame_idx:      Optional[int]  = None, # index uptil frames are ignored. "2" will ignore the first two frames
         ) -> dict[str, Tensor]:
+
+        assert sum(x.numel() for x in self.critic.parameters() if x.requires_grad) == 0, 'critic must be frozen'
+        assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) > 0, 'student must not be frozen'
+        assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
+        
         normalize               = normalize if normalize is not None else self.normalize
 
         if mask_frame_idx is not None:
-            causal_latent_video = causal_latent_video[:, mask_frame_idx:]
+            causal_latent_video = causal_latent_video[:, mask_frame_idx:] # -- causvid: 178: vid
             causal_latent_audio = causal_latent_audio[:, mask_frame_idx:]
             t                   = t                  [:, mask_frame_idx:]
             mouse               = mouse              [:, mask_frame_idx:]
@@ -76,31 +82,34 @@ class Loss_SelfForcing(nn.Module):
         noisy_causal_audio, *_  = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
         
         # -- teacher predicts on groundtruth noisy data, with cfg
-        score_clip_teacher, score_audio_teacher = self.teacher.score_fn(noisy_causal_clip, t,
+        velocity_clip_teacher, velocity_audio_teacher = self.teacher.velocity_fn(noisy_causal_clip, t,
                                                                         mouse, btn, noisy_causal_audio,
-                                                                        cfg_weight=self.teacher_cfg_weight)
+                                                                        cfg_weight=self.teacher_cfg_weight) # -- causvid: 200: s_real
+        if self.debug_basic:
+            velocity_clip_teacher = torch.zeros_like(velocity_clip_teacher)
+            velocity_audio_teacher = torch.zeros_like(velocity_audio_teacher)
 
         # -- critic score predicts on student noisy data, without cfg
-        score_clip_critic, score_audio_critic   = self.critic.score_fn(noisy_causal_clip, t,
+        velocity_clip_critic, velocity_audio_critic   = self.critic.velocity_fn(noisy_causal_clip, t,
                                                                         mouse, btn, noisy_causal_audio,
-                                                                        cfg_weight=self.critic_cfg_weight)
-        grad_clip: Tensor  = score_clip_critic  - score_clip_teacher
-        grad_audio: Tensor = score_audio_critic - score_audio_teacher
-
+                                                                        cfg_weight=self.critic_cfg_weight) # -- casuvid: 202: s_fake
+        
+        grad_clip  = (velocity_clip_critic  - velocity_clip_teacher)
+        grad_audio = (velocity_audio_critic - velocity_audio_teacher)
+        
         if normalize:
-            # normalize by magnitude of real prediction
-            p_gt_clip   = causal_latent_video - score_clip_teacher
-            p_gt_audio  = causal_latent_audio - score_audio_teacher
-            # --
-            normalizer_clip  = torch.abs(p_gt_clip) .mean(dim=[1,2,3,4], keepdim=True)
-            normalizer_audio = torch.abs(p_gt_audio).mean(dim=[1,2],     keepdim=True)
-            grad_clip .div_(normalizer_clip  + self.normalize_eps).nan_to_num_()
-            grad_audio.div_(normalizer_audio + self.normalize_eps).nan_to_num_()
+            p_real_clip     = (causal_latent_video - velocity_clip_teacher)
+            normalizer_clip = torch.abs(p_real_clip) .mean(dim=[1,2,3,4], keepdim=True)
+            grad_clip       = grad_clip / (normalizer_clip + self.normalize_eps)
 
-        clip_loss  = 0.5 * F.mse_loss(causal_latent_video.double(),
-                                      causal_latent_video.double() - grad_clip.double())
+            p_real_audio     = (causal_latent_audio - velocity_audio_teacher)
+            normalizer_audio = torch.abs(p_real_audio).mean(dim=[1,2],     keepdim=True)
+            grad_audio       = grad_audio / (normalizer_audio + self.normalize_eps)
+
+        clip_loss  = 0.5 * F.mse_loss(causal_latent_video.double(), 
+                                      causal_latent_video.double() - grad_clip.double())  # -- causvid: 212
         audio_loss = 0.5 * F.mse_loss(causal_latent_audio.double(),
-                                      causal_latent_audio.double() - grad_audio.double())
+                                      causal_latent_audio.double() - grad_audio.double()) # -- causvid: 212
 
         return {
             'clip_loss':  clip_loss,
@@ -114,13 +123,16 @@ class Loss_SelfForcing(nn.Module):
             t:                   Tensor, # [B, N] containing initial denoising timestep for its corresponding frame in scores
             mouse:               Tensor, # [B, N, 2]
             btn:                 Tensor, # [B, N, n_buttons]
-            debug_step:          int  = 0,
         ) -> dict[str, Tensor]:
+        assert sum(x.numel() for x in self.critic.parameters() if x.requires_grad) > 0, 'critic must not be frozen'
+        assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) == 0, 'student must be frozen'
+        assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
+        
         noisy_causal_clip,  noise_c = self.q_sample_fn(causal_latent_video, eo.repeat(t, 'b n -> b n 1 1 1'))
         noisy_causal_audio, noise_a = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
         # TODO SAMI Might be a bit more complicated cause the causal video must be generated with no-grad?
 
-        velocity_clip_critic, velocity_audio_critic   = self.critic.score_fn(noisy_causal_clip, t,
+        velocity_clip_critic, velocity_audio_critic   = self.critic.velocity_fn(noisy_causal_clip, t,
                                                                             mouse, btn, noisy_causal_audio,
                                                                             cfg_weight=self.critic_cfg_weight)
         
@@ -401,13 +413,20 @@ class SelfForcingTrainer(BaseTrainer):
                     model: GameRFTAudio,
                     loss_fn: Callable[[Any], dict[str, Tensor]],
                     optim: torch.optim.Optimizer, 
-                    clip_grad: bool = True):
+                    clip_grad: bool = True,
+                    debug_basic: bool = False):
         assert self.context_len + self.num_gen_frames == self.model_cfg.n_frames, \
             f'context_len + num_gen_frames must equal n_frames: {self.context_len=} + {self.num_gen_frames=} != {self.model_cfg.n_frames=}'
         
         optim.zero_grad(set_to_none=True)
 
         clip_bnchw, audio, mouse, btn = self._format_batch()
+        if debug_basic:
+            clip_bnchw = torch.zeros_like(clip_bnchw)
+            audio = torch.zeros_like(audio)
+            mouse = torch.zeros_like(mouse)
+            btn = torch.zeros_like(btn)
+
         # -- warmup the KV cache with the context frames
         self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
                                 audio       [:, :self.context_len],
@@ -442,13 +461,15 @@ class SelfForcingTrainer(BaseTrainer):
                                 partial(self.loss_module.loss_distribution_matching_distillation,
                                         normalize=True,
                                         mask_frame_idx=1), # ignore the first frame
-                                self.opt_causal)
+                                self.opt_causal,
+                                debug_basic=True)
 
     def _train_critic_step(self):
         return self._train_step(self.critic_model,
                                 self.loss_module.loss_rectified_flow,
                                 self.opt_critic,
-                                clip_grad=True)
+                                clip_grad=True,
+                                debug_basic=True)
 
     def train(self):
         timer = Timer()

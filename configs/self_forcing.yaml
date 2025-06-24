@@ -16,7 +16,7 @@ model:
 
 train:
   trainer_id: self_forcing
-  t_schedule: [0.975, .75, .5, .25]
+  t_schedule: [1.0, .75, .5, .25]
   frame_gradient_cutoff: 28 # TODO set this carefully in case it interferes with context length and num_gen_frames
   latent_shape: [128, 4, 4]
   scheduler: constant
@@ -32,15 +32,15 @@ train:
     bucket_name: cod-data-latent-360x640to4x4
 
   # ---------- batching ----------
-  target_batch_size: 64     # effective (across GPUs × grad-accum)
-  batch_size: 8             # clips / GPU
+  target_batch_size: 100     # effective (across GPUs × grad-accum)
+  batch_size: 10     # clips / GPU
   epochs: 200
 
   # ---------- optimizer ----------
   opt: AdamW
   opt_kwargs:
-    lr: 1.0e-6               # made this up
-    weight_decay: 0.0005     # made this up
+    lr: 1.0e-5               # made this up
+    weight_decay: 0.0     # made this up
     eps: 1.0e-8              # paper value
     betas: [0.0, 0.999]      # paper value
 

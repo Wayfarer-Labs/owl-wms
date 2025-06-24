@@ -14,7 +14,8 @@ def fwd_rectified_flow(x: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> 
     if x.ndim == 3: assert tuple(t.shape) == (x.shape[0], x.shape[1], 1)
 
     noise = noise or torch.randn_like(x)
-    return (1-t).mul(x) + (t).mul(noise), noise
+    noise = noise.requires_grad_(False)
+    return (1.-t).mul(x) + (t).mul(noise), noise
 
 def _truncate_if_overflow(kv_cache: KVCache) -> None:
     # number of frames that the cache has overflown by
@@ -23,6 +24,8 @@ def _truncate_if_overflow(kv_cache: KVCache) -> None:
     cache_overflow = (len(kv_cache) - kv_cache.max_length) // kv_cache.tokens_per_frame
     if cache_overflow > 0: kv_cache.truncate(cache_overflow)
 
+def delta_t(t: float, n_steps: int) -> float:
+    return 1. / n_steps
 
 class SelfForcingSampler:
     def __init__(self,
@@ -108,8 +111,6 @@ class SelfForcingSampler:
         #                     would be the Key and Value. As long as those get computed, we will get cache benefits,
         #                     and not whether we generate a valid output.
         # TODO: This should not be a separate step, I believe that this is done auto-regressively automatically.
-
-        tokens_per_context = self.context_len * self.tokens_per_frame
         
         clean_latents_video, clean_latents_audio = [], []  # N frames, one for each N
         selected_timesteps                       = []      # N values, one for each t sampled from t_schedule
@@ -127,12 +128,14 @@ class SelfForcingSampler:
             # generation degrades once it is no longer in context, which harms long video generation
 
             for t in reversed(t_schedule):
+                dt = delta_t(t, len(t_schedule)) # for now this is just 1./t but we can replace w euler later
+
                 keep_grad = grad_frame and (t == s_t) and self.training
                 grad_ctxt = torch.enable_grad() if keep_grad else torch.no_grad()
                 
                 with torch.autocast(device_type=device.type, dtype=self.autocast), grad_ctxt:
                     self.kv_cache.disable_cache_updates() # -- do not update cache while we are denoising?
-                    x_0, audio_0 = self.model.core(
+                    velocity_x_t, velocity_audio_t = self.model.core(
                         x                  = x_t,
                         audio              = audio_t,
                         t                  = t * torch.ones((self.batch_size, 1), device=self.device),
@@ -140,12 +143,9 @@ class SelfForcingSampler:
                         btn                = btn   [:, i:i+1],
                         kv_cache           = self.kv_cache
                     )
+                    x_t     = x_t       - (dt * velocity_x_t)
+                    audio_t = audio_t   - (dt * velocity_audio_t)
 
-                # move to the previous timestep unless we hit t=0
-                if t != 0 and t != s_t:
-                    x_t,     *_ = fwd_rectified_flow(x_0,     t * torch.ones((B, F, 1, 1, 1), device=x_t.device))
-                    audio_t, *_ = fwd_rectified_flow(audio_0, t * torch.ones((B, F, 1),       device=audio_0.device))
-                
                 # https://arxiv.org/pdf/2506.08009 last paragraph of Section 3.2
                 # use the denoised output of the s-th step as the final output
                 if t == 0 or t == s_t:
@@ -153,8 +153,8 @@ class SelfForcingSampler:
                     self.kv_cache.enable_cache_updates()
                     with torch.no_grad():
                         _ = self.model.core(
-                            x                  = x_0,
-                            audio              = audio_0,
+                            x                  = x_t,
+                            audio              = audio_t,
                             t                  = torch.zeros((self.batch_size, 1), device=self.device),
                             mouse              = mouse [:, i:i+1],
                             btn                = btn   [:, i:i+1],
@@ -165,8 +165,8 @@ class SelfForcingSampler:
 
             # -- technically, it is always keep_grad by the time we get here, because we break
             # right after our sampled timestep s
-            clean_latents_video += [x_0     if keep_grad else x_0    .detach()]
-            clean_latents_audio += [audio_0 if keep_grad else audio_0.detach()]
+            clean_latents_video += [x_t]
+            clean_latents_audio += [audio_t]
             selected_timesteps  += [t]  # technically always equal to s_t
             
         return {
