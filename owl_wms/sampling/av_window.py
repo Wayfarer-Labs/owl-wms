@@ -31,7 +31,13 @@ class AVWindowSampler:
         self.only_return_generated = only_return_generated
 
     @torch.no_grad()
-    def __call__(self, model, dummy_batch, audio, mouse, btn, decode_fn = None, audio_decode_fn = None, image_scale = 1, audio_scale = 1):
+    def __call__(self,
+                 model,
+                 dummy_batch,
+                 audio,
+                 mouse,
+                 btn,
+                 decode_fn = None, audio_decode_fn = None, image_scale = 1, audio_scale = 1):
         # dummy_batch is [b,n,c,h,w]
         # audio is [b,n,c] and should be treated same as video (it'e being generated)
         # mouse is [b,n,2]

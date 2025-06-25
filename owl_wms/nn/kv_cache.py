@@ -14,7 +14,7 @@ class KVCache:
         self.tokens_per_frame = config.tokens_per_frame
         self.should_update = False
 
-        self.max_length = self.tokens_per_frame * config.n_frames
+        self.max_length = self.tokens_per_frame * config.context_length
         self.noise_caches = 0.0
 
     def enable_cache_updates(self): # TODO Does this do anything..?

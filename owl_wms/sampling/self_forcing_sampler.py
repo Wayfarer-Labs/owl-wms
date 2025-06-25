@@ -7,7 +7,7 @@ from owl_wms.models.gamerft_audio       import GameRFTAudio
 from owl_wms.nn.kv_cache                import KVCache
 from owl_wms.configs                    import TransformerConfig as ModelConfig
 from owl_wms.utils.flow_match_scheduler import FlowMatchScheduler
-
+from contextlib import nullcontext
 
 def fwd_rectified_flow(x: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
     if x.ndim == 5: assert tuple(t.shape) == (x.shape[0], x.shape[1], 1, 1, 1)
@@ -27,6 +27,11 @@ def _truncate_if_overflow(kv_cache: KVCache) -> None:
 def delta_t(t: float, n_steps: int) -> float:
     return 1. / n_steps
 
+def _repeat_on_dim(x: Tensor, dim: int, n: int, *, repeat_as_null: bool = False) -> Tensor:
+    repeat_as = x if not repeat_as_null else torch.zeros_like(x)
+    repeats   = [repeat_as] * n
+    return torch.cat([x, *repeats], dim=dim)
+
 class SelfForcingSampler:
     def __init__(self,
             model: GameRFTAudio,
@@ -38,7 +43,8 @@ class SelfForcingSampler:
             frame_gradient_cutoff: int = 8,
             num_gen_frames: int = 64,
             training: bool = False,
-            autocast: torch.dtype = torch.bfloat16
+            autocast: torch.dtype = torch.bfloat16,
+            cfg_scale: float = 1.3,
         ):
         self.training = training
         self.autocast = autocast
@@ -55,10 +61,10 @@ class SelfForcingSampler:
         self.context_len = context_len
         self.latent_shape = latent_shape
         self.num_gen_frames = num_gen_frames
-    
+        self.cfg_scale = cfg_scale
         # -- gradient optimisation
         self.kv_cache = KVCache(self.model_config, rank=self.device.index).to(device=self.device.type, rank=self.device.index)
-        self.kv_cache.reset(self.batch_size)
+        self.kv_cache.reset(self.batch_size * 2) # NOTE our batch-size doubles for classifier-free guidance cause we do (cat uncond cond) on the batchdim
         self.frame_gradient_cutoff = frame_gradient_cutoff
         self.start_grad_at = max(0, self.num_gen_frames - self.frame_gradient_cutoff)
         if self.start_grad_at <= 0:
@@ -70,28 +76,30 @@ class SelfForcingSampler:
     @torch.no_grad()
     def _warmup_kv(self, clip_bnchw: Tensor, audio: Tensor, mouse: Tensor, btn: Tensor):
         """Fill rolling KV cache without tracking grads."""
-        self.kv_cache.reset(self.batch_size)
+        self.kv_cache.reset(self.batch_size * 2) # NOTE doubles for cfg 
         self.kv_cache.enable_cache_updates()
         num_frames = clip_bnchw.shape[1]
 
         for frame_idx in range(num_frames):
-            _ = self.model.core(
-                x        = clip_bnchw  [:, frame_idx:frame_idx+1],
+            _ = self.model.velocity_fn(
+                x_t      = clip_bnchw  [:, frame_idx:frame_idx+1],
                 audio    = audio       [:, frame_idx:frame_idx+1],
                 t        = torch.zeros((self.batch_size, 1), device=self.device),
                 mouse    = mouse       [:, frame_idx:frame_idx+1],
                 btn      = btn         [:, frame_idx:frame_idx+1],
                 kv_cache = self.kv_cache,
+                cfg_weight = self.cfg_scale,
             )
         self.kv_cache.disable_cache_updates()
         _truncate_if_overflow(self.kv_cache)
+
 
     def autoregressive_rollout(self,
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor) -> dict[str, Tensor]:
-        assert btn.shape[1] == mouse.shape[1] == audio.shape[1] == self.num_gen_frames, \
-            f'btn, mouse, and audio must have the same number of frames: \
+        assert btn.shape[1] == mouse.shape[1] == self.num_gen_frames, \
+            f'btn, mouse (history data) must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
         
         B             = self.batch_size
@@ -103,71 +111,60 @@ class SelfForcingSampler:
         F             = getattr(self, 'frames_per_chunk', 1) # number of frames to process in one chunk. didnt implement this yet lol i dont wanna scroll up
         start_grad_at = self.start_grad_at  # frame_idx past which we start keeping track of grads (vanishing error accumulation horizon)        
 
-        # TODO is KV-Cache warmed up with a randomly generated t? No, it is generated with t=0.
-        # See https://github.com/guandeh17/Self-Forcing/blob/a93f2f80ce60f4b022b0340d0026fca24d4f72a2/pipeline/self_forcing_training.py#L114-L128
-        # And it doesn't matter, see below:
-        # TODO is the initial conditioning noised? otherwise, we aren't denoising anything?
-        #      ANSWER - SAMI: I think it doesn't matter if our denoising is valid, because the noise would be the Query and the latents
-        #                     would be the Key and Value. As long as those get computed, we will get cache benefits,
-        #                     and not whether we generate a valid output.
-        # TODO: This should not be a separate step, I believe that this is done auto-regressively automatically.
-        
         clean_latents_video, clean_latents_audio = [], []  # N frames, one for each N
         selected_timesteps                       = []      # N values, one for each t sampled from t_schedule
-        s_t         = random.choice(t_schedule)            # chosen step to keep grads on for - TODO It seems s is sampled a "train_step" level meaning at batch level, otherwise kv cache frames wont be fully denoised
+        s_t         = random.choice(t_schedule)            # chosen step to keep grads on for - does this need to be broadcast per gpu? I don't think so cause they dont have duplicate batches
 
         for i in range(N):
             # -- ignore gradients for frames that are too far backwards, as calculated by frame_gradient_cutoff
             # in self-forcing's repo this never happens as per their config.
-            grad_frame  = i >= start_grad_at                        # last L₁ frames
+            grad_frame  = i >= start_grad_at
             x_t         = torch.randn(B, F, C, H, W, device=device) # sample x_t at the *largest* timestep
             audio_t     = torch.randn(B, F, A,       device=device)
-            
-            # -- prevent the final generation from attending to first frame.
-            # since the first frame has unique statistical properties (it has no temporal compression),
-            # generation degrades once it is no longer in context, which harms long video generation
 
+            self.kv_cache.disable_cache_updates() # do not update cache while we are denoising
             for t in reversed(t_schedule):
-                dt = delta_t(t, len(t_schedule)) # for now this is just 1./t but we can replace w euler later
+                dt = delta_t(t, len(t_schedule))      # for now this is just 1./t but we can replace w euler later
 
                 keep_grad = grad_frame and (t == s_t) and self.training
-                grad_ctxt = torch.enable_grad() if keep_grad else torch.no_grad()
-                
-                with torch.autocast(device_type=device.type, dtype=self.autocast):
-                    self.kv_cache.disable_cache_updates() # -- do not update cache while we are denoising?
-                    velocity_x_t, velocity_audio_t = self.model.core(
-                        x                  = x_t,
+                grad_ctxt = nullcontext() if keep_grad else torch.no_grad()
+                # -- rectified flow denoising step with no_grad if we are not on the selected s_t
+                with torch.autocast(device_type=device.type, dtype=self.autocast), grad_ctxt:
+                    velocity_x_t, velocity_audio_t = self.model.velocity_fn(
+                        x_t                = x_t,
                         audio              = audio_t,
-                        t                  = t * torch.ones((self.batch_size, 1), device=self.device),
+                        t                  = t * torch.ones((self.batch_size, F), device=self.device),
                         mouse              = mouse [:, i:i+1],
                         btn                = btn   [:, i:i+1],
-                        kv_cache           = self.kv_cache
+                        kv_cache           = self.kv_cache,
+                        cfg_weight         = self.cfg_scale,
                     )
-                    x_t     = x_t       - (dt * velocity_x_t)
-                    audio_t = audio_t   - (dt * velocity_audio_t)
 
+                    x_t     = x_t     - (dt * velocity_x_t)
+                    audio_t = audio_t - (dt * velocity_audio_t)
+                
                 # https://arxiv.org/pdf/2506.08009 last paragraph of Section 3.2
                 # use the denoised output of the s-th step as the final output
-                if t == 0 or t == s_t:
-                    # update kv-cache by re-running with cleaned frames (line 13 in Algorithm 1)
-                    self.kv_cache.enable_cache_updates()
-                    with torch.no_grad():
-                        _ = self.model.core(
-                            x                  = x_t,
-                            audio              = audio_t,
-                            t                  = torch.zeros((self.batch_size, 1), device=self.device),
-                            mouse              = mouse [:, i:i+1],
-                            btn                = btn   [:, i:i+1],
-                            kv_cache           = self.kv_cache,
-                        )
-                    _truncate_if_overflow(self.kv_cache)
-                    break
+                if t == s_t: break
+
+            # -- update kv cache with clean frames (line 13, Algorithm 1)
+            self.kv_cache.enable_cache_updates()
+            with torch.no_grad():
+                _ = self.model.velocity_fn(
+                    x_t                = x_t,
+                    audio              = audio_t,
+                    t                  = torch.zeros((self.batch_size, F), device=self.device),
+                    mouse              = mouse [:, i:i+1],
+                    btn                = btn   [:, i:i+1],
+                    kv_cache           = self.kv_cache,
+                    cfg_weight         = self.cfg_scale,
+                )
 
             # -- technically, it is always keep_grad by the time we get here, because we break
             # right after our sampled timestep s
             clean_latents_video += [x_t]
             clean_latents_audio += [audio_t]
-            selected_timesteps  += [t]  # technically always equal to s_t
+            selected_timesteps  += [s_t]
             
         return {
             'clean_latents_video':  torch.cat(clean_latents_video, dim=1),

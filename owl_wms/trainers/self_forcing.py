@@ -55,6 +55,7 @@ class Loss_SelfForcing(nn.Module):
         self.normalize          = normalize
         self.normalize_eps      = normalize_eps
         self.debug_basic        = debug_basic
+
     def loss_distribution_matching_distillation(self,
             causal_latent_video: Tensor,  # [B, N, C, H, W]
             causal_latent_audio: Tensor,  # [B, N, C] 
@@ -205,6 +206,8 @@ class SelfForcingTrainer(BaseTrainer):
                                          self.train_cfg.batch_size,
                                          **self.train_cfg.data_kwargs)
         self.train_loader   = iter(self.train_loader)
+        self.vae_scale      = self.train_cfg.vae_scale
+        self.audio_scale    = self.train_cfg.audio_vae_scale
         
         # -- dmd2-style loss (https://arxiv.org/pdf/2405.14867) 
         # - two time-scale update rule (section 4.2)
@@ -252,7 +255,8 @@ class SelfForcingTrainer(BaseTrainer):
             num_gen_frames=self.num_gen_frames,
             frame_gradient_cutoff=self.frame_gradient_cutoff,
             training=True,
-            autocast=self.dtype
+            autocast=self.dtype,
+            cfg_scale=self.cfg_scale,
         )
 
         # -- ddp
@@ -321,7 +325,14 @@ class SelfForcingTrainer(BaseTrainer):
     def _format_batch(self) -> tuple[Tensor, ...]:
         try:
             batch: tuple[Tensor, ...] = next(self.train_loader)
-            return tuple(item.to(self.device).float() for item in batch)
+            clip_bnchw, audio, mouse, btn = batch
+            clip_bnchw /= self.vae_scale
+            audio      /= self.audio_scale
+            return (clip_bnchw  .to(device=self.device, dtype=self.dtype),
+                    audio       .to(device=self.device, dtype=self.dtype),
+                    mouse       .to(device=self.device, dtype=self.dtype),
+                    btn         .to(device=self.device, dtype=self.dtype))
+                
         except StopIteration:
             self.train_loader = iter(self.train_loader)
             return self._format_batch()
@@ -360,14 +371,14 @@ class SelfForcingTrainer(BaseTrainer):
             n_frames                        = student_clip.shape[1]
             overlay_student                 = groundtruth_clip.clone()
             overlay_student [:, -n_frames:] = student_clip             # replace last n frames of groundtruth with student frames
-            overlay_student                 = self.decoder_fn(overlay_student.bfloat16())
+            overlay_student                 = self.decoder_fn(overlay_student.bfloat16() * self.vae_scale)
             # -- overlay student audio on groundtruth ones
             overlay_audio                   = groundtruth_audio.clone()
             overlay_audio   [:, -n_frames:] = student_audio
-            overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16())
+            overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16() * self.audio_scale)
             # -- decode the groundtruth
-            groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16())
-            groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16())
+            groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16() * self.vae_scale)
+            groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16() * self.audio_scale)
 
             wandb.log({
                 'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
@@ -515,3 +526,67 @@ class SelfForcingTrainer(BaseTrainer):
             self.total_step_counter += 1
 
         self.save()
+
+    def test_self_forcing_sampler(self, model: GameRFTAudio):
+        with self.ctx:
+            TOTAL_FRAMES        = []
+            TOTAL_LATENT_FRAMES = []
+            N = self.num_gen_frames
+            (clip_bnchw, audio, mouse, btn) = self._format_batch()
+            sampler = deepcopy(self.sampler)
+            sampler.model = model
+
+            history_clip  = clip_bnchw  [:, :self.context_len]
+            history_audio = audio       [:, :self.context_len]
+            # -- we use history for these because av_sampler extends it by default
+            history_mouse = mouse       [:, :self.context_len]
+            history_btn   = btn         [:, :self.context_len]
+
+            
+            sampler._warmup_kv(history_clip, history_audio, history_mouse, history_btn)
+
+            # -- emulate what av sampler does to get fake mouse data
+            from owl_wms.utils import batch_permute_to_length
+
+            fake_mouse, fake_btn = batch_permute_to_length(history_mouse, history_btn, N + self.context_len)
+
+            # -- use the fake mouse data that would've been generated in the av_sampler anyways
+            future_mouse = mouse       [:, self.context_len:]
+            future_btn   = btn         [:, self.context_len:]
+
+            info = sampler.autoregressive_rollout(future_btn, future_mouse, audio) # audio only used for channel size
+
+
+            print(f'{len(TOTAL_LATENT_FRAMES)=} {info['clean_latents_video'].shape=}')
+            TOTAL_FRAMES = self.decoder_fn(info['clean_latents_video'] * self.vae_scale)
+            return TOTAL_FRAMES
+    
+    def test_av_window_sampler(self, model: GameRFTAudio):
+        from owl_wms.sampling.av_window import AVWindowSampler
+        with self.ctx:
+            av_window_sampler = AVWindowSampler(n_steps=20,  # this is 4 for self-forcing (1.00 0.75 0.5 0.25)
+                                                cfg_scale=self.cfg_scale,
+                                                window_length=self.context_len,
+                                                num_frames=self.num_gen_frames,
+                                                noise_prev=0.,  # don't noise prev because we are self-forcing
+                                                only_return_generated=True)
+            (clip_bnchw, audio, mouse, btn) = self._format_batch()
+
+            history_clip  = clip_bnchw  [:] # for some reason the sampler expects full contextlen+num_frames_gen and it chops off the num_frames_gen itself?
+            history_audio = audio       [:]
+            # -- we use history for these because av_sampler extends it by default
+            history_mouse = mouse       [:]
+            history_btn   = btn         [:]
+
+            frames, *_ = av_window_sampler.__call__(model.core,
+                                                    dummy_batch     = history_clip,
+                                                    audio           = history_audio,
+                                                    mouse           = history_mouse,
+                                                    btn             = history_btn,
+                                                    audio_decode_fn = self.audio_decoder_fn,
+                                                    decode_fn       = self.decoder_fn,
+                                                    image_scale     = self.vae_scale, # already divided in format_batch
+                                                    audio_scale     = self.audio_scale)
+            
+            print(f'{len(frames)=} {frames[0].shape=}')
+            return frames

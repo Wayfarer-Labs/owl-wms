@@ -39,10 +39,10 @@ train:
   # ---------- optimizer ----------
   opt: AdamW
   opt_kwargs:
-    lr: 1.0e-5               # made this up
+    lr: 1.0e-5            # made this up TODO check 
     weight_decay: 0.0     # made this up
-    eps: 1.0e-8              # paper value
-    betas: [0.0, 0.999]      # paper value
+    eps: 1.0e-8           # paper value
+    betas: [0.0, 0.999]   # paper value
 
 
   # ---------- checkpoints ----------

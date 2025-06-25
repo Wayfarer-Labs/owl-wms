@@ -33,7 +33,7 @@ class GameRFTAudioCore(nn.Module):
 
         self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
 
-    def forward(self, x, audio, t, mouse, btn, kv_cache = None, additive_attn_mask = None):
+    def forward(self, x, audio, t, mouse, btn, kv_cache = None, additive_attn_mask = None) -> tuple[Tensor, Tensor]:
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # t is [b,n]
@@ -69,7 +69,6 @@ class GameRFTAudioCore(nn.Module):
         # Project audio tokens
         audio = eo.rearrange(audio, 'b n 1 d -> b n d')
         audio = self.audio_proj_out(audio, cond)
-        # TODO returns VELOCITIES and not the actual audio and video
         return video, audio
 
 class GameRFTAudio(nn.Module):
@@ -86,31 +85,37 @@ class GameRFTAudio(nn.Module):
                 btn:   torch.Tensor | None = None,
                 audio: torch.Tensor | None = None,
                 kv_cache: KVCache   | None = None,
-                attn_mask: Tensor   | None = None,
                 cfg_weight: float          = 0.0) -> tuple[Tensor, Tensor]:
         """
         Return velocities with optional CFG
         """
-        B, N, _, _, _ = x_t.shape
+        B, N, *_   = x_t.shape
+        mouse_null = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
+        btn_null   = torch.zeros(B, N, self.config.n_buttons, device=x_t.device, dtype=x_t.dtype)
 
-        if audio is None:        # every call from Self-Forcing passes video only
-            audio = torch.zeros(B, N, self.config.audio_channels, device=x_t.device, dtype=x_t.dtype)
-        if mouse is None:
-            mouse = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
-        if btn is None:
-            btn   = torch.zeros(B, N, self.config.n_buttons, device=x_t.device, dtype=x_t.dtype)
+        mouse = mouse if mouse is not None else mouse_null
+        btn   = btn   if btn   is not None else btn_null
 
-        velocity_video_cond, velocity_audio_cond = self.core(x_t, audio, t, mouse, btn, kv_cache)
+        # NOTE DO NOT DO THIS - because it messes with the batch dimension of the KV-Cache
+        # and causes it to error out. If cfg==0.0 it will be handled just fine with the 
+        # existing logic. This is wrong, for now:
+        # if cfg_weight == 0.0:
+        #     return self.core(x_t, audio, t, mouse, btn, kv_cache)
+        
+        velocity_video, velocity_audio = self.core(
+            x        = torch.cat([x_t,   x_t],   dim=0),
+            audio    = torch.cat([audio, audio], dim=0),
+            t        = torch.cat([t, t], dim=0),
+            mouse    = torch.cat([mouse, mouse_null], dim=0),
+            btn      = torch.cat([btn, btn_null], dim=0),
+            kv_cache = kv_cache,
+        )
 
-        if cfg_weight > 0.0:
-            null_mouse  = torch.zeros_like(mouse)
-            null_btn    = torch.zeros_like(btn)
-            velocity_video_uncond, velocity_audio_uncond = self.core(x_t, audio, t, null_mouse, null_btn, kv_cache, attn_mask)
-            # -- apply cfg
-            velocity_video = velocity_video_uncond + cfg_weight * (velocity_video_cond - velocity_video_uncond)
-            velocity_audio = velocity_audio_uncond + cfg_weight * (velocity_audio_cond - velocity_audio_uncond)
-        else:
-            velocity_video, velocity_audio = velocity_video_cond, velocity_audio_cond
+        velocity_video_cond, velocity_video_uncond = velocity_video.chunk(2)
+        velocity_audio_cond, velocity_audio_uncond = velocity_audio.chunk(2)
+
+        velocity_video = (velocity_video_uncond + cfg_weight) * (velocity_video_cond - velocity_video_uncond)
+        velocity_audio = (velocity_audio_uncond + cfg_weight) * (velocity_audio_cond - velocity_audio_uncond)
         
         return velocity_video, velocity_audio
 
@@ -186,7 +191,7 @@ if __name__ == "__main__":
     from owl_wms.configs import Config
 
     cfg = Config.from_yaml("configs/basic.yml").model
-    model = GameRFT(cfg).cuda().bfloat16()
+    model = GameRFTAudio(cfg).cuda().bfloat16()
 
     with torch.no_grad():
         x = torch.randn(1, 128, 16, 256, device='cuda', dtype=torch.bfloat16)
