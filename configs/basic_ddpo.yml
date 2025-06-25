@@ -3,6 +3,7 @@ model:
   model_id: game_rft_audio
   sample_size: 4
   channels: 128
+  audio_channels: 64
   
   n_layers: 17
   n_heads: 16
@@ -15,9 +16,11 @@ model:
   cfg_prob: 0.1
   n_frames: 60
 
+  causal: false
+
 train:
   trainer_id: ddpo
-  data_id: cod_latent
+  data_id: cod_s3_audio
   data_kwargs:
     window_length: 60
     bucket_name: cod-data-latent-360x640to4x4
