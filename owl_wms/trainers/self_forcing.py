@@ -25,7 +25,7 @@ from owl_wms.configs import TrainingConfig, TransformerConfig as ModelConfig, WA
 import wandb
 from owl_wms.utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
-
+from owl_wms.sampling.av_window import AVWindowSampler
 
 class Loss_SelfForcing(nn.Module):
 
@@ -259,6 +259,15 @@ class SelfForcingTrainer(BaseTrainer):
             cfg_scale=self.cfg_scale,
         )
 
+        self.av_window_sampler = AVWindowSampler(
+            n_steps=len(self.t_schedule),
+            cfg_scale=self.cfg_scale,
+            window_length=self.context_len,
+            num_frames=self.num_gen_frames,
+            noise_prev=0.0,
+            only_return_generated=False,
+        )
+
         # -- ddp
         self.causal_model       = DistributedDataParallel(self.causal_model)     if self.world_size > 1 else self.causal_model
         self.critic_model       = DistributedDataParallel(self.critic_model) if self.world_size > 1 else self.critic_model
@@ -425,7 +434,9 @@ class SelfForcingTrainer(BaseTrainer):
                     loss_fn: Callable[[Any], dict[str, Tensor]],
                     optim: torch.optim.Optimizer, 
                     clip_grad: bool = True,
-                    debug_basic: bool = False):
+                    debug_basic: bool = False,
+                    use_sf_sampler: bool = True):
+    
         assert self.context_len + self.num_gen_frames == self.model_cfg.n_frames, \
             f'context_len + num_gen_frames must equal n_frames: {self.context_len=} + {self.num_gen_frames=} != {self.model_cfg.n_frames=}'
         
@@ -439,15 +450,28 @@ class SelfForcingTrainer(BaseTrainer):
             btn = torch.zeros_like(btn)
 
         # -- warmup the KV cache with the context frames
-        self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
-                                audio       [:, :self.context_len],
-                                mouse       [:, :self.context_len],
-                                btn         [:, :self.context_len])
-        
-        # -- generate the frames, with the warm cache
-        rollout_info = self.sampler.autoregressive_rollout(btn     [:, -self.num_gen_frames:],
-                                                           mouse   [:, -self.num_gen_frames:],
-                                                           audio   [:, -self.num_gen_frames:])
+        if use_sf_sampler:
+            self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
+                                    audio       [:, :self.context_len],
+                                    mouse       [:, :self.context_len],
+                                    btn         [:, :self.context_len])
+            
+            # -- generate the frames, with the warm cache
+            rollout_info = self.sampler.autoregressive_rollout(btn     [:, -self.num_gen_frames:],
+                                                            mouse   [:, -self.num_gen_frames:],
+                                                            audio   [:, -self.num_gen_frames:])
+        else:
+            video, audio, mouse, btn = self.av_window_sampler.__call__(model,
+                                                 clip_bnchw,
+                                                 audio,
+                                                 mouse,
+                                                 btn)
+            rollout_info = {
+                'clean_latents_video': video,
+                'clean_latents_audio': audio,
+                'selected_timesteps': torch.randn((self.batch_size, self.num_gen_frames), device=self.device),
+            }
+
         loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
                             causal_latent_audio = rollout_info['clean_latents_audio'],
                             t                   = rollout_info['selected_timesteps'],
