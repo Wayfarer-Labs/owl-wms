@@ -125,6 +125,7 @@ class SelfForcingSampler:
             grad_frame  = i >= start_grad_at
             x_t         = torch.randn(B, F, C, H, W, device=device) # sample x_t at the *largest* timestep
             audio_t     = torch.randn(B, F, A,       device=device)
+            timestep    = 1.0
 
             self.kv_cache.disable_cache_updates() # do not update cache while we are denoising
             for idx in range(1, denoising_steps + 1):
@@ -137,7 +138,7 @@ class SelfForcingSampler:
                     velocity_x_t, velocity_audio_t = self.model.velocity_fn(
                         x_t        = x_t,
                         audio      = audio_t,
-                        t          = torch.ones((self.batch_size, F), device=self.device) * dt,
+                        t          = timestep * torch.ones((self.batch_size, F), device=self.device),
                         mouse      = mouse [:, i:i+1],
                         btn        = btn   [:, i:i+1],
                         kv_cache   = self.kv_cache,
@@ -155,6 +156,8 @@ class SelfForcingSampler:
                 if min(s_t) >= idx:
                     clean_latents_video += [x_t]
                     clean_latents_audio += [audio_t]
+                
+                timestep -= dt
 
             # -- update kv cache with clean frames (line 13, Algorithm 1)
             self.kv_cache.enable_cache_updates()
