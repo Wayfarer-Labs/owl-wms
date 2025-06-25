@@ -219,7 +219,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.causal_lr: float = self.train_cfg.opt_kwargs.lr
         self.critic_lr: float = self.causal_lr / self.update_ratio
         self.cfg_scale: float = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
-        self.t_schedule       = self.train_cfg.t_schedule
+        self.denoising_steps  = self.train_cfg.n_steps
         self.loss_module      = Loss_SelfForcing(self.bidirectional_model,
                                                  self.critic_model,
                                                  self.causal_model,
@@ -250,7 +250,7 @@ class SelfForcingTrainer(BaseTrainer):
             model_config=self.model_cfg,
             batch_size=self.batch_size,
             latent_shape=self.train_cfg.latent_shape,
-            t_schedule=self.t_schedule,
+            denoising_steps=self.denoising_steps,
             context_len=self.context_len,
             num_gen_frames=self.num_gen_frames,
             frame_gradient_cutoff=self.frame_gradient_cutoff,
@@ -260,7 +260,7 @@ class SelfForcingTrainer(BaseTrainer):
         )
 
         self.av_window_sampler = AVWindowSampler(
-            n_steps=len(self.t_schedule),
+            n_steps=self.denoising_steps,
             cfg_scale=self.cfg_scale,
             window_length=self.context_len,
             num_frames=self.num_gen_frames,
@@ -588,12 +588,7 @@ class SelfForcingTrainer(BaseTrainer):
     def test_av_window_sampler(self, model: GameRFTAudio):
         from owl_wms.sampling.av_window import AVWindowSampler
         with self.ctx:
-            av_window_sampler = AVWindowSampler(n_steps=20,  # this is 4 for self-forcing (1.00 0.75 0.5 0.25)
-                                                cfg_scale=self.cfg_scale,
-                                                window_length=self.context_len,
-                                                num_frames=self.num_gen_frames,
-                                                noise_prev=0.,  # don't noise prev because we are self-forcing
-                                                only_return_generated=True)
+            av_window_sampler = self.av_window_sampler
             (clip_bnchw, audio, mouse, btn) = self._format_batch()
 
             history_clip  = clip_bnchw  [:] # for some reason the sampler expects full contextlen+num_frames_gen and it chops off the num_frames_gen itself?

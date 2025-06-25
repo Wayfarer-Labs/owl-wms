@@ -38,7 +38,7 @@ class SelfForcingSampler:
             model_config: ModelConfig,
             batch_size: int,
             latent_shape: tuple[int, int, int],
-            t_schedule: list[int] = [1000, 750, 500, 250],
+            denoising_steps: int = 20,
             context_len: int = 48,
             frame_gradient_cutoff: int = 8,
             num_gen_frames: int = 64,
@@ -56,7 +56,7 @@ class SelfForcingSampler:
         self.tokens_per_frame = self.model_config.tokens_per_frame
 
         # -- sampling
-        self.t_schedule = t_schedule
+        self.denoising_steps = denoising_steps
         self.batch_size = batch_size
         self.context_len = context_len
         self.latent_shape = latent_shape
@@ -81,6 +81,8 @@ class SelfForcingSampler:
         num_frames = clip_bnchw.shape[1]
 
         for frame_idx in range(num_frames):
+            # -- no need to denoise multiple times since the clips are 
+            # clean (groundtruth)
             _ = self.model.velocity_fn(
                 x_t      = clip_bnchw  [:, frame_idx:frame_idx+1],
                 audio    = audio       [:, frame_idx:frame_idx+1],
@@ -102,18 +104,20 @@ class SelfForcingSampler:
             f'btn, mouse (history data) must have the same number of frames: \
                 {self.num_gen_frames=} {btn.shape[1]=} {mouse.shape[1]=} {audio.shape[1]=}'
         
-        B             = self.batch_size
-        C, H, W       = self.latent_shape   # dims of latent of upstream autoencoder
-        A             = audio.shape[-1]     # dims of audio
-        t_schedule    = self.t_schedule     # few-step distillation schedule
-        device        = self.device
-        N             = self.num_gen_frames # number of frames to generate that are outside the context
-        F             = getattr(self, 'frames_per_chunk', 1) # number of frames to process in one chunk. didnt implement this yet lol i dont wanna scroll up
-        start_grad_at = self.start_grad_at  # frame_idx past which we start keeping track of grads (vanishing error accumulation horizon)        
+        B               = self.batch_size
+        C, H, W         = self.latent_shape   # dims of latent of upstream autoencoder
+        A               = audio.shape[-1]     # dims of audio
+        denoising_steps = self.denoising_steps
+        device          = self.device
+        N               = self.num_gen_frames # number of frames to generate that are outside the context
+        F               = getattr(self, 'frames_per_chunk', 1) # number of frames to process in one chunk. didnt implement this yet lol i dont wanna scroll up
+        start_grad_at   = self.start_grad_at  # frame_idx past which we start keeping track of grads (vanishing error accumulation horizon)        
 
         clean_latents_video, clean_latents_audio = [], []  # N frames, one for each N
         selected_timesteps                       = []      # N values, one for each t sampled from t_schedule
-        s_t         = random.choice(t_schedule)            # chosen step to keep grads on for - does this need to be broadcast per gpu? I don't think so cause they dont have duplicate batches
+        # -- choose random 5 consecutive steps from our schedule to keep gradients for
+        start = random.randint(1, denoising_steps + 1 - 5)
+        s_t   = set(i for i in range(start, start + 5))
 
         for i in range(N):
             # -- ignore gradients for frames that are too far backwards, as calculated by frame_gradient_cutoff
@@ -123,29 +127,34 @@ class SelfForcingSampler:
             audio_t     = torch.randn(B, F, A,       device=device)
 
             self.kv_cache.disable_cache_updates() # do not update cache while we are denoising
-            for t in reversed(t_schedule):
-                dt = delta_t(t, len(t_schedule))      # for now this is just 1./t but we can replace w euler later
+            for idx in range(1, denoising_steps + 1):
+                dt = delta_t(idx, denoising_steps)      # for now this is just 1./denoising_steps but we can replace w euler later
 
-                keep_grad = grad_frame and (t == s_t) and self.training
+                keep_grad = grad_frame and (idx in s_t) and self.training
                 grad_ctxt = nullcontext() if keep_grad else torch.no_grad()
                 # -- rectified flow denoising step with no_grad if we are not on the selected s_t
                 with torch.autocast(device_type=device.type, dtype=self.autocast), grad_ctxt:
                     velocity_x_t, velocity_audio_t = self.model.velocity_fn(
-                        x_t                = x_t,
-                        audio              = audio_t,
-                        t                  = t * torch.ones((self.batch_size, F), device=self.device),
-                        mouse              = mouse [:, i:i+1],
-                        btn                = btn   [:, i:i+1],
-                        kv_cache           = self.kv_cache,
-                        cfg_weight         = self.cfg_scale,
-                    )
+                        x_t        = x_t,
+                        audio      = audio_t,
+                        t          = torch.ones((self.batch_size, F), device=self.device) * dt,
+                        mouse      = mouse [:, i:i+1],
+                        btn        = btn   [:, i:i+1],
+                        kv_cache   = self.kv_cache,
+                        cfg_weight = self.cfg_scale)
 
                     x_t     = x_t     - (dt * velocity_x_t)
                     audio_t = audio_t - (dt * velocity_audio_t)
                 
                 # https://arxiv.org/pdf/2506.08009 last paragraph of Section 3.2
-                # use the denoised output of the s-th step as the final output
-                if t == s_t: break
+                # "use the denoised output of the s-th step as the final output"
+                # -- Unfortunately, we don't do flow matching so we don't have a clean
+                # estimate until idx == N - otherwise, we'd break.
+                # -- We don't break until we end up with a clean sample so that we 
+                # can populate the KV Cache with a clean frame.
+                if min(s_t) >= idx:
+                    clean_latents_video += [x_t]
+                    clean_latents_audio += [audio_t]
 
             # -- update kv cache with clean frames (line 13, Algorithm 1)
             self.kv_cache.enable_cache_updates()
@@ -157,14 +166,11 @@ class SelfForcingSampler:
                     mouse              = mouse [:, i:i+1],
                     btn                = btn   [:, i:i+1],
                     kv_cache           = self.kv_cache,
-                    cfg_weight         = self.cfg_scale,
-                )
+                    cfg_weight         = self.cfg_scale)
 
             # -- technically, it is always keep_grad by the time we get here, because we break
             # right after our sampled timestep s
-            clean_latents_video += [x_t]
-            clean_latents_audio += [audio_t]
-            selected_timesteps  += [s_t]
+            selected_timesteps  += [min(s_t)]
             
         return {
             'clean_latents_video':  torch.cat(clean_latents_video, dim=1),
