@@ -1,6 +1,6 @@
 # Config for DDPO trainer - based on basic.yml
 model:
-  model_id: game_rft
+  model_id: game_rft_audio
   sample_size: 4
   channels: 128
   
@@ -20,8 +20,7 @@ train:
   data_id: cod_latent
   data_kwargs:
     window_length: 60
-    root: ../cod_data/BlackOpsColdWar
-    add_optical_flow: false
+    bucket_name: cod-data-latent-360x640to4x4
 
   # DDPO-specific parameters
   sampling_steps: 64
@@ -53,11 +52,15 @@ train:
   save_interval: 5000
 
   # VAE configuration (required for DDPO)
-  vae_id: 720pr3dc
-  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
-  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+  vae_id: null
+  vae_cfg_path: ../models/cod_128x.yml
+  vae_ckpt_path: ../models/cod_128x_30k_ema.pt
   vae_scale: 0.35
   vae_batch_size: 4
+
+  audio_vae_id: null
+  audio_vae_cfg_path: ../models/cod_audio.yml
+  audio_vae_ckpt_path: ../models/cod_audio_20k_ema.pt
 
   sampler_id: window
   sampler_kwargs:
