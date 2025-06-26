@@ -414,10 +414,10 @@ class DDPOTrainer(BaseTrainer):
             batch_btn = batch_btn.cuda().bfloat16()
             batch_audio = batch_audio.cuda().bfloat16()
 
-            print(batch_vid.shape)
-            print(batch_mouse.shape)
-            print(batch_btn.shape)
-            print(batch_audio.shape)
+            # print(batch_vid.shape)
+            # print(batch_mouse.shape)
+            # print(batch_btn.shape)
+            # print(batch_audio.shape)
             
             # Sample trajectories with log probabilities
             samples = self.sample_batch_with_logprob(batch_vid, batch_mouse, batch_btn, batch_audio)
