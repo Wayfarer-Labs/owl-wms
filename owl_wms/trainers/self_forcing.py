@@ -25,7 +25,7 @@ from owl_wms.configs import TrainingConfig, TransformerConfig as ModelConfig, WA
 import wandb
 from owl_wms.utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
-from owl_wms.sampling.av_window import AVWindowSampler
+from owl_wms.sampling.av_window_cached import AVWindowSampler
 
 class Loss_SelfForcing(nn.Module):
 
@@ -75,8 +75,8 @@ class Loss_SelfForcing(nn.Module):
         if mask_frame_idx is not None:
             causal_latent_video = causal_latent_video[:, mask_frame_idx:] # -- causvid: 178: vid
             causal_latent_audio = causal_latent_audio[:, mask_frame_idx:]
-            t                   = t                  [:, mask_frame_idx:]
             mouse               = mouse              [:, mask_frame_idx:]
+            t                   = t                  [:, mask_frame_idx:]
             btn                 = btn                [:, mask_frame_idx:]
 
         noisy_causal_clip,  *_  = self.q_sample_fn(causal_latent_video, eo.repeat(t, 'b n -> b n 1 1 1'))
@@ -450,16 +450,18 @@ class SelfForcingTrainer(BaseTrainer):
             btn = torch.zeros_like(btn)
 
         # -- warmup the KV cache with the context frames
-        if use_sf_sampler:
-            self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
-                                    audio       [:, :self.context_len],
-                                    mouse       [:, :self.context_len],
-                                    btn         [:, :self.context_len])
+        if use_sf_sampler: # -- NOTE: kvcache warmups done in autoregressive rollout instead of separately
+            # self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
+            #                         audio       [:, :self.context_len],
+            #                         mouse       [:, :self.context_len],
+            #                         btn         [:, :self.context_len])
             
             # -- generate the frames, with the warm cache
-            rollout_info = self.sampler.autoregressive_rollout(btn     [:, -self.num_gen_frames:],
-                                                            mouse   [:, -self.num_gen_frames:],
-                                                            audio   [:, -self.num_gen_frames:])
+            rollout_info = self.sampler.hail_mary(
+                clip_bnchw  = clip_bnchw,
+                audio_bcd   = audio,
+                btn         = btn,
+                mouse       = mouse)
         else:
             video, audio, mouse, btn = self.av_window_sampler.__call__(model,
                                                  clip_bnchw,
@@ -475,8 +477,8 @@ class SelfForcingTrainer(BaseTrainer):
         loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
                             causal_latent_audio = rollout_info['clean_latents_audio'],
                             t                   = rollout_info['selected_timesteps'],
-                            mouse               = mouse       [:, -self.num_gen_frames:],
-                            btn                 = btn         [:, -self.num_gen_frames:])
+                            mouse               = mouse,
+                            btn                 = btn)
 
         grad_norm = self._optimizer_step(loss_info['total_loss'], optim, model, clip_grad=clip_grad)
 
@@ -584,9 +586,28 @@ class SelfForcingTrainer(BaseTrainer):
             print(f'{len(TOTAL_LATENT_FRAMES)=} {info['clean_latents_video'].shape=}')
             TOTAL_FRAMES = self.decoder_fn(info['clean_latents_video'] * self.vae_scale)
             return TOTAL_FRAMES
+
+    def test_hail_mary_sampler(self, model: GameRFTAudio):
+        with self.ctx:
+            TOTAL_FRAMES        = []
+            TOTAL_LATENT_FRAMES = []
+            N = self.num_gen_frames
+            (clip_bnchw, audio, mouse, btn) = self._format_batch()
+            sampler = deepcopy(self.sampler)
+            sampler.model = model
+
+            info = sampler.hail_mary(clip_bnchw  = clip_bnchw,
+                                     audio_bcd   = audio,
+                                     btn         = btn,
+                                     mouse       = mouse) # audio only used for channel size
+
+
+            print(f'{len(TOTAL_LATENT_FRAMES)=} {info['clean_latents_video'].shape=}')
+            TOTAL_FRAMES = self.decoder_fn(info['clean_latents_video'] * self.vae_scale)
+            return TOTAL_FRAMES
+
     
     def test_av_window_sampler(self, model: GameRFTAudio):
-        from owl_wms.sampling.av_window import AVWindowSampler
         with self.ctx:
             av_window_sampler = self.av_window_sampler
             (clip_bnchw, audio, mouse, btn) = self._format_batch()

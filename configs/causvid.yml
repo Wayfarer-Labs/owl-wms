@@ -1,29 +1,29 @@
 # Config for a simple 256 -> 16 autoencoder
 model:
-  model_id: game_rft
+  model_id: game_rft_audio
   sample_size: 4
   channels: 128
+  audio_channels: 64
   
-  n_layers: 17
-  n_heads: 16
-  d_model: 1024
-
-  tokens_per_frame: 16
+  n_layers: 25
+  n_heads: 24
+  d_model: 1536
+  tokens_per_frame: 17
   n_buttons: 11
   n_mouse_axes: 2
+  cfg_prob: 0.1
 
-  cfg_prob: 0.0
-  n_frames: 30
+  n_frames: 60
 
   causal: false
 
 train:
   trainer_id: causvid
-  data_id: cod_latent
+
+  data_id: cod_s3_audio
   data_kwargs:
-    window_length: 30
-    root: ../cod_data/BlackOpsColdWar
-    add_optical_flow: false
+    window_length: 60
+    bucket_name: cod-data-latent-360x640to4x4
 
   target_batch_size: 256
   batch_size: 32
@@ -58,12 +58,18 @@ train:
   vae_id: 720pr3dc
   vae_batch_size: 4
   vae_scale: 0.35
-  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
-  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+  vae_cfg_path: configs/owl_vaes/cod_128x.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_128x_30k_ema.pt
 
-  teacher_ckpt: null # Set later TODO
+  audio_vae_id: null
+  audio_vae_batch_size: 4
+  audio_vae_scale: 0.17
+  audio_vae_cfg_path: configs/owl_vaes/cod_audio.yml
+  audio_vae_ckpt_path: /mnt/data/checkpoints/audio_ae/cod_audio_20k_ema.pt
+
+  teacher_ckpt: /mnt/data/checkpoints/av_huge/av_huge_1b_step205k_ema.pt
 
 wandb:
-  name: shahbuland
+  name: samibg
   project: video_models
   run_name: v2

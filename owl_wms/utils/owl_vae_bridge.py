@@ -40,7 +40,7 @@ def get_encoder_only(vae_id, cfg_path, ckpt_path):
         model = AutoencoderDC.from_pretrained(model_id).bfloat16().cuda().eval()
         del model.decoder  # Keep encoder only
         return model.encoder
-    elif vae_id == "720pr3dc":
+    else:
         cfg = Config.from_yaml(cfg_path).model
         model = get_model_cls(cfg.model_id)(cfg)
         model.load_state_dict(torch.load(ckpt_path, map_location='cpu',weights_only=False))

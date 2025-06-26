@@ -40,10 +40,10 @@ class CausVidTrainer(BaseTrainer):
         student_cfg.causal = True
         teacher_cfg.causal = False
 
-        self.model = get_model_cls(model_id)(student_cfg)
+        self.model = get_model_cls(model_id)(student_cfg)  # causal 
         self.score_real = get_model_cls(model_id)(teacher_cfg)
 
-        self.score_real.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
+        self.score_real.core.load_state_dict(versatile_load(self.train_cfg.teacher_ckpt))
         self.score_fake = deepcopy(self.score_real)
 
         freeze(self.score_real)
@@ -61,7 +61,7 @@ class CausVidTrainer(BaseTrainer):
         self.scaler = None
 
         self.total_step_counter = 0
-        self.decoder = get_decoder_only()
+        self.decoder = get_decoder_only(None, self.train_cfg.vae_cfg_path, self.train_cfg.vae_ckpt_path)
         freeze(self.decoder)
 
     def save(self):
@@ -105,6 +105,7 @@ class CausVidTrainer(BaseTrainer):
 
     def train(self):
         torch.cuda.set_device(self.local_rank)
+        self.device = torch.device(f'cuda:{self.local_rank}')
 
         # Prepare model and ema
         self.model = self.model.cuda().train()        
@@ -166,8 +167,9 @@ class CausVidTrainer(BaseTrainer):
 
         # Simplifiying assumptions: data will never stop iter, no grad accum
 
-        def sample_from_gen(vid, mouse, btn):  # Returns real video, cause noise - velocity
-            model_out = self.model(vid, mouse, btn, return_dict = True)
+        def sample_from_gen(vid, audio, mouse, btn):  # Returns real video, cause noise - velocity
+            # vid: [b,n,c,h,w]
+            model_out = self.model(vid, audio, mouse, btn, return_dict = True)
             ts = model_out['ts'][:,None,None,None] # [b,n,c,h,w]
             lerpd = model_out['lerpd'] # [b,n,c,h,w]
             pred = model_out['pred'] # [b,n,c,h,w]
@@ -177,7 +179,8 @@ class CausVidTrainer(BaseTrainer):
 
         def get_dmd_loss(vid, # sampled from student, real videos and not velocities
                          mouse,
-                         btn,):
+                         btn,
+                        ):
             s_real_fn = self.score_real.core
             s_fake_fn = self.score_fake.module.core
 
@@ -227,10 +230,14 @@ class CausVidTrainer(BaseTrainer):
             freeze(self.model)
             unfreeze(self.score_fake)
             for _ in range(self.update_ratio):
-                batch_vid, batch_mouse, batch_btn = next(loader)
+                batch_vid, batch_audio, batch_mouse, batch_btn = next(loader)
+                batch_vid = batch_vid.to(self.device).float()
+                batch_audio = batch_audio.to(self.device).float()
+                batch_mouse = batch_mouse.to(self.device).float()
+                batch_btn = batch_btn.to(self.device).float()
                 with ctx:
                     with torch.no_grad():
-                        samples = sample_from_gen(batch_vid, batch_mouse, batch_btn)
+                        samples = sample_from_gen(batch_vid, batch_audio, batch_mouse, batch_btn)
                         # -- SAMI: This calculates RF Loss: F.mse_loss(denoise(apply_noise(randn, sample)) (randn - sample))
                     # this is gamerft.fwd which is mse(pred_velocity, noise - samples),
                     # pred_velocity comes from gamerft.core(noise_video,). NOTE: This looks right on my end
@@ -243,9 +250,13 @@ class CausVidTrainer(BaseTrainer):
             unfreeze(self.model)
             freeze(self.score_fake)
         
-            batch_vid, batch_mouse, batch_btn = next(loader)
+            batch_vid, batch_audio, batch_mouse, batch_btn = next(loader)
+            batch_vid = batch_vid.to(self.device).float()
+            batch_audio = batch_audio.to(self.device).float()
+            batch_mouse = batch_mouse.to(self.device).float()
+            batch_btn = batch_btn.to(self.device).float()
             with ctx:
-                samples = sample_from_gen(batch_vid, batch_mouse, batch_btn) # autoreg rollout *frames* not velocities
+                samples = sample_from_gen(batch_vid, batch_audio, batch_mouse, batch_btn) # autoreg rollout *frames* not velocities
                 dmd_loss = get_dmd_loss(samples, batch_mouse, batch_btn)
                 metrics.log('dmd_loss', dmd_loss)
                 

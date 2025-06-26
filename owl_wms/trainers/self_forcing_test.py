@@ -25,12 +25,13 @@ trainer = SelfForcingTrainer(
 MODEL = trainer.bidirectional_model
 
 sf_frames = trainer.test_self_forcing_sampler(model=MODEL)
+hm_frames = trainer.test_hail_mary_sampler(model=MODEL)
 av_frames = trainer.test_av_window_sampler(model=MODEL)
 
 
 target_av_frames = av_frames[0, :6]
 target_sf_frames = sf_frames[0, :6]
-
+target_hm_frames = hm_frames[0, :6]
 import os
 import cv2
 from PIL import Image
@@ -60,4 +61,5 @@ def save_vertical_stack(frames, path, ):
 # Save the last 3 frames for both samplers
 save_vertical_stack(target_av_frames, "output_frames/av_last3.png")
 save_vertical_stack(target_sf_frames, "output_frames/sf_last3.png")
+save_vertical_stack(target_hm_frames, "output_frames/hm_last3.png")
 print("Saved stacked frames in output_frames/") 
