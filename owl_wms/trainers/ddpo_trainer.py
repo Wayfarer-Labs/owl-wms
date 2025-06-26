@@ -10,6 +10,8 @@ import wandb
 from functools import partial
 import tqdm
 from ema_pytorch import EMA
+import importlib.util
+import os
 
 from .base import BaseTrainer
 from ..utils import freeze, Timer, find_unused_params
@@ -20,6 +22,7 @@ from ..data import get_loader
 from ..utils.logging import LogHelper, to_wandb
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..muon import init_muon
+from omegaconf.dictconfig import DictConfig
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
@@ -68,7 +71,8 @@ class DDPOTrainer(BaseTrainer):
         freeze(self.decoder)
         
         # DDPO specific components
-        self.reward_fn = None  # Will be set by user
+        self.reward_fn = None  # Will be set by user or loaded from config
+        self._load_reward_function()
         
         # Initialize executor for async reward computation
         self.executor = futures.ThreadPoolExecutor(max_workers=2)
@@ -86,6 +90,56 @@ class DDPOTrainer(BaseTrainer):
         self.num_batches_per_epoch = self.train_cfg.get('num_batches_per_epoch', 4)
         self.num_inner_epochs = self.train_cfg.get('num_inner_epochs', 1)
         
+    def _load_reward_function(self):
+        """Load reward function from config if specified."""
+        reward_config = getattr(self.train_cfg, 'reward_fn', None)
+        if reward_config is None:
+            return
+        
+        if isinstance(reward_config, DictConfig):
+            # Config format: {"module": "path/to/file.py", "function": "reward_function_name"}
+            module_path = reward_config.get('module')
+            function_name = reward_config.get('function')
+            
+            if module_path and function_name:
+                try:
+                    # Load module from file path
+                    if not os.path.isabs(module_path):
+                        # Make relative paths relative to config directory
+                        config_dir = os.path.dirname(os.path.abspath(""))  # Assumes we're in project root
+                        module_path = os.path.join(config_dir, module_path)
+
+                    spec = importlib.util.spec_from_file_location("reward_module", module_path)
+                    reward_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(reward_module)
+
+
+                    
+                    # Get the function from the module
+                    if hasattr(reward_module, function_name):
+                        self.reward_fn = getattr(reward_module, function_name)
+                        if self.rank == 0:
+                            print(f"Loaded reward function '{function_name}' from {module_path}")
+                    else:
+                        raise AttributeError(f"Function '{function_name}' not found in {module_path}")
+                        
+                except Exception as e:
+                    if self.rank == 0:
+                        print(f"Error loading reward function: {e}")
+                    raise
+        elif isinstance(reward_config, str):
+            # Simple format: "module.function" (assumes module is importable)
+            try:
+                module_name, function_name = reward_config.rsplit('.', 1)
+                module = importlib.import_module(module_name)
+                self.reward_fn = getattr(module, function_name)
+                if self.rank == 0:
+                    print(f"Loaded reward function '{function_name}' from module '{module_name}'")
+            except Exception as e:
+                if self.rank == 0:
+                    print(f"Error loading reward function: {e}")
+                raise
+
     def set_reward_function(self, reward_fn):
         """Set the reward function for DDPO training."""
         self.reward_fn = reward_fn
@@ -127,13 +181,14 @@ class DDPOTrainer(BaseTrainer):
         self.scaler = torch.amp.GradScaler()
         self.ctx = torch.amp.autocast('cuda', torch.bfloat16)
     
-    def sample_batch_with_logprob(self, batch_vid, batch_mouse, batch_btn):
+    def sample_batch_with_logprob(self, batch_vid, batch_mouse, batch_btn, batch_audio):
         """
         Sample a batch of videos using the current model with log probability tracking.
         
         :param batch_vid: Input video frames 
         :param batch_mouse: Mouse movement data
         :param batch_btn: Button press data
+        :param batch_audio: Audio data
         :return: Dictionary containing samples with latents, log_probs, etc.
         """
         self.model.eval()
@@ -151,7 +206,8 @@ class DDPOTrainer(BaseTrainer):
             
             # Initialize with noise (rectified flow starts from noise)
             x = torch.randn_like(batch_vid)
-            ts = torch.ones(batch_size, device=x.device, dtype=x.dtype)
+            n_frames = batch_mouse.shape[1]  # Get sequence length from mouse data
+            ts = torch.ones(batch_size, n_frames, device=x.device, dtype=x.dtype)
             dt = 1.0 / self.sampling_steps
             
             # Store trajectory data for DDPO
@@ -164,18 +220,18 @@ class DDPOTrainer(BaseTrainer):
             for step in range(self.sampling_steps):
                 with self.ctx:
                     # Get model prediction
-                    pred = model(x, ts, batch_mouse, batch_btn)
-                    all_preds.append(pred.clone())
+                    pred_video, pred_audio = model(x, batch_audio, ts, batch_mouse, batch_btn)
+                    all_preds.append((pred_video.clone(), pred_audio.clone()))
                     
-                    # Rectified flow update: x = x - pred * dt
+                    # Rectified flow update: x = x - pred_video * dt
                     if step < self.sampling_steps - 1:
-                        next_x = x - pred * dt
+                        next_x = x - pred_video * dt
                         next_ts = ts - dt
                         
                         # Compute log probability of the transition
                         # For rectified flow, this is the log probability of next_x given current state
                         # Simplified computation - can be made more sophisticated
-                        diff = next_x - (x - pred * dt)
+                        diff = next_x - (x - pred_video * dt)
                         log_prob = -0.5 * torch.sum(diff ** 2, dim=(1, 2, 3, 4))
                         
                         all_latents.append(next_x.clone())
@@ -189,26 +245,31 @@ class DDPOTrainer(BaseTrainer):
             all_latents = torch.stack(all_latents, dim=1)  # (batch, timesteps+1, ...)
             all_log_probs = torch.stack(all_log_probs, dim=1)  # (batch, timesteps)
             all_timesteps = torch.stack(all_timesteps[:-1], dim=1)  # (batch, timesteps)
-            all_preds = torch.stack(all_preds, dim=1)  # (batch, timesteps, ...)
+            # Separate video and audio predictions
+            all_video_preds = torch.stack([pred[0] for pred in all_preds], dim=1)  # (batch, timesteps, ...)
+            all_audio_preds = torch.stack([pred[1] for pred in all_preds], dim=1)  # (batch, timesteps, ...)
             
             return {
                 'latents': all_latents[:, :-1],  # Remove last timestep
                 'next_latents': all_latents[:, 1:],  # Remove first timestep  
                 'log_probs': all_log_probs,
                 'timesteps': all_timesteps,
-                'predictions': all_preds,
+                'video_predictions': all_video_preds,
+                'audio_predictions': all_audio_preds,
                 'final_latents': x,
                 'mouse': batch_mouse,
                 'buttons': batch_btn,
+                'audio': batch_audio,
             }
     
-    def compute_rewards(self, final_latents, mouse_data, button_data):
+    def compute_rewards(self, final_latents, mouse_data, button_data, audio_data=None):
         """
         Compute rewards for generated videos.
         
         :param final_latents: Final latent representations
         :param mouse_data: Mouse movement data
         :param button_data: Button press data
+        :param audio_data: Audio data (optional)
         :return: Tensor of rewards
         """
         if self.reward_fn is None:
@@ -219,7 +280,10 @@ class DDPOTrainer(BaseTrainer):
             videos = self.decode_fn(final_latents * self.train_cfg.vae_scale)
         
         # Compute rewards asynchronously
-        rewards_future = self.executor.submit(self.reward_fn, videos, mouse_data, button_data)
+        if audio_data is not None:
+            rewards_future = self.executor.submit(self.reward_fn, videos, mouse_data, button_data, audio_data)
+        else:
+            rewards_future = self.executor.submit(self.reward_fn, videos, mouse_data, button_data)
         rewards = rewards_future.result()
         
         return torch.tensor(rewards, device=final_latents.device)
@@ -264,7 +328,7 @@ class DDPOTrainer(BaseTrainer):
         """
         self.model.train()
         
-        batch_size, num_timesteps = samples['timesteps'].shape
+        batch_size, num_timesteps = samples['timesteps'].shape[:2]
         info = defaultdict(list)
         
         # Train on subset of timesteps (randomly sample for efficiency)
@@ -277,18 +341,19 @@ class DDPOTrainer(BaseTrainer):
             next_latents = samples['next_latents'][:, t_idx]
             timesteps = samples['timesteps'][:, t_idx]
             old_log_probs = samples['log_probs'][:, t_idx]
-            old_predictions = samples['predictions'][:, t_idx]
+            old_video_predictions = samples['video_predictions'][:, t_idx]
             advantages = samples['advantages']
             
             with self.ctx:
                 # Forward pass - get current model prediction
                 model = self.get_module()
-                current_pred = model(latents, timesteps, samples['mouse'], samples['buttons'])
+                # Note: mouse and buttons need to be full sequences for this model
+                current_pred_video, current_pred_audio = model.core(latents, samples['audio'], timesteps, samples['mouse'], samples['buttons'])
                 
                 # Compute log probability under current policy
                 # For rectified flow, the log prob is related to how well we predict the flow
                 dt = 1.0 / self.sampling_steps
-                expected_next = latents - current_pred * dt
+                expected_next = latents - current_pred_video * dt
                 diff = next_latents - expected_next
                 log_prob = -0.5 * torch.sum(diff ** 2, dim=(1, 2, 3, 4))
                 
@@ -338,7 +403,7 @@ class DDPOTrainer(BaseTrainer):
         all_samples = []
         all_rewards = []
         
-        for batch_idx, (batch_vid, batch_mouse, batch_btn) in enumerate(tqdm(
+        for batch_idx, (batch_vid, batch_audio, batch_mouse, batch_btn) in enumerate(tqdm(
             loader,
             desc=f"Epoch {epoch}: Sampling",
             disable=self.rank != 0
@@ -347,12 +412,18 @@ class DDPOTrainer(BaseTrainer):
             batch_vid = batch_vid.cuda().bfloat16() / self.train_cfg.vae_scale
             batch_mouse = batch_mouse.cuda().bfloat16()
             batch_btn = batch_btn.cuda().bfloat16()
+            batch_audio = batch_audio.cuda().bfloat16()
+
+            print(batch_vid.shape)
+            print(batch_mouse.shape)
+            print(batch_btn.shape)
+            print(batch_audio.shape)
             
             # Sample trajectories with log probabilities
-            samples = self.sample_batch_with_logprob(batch_vid, batch_mouse, batch_btn)
+            samples = self.sample_batch_with_logprob(batch_vid, batch_mouse, batch_btn, batch_audio)
             
             # Compute rewards
-            rewards = self.compute_rewards(samples['final_latents'], batch_mouse, batch_btn)
+            rewards = self.compute_rewards(samples['final_latents'], batch_mouse, batch_btn, batch_audio)
             samples['rewards'] = rewards
             
             all_samples.append(samples)
