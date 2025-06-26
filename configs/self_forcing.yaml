@@ -33,7 +33,7 @@ train:
 
   # ---------- batching ----------
   target_batch_size: 64     # effective (across GPUs × grad-accum)
-  batch_size: 1     # clips / GPU
+  batch_size: 8     # clips / GPU
   epochs: 200
 
   # ---------- optimizer ----------

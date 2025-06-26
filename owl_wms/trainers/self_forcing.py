@@ -214,7 +214,7 @@ class SelfForcingTrainer(BaseTrainer):
         # - TODO ensure whether the self-forcing paper has a GAN term (4.3), i don't think they do?
         # - multi-step generator, based on t-schedule (section 4.4) 
         # - i believe section 4.5 (reducing train-inference mismatch) is implicit in the autoregressive step of self-forcing as a whole
-        self.update_ratio: int  = getattr(self.train_cfg, 'update_ratio', 5)
+        self.update_ratio: int  = getattr(self.train_cfg, 'update_ratio', 25)
         # -- make sure critic learning rate is 5x less (corresponding to update ratio) than the causal (generator, in DMD) student
         self.causal_lr: float = self.train_cfg.opt_kwargs.lr
         self.critic_lr: float = self.causal_lr / self.update_ratio
@@ -311,12 +311,13 @@ class SelfForcingTrainer(BaseTrainer):
             return
         
         save_dict = versatile_load(self.train_cfg.critic_ckpt)
-        self.critic_model.load_state_dict(save_dict.get('critic_bidir_model'))
+        self.critic_model.load_state_dict(save_dict.get('critic_model'))
         return
 
     def save(self):
         save_dict = {
             'causal_model':        self.causal_model       .state_dict(),
+            'critic_model':        self.critic_model       .state_dict(),
             'bidirectional_model': self.bidirectional_model.state_dict(),
             'ema':                 self.ema                .state_dict(),
             'opt_causal':          self.opt_causal         .state_dict(),
@@ -369,30 +370,87 @@ class SelfForcingTrainer(BaseTrainer):
     @torch.no_grad()
     def evaluate(self, info: dict):
         try:
-            self.causal_model.eval()
+            sample_fn = partial(self.sampler.autoregressive_rollout,
+                                clip_bnchw  = info['groundtruth_clip'],
+                                audio_bcd   = info['groundtruth_audio'],
+                                btn         = info['btn'],
+                                mouse       = info['mouse'])
+
+            self.causal_model       .eval()
+            causal_samples = sample_fn(self.causal_model)
+            causal_clip    = causal_samples['clean_latents_video']
+            causal_audio   = causal_samples['clean_latents_audio']
+
+            self.bidirectional_model.eval()
+            bidirectional_samples = sample_fn(self.bidirectional_model)
+            bidirectional_clip    = bidirectional_samples['clean_latents_video']
+            bidirectional_audio   = bidirectional_samples['clean_latents_audio']
+
+            self.critic_model       .eval()
+            critic_samples = sample_fn(self.critic_model)
+            critic_clip    = critic_samples['clean_latents_video']
+            critic_audio   = critic_samples['clean_latents_audio']
+
+
             # -- get relevant samples
-            student_clip      = info['clip']
-            student_audio     = info['audio']
             groundtruth_clip  = info['groundtruth_clip']
             groundtruth_audio = info['groundtruth_audio']
             mouse, btn        = info['mouse'], info['btn']
-            # -- overlay student frames on groundtruth ones
-            n_frames                        = student_clip.shape[1]
-            overlay_student                 = groundtruth_clip.clone()
-            overlay_student [:, -n_frames:] = student_clip             # replace last n frames of groundtruth with student frames
-            overlay_student                 = self.decoder_fn(overlay_student.bfloat16() * self.vae_scale)
-            # -- overlay student audio on groundtruth ones
-            overlay_audio                   = groundtruth_audio.clone()
-            overlay_audio   [:, -n_frames:] = student_audio
-            overlay_audio                   = self.audio_decoder_fn(overlay_audio.bfloat16() * self.audio_scale)
+            # -- build the dictionary
+            n_frames = causal_clip.shape[1]
+            log_dict = {
+                'bidirectional_samples_video': None,
+                'groundtruth_samples_video': groundtruth_clip,
+                'student_samples_video': None,
+                'critic_samples_video': None,
+                'bidirectional_samples_audio': None,
+                'groundtruth_samples_audio': groundtruth_audio,
+                'student_samples_audio': None,
+                'critic_samples_audio': None,
+            }
+
+            log_dict['student_samples_video']         = groundtruth_clip.clone()
+            log_dict['bidirectional_samples_video']   = groundtruth_clip.clone()
+            log_dict['critic_samples_video']          = groundtruth_clip.clone()
+
+            log_dict['student_samples_video'][:, -n_frames:]       = causal_clip
+            log_dict['bidirectional_samples_video'][:, -n_frames:] = bidirectional_clip
+            log_dict['critic_samples_video'][:, -n_frames:]        = critic_clip
+
+            log_dict['student_samples_video']       = self.decoder_fn(log_dict['student_samples_video'].bfloat16() * self.vae_scale)
+            log_dict['bidirectional_samples_video'] = self.decoder_fn(log_dict['bidirectional_samples_video'].bfloat16() * self.vae_scale)
+            log_dict['critic_samples_video']        = self.decoder_fn(log_dict['critic_samples_video'].bfloat16() * self.vae_scale)
+
+            log_dict['bidirectional_samples_audio']   = groundtruth_audio.clone()
+            log_dict['student_samples_audio']         = groundtruth_audio.clone()
+            log_dict['critic_samples_audio']          = groundtruth_audio.clone()
+
+            log_dict['student_samples_audio'][:, -n_frames:]       = causal_audio
+            log_dict['bidirectional_samples_audio'][:, -n_frames:] = bidirectional_audio
+            log_dict['critic_samples_audio'][:, -n_frames:]        = critic_audio
+
+            log_dict['student_samples_audio']       = self.audio_decoder_fn(log_dict['student_samples_audio'].bfloat16() * self.audio_scale)
+            log_dict['bidirectional_samples_audio'] = self.audio_decoder_fn(log_dict['bidirectional_samples_audio'].bfloat16() * self.audio_scale)
+            log_dict['critic_samples_audio']        = self.audio_decoder_fn(log_dict['critic_samples_audio'].bfloat16() * self.audio_scale)
+
             # -- decode the groundtruth
-            groundtruth_v = self.decoder_fn(groundtruth_clip.bfloat16() * self.vae_scale)
-            groundtruth_a = self.audio_decoder_fn(groundtruth_audio.bfloat16() * self.audio_scale)
+            log_dict['groundtruth_samples_video'] = self.decoder_fn(groundtruth_clip.bfloat16() * self.vae_scale)
+            log_dict['groundtruth_samples_audio'] = self.audio_decoder_fn(groundtruth_audio.bfloat16() * self.audio_scale)
+            log_dict = {k: v.float() for k, v in log_dict.items()} # -- convert to float32 for wandb
+
+            # -- to wandb:
+            log_dict['student_samples_video']       = to_wandb_av(log_dict['student_samples_video'], log_dict['student_samples_audio'], mouse.float(), btn.float(), gather=False, max_samples=8, prefix='student_samples_')
+            log_dict['bidirectional_samples_video'] = to_wandb_av(log_dict['bidirectional_samples_video'], log_dict['bidirectional_samples_audio'], mouse.float(), btn.float(), gather=False, max_samples=8, prefix='bidirectional_samples_')
+            log_dict['critic_samples_video']        = to_wandb_av(log_dict['critic_samples_video'], log_dict['critic_samples_audio'], mouse.float(), btn.float(), gather=False, max_samples=8, prefix='critic_samples_')
+            log_dict['groundtruth_samples_video']   = to_wandb_av(log_dict['groundtruth_samples_video'], log_dict['groundtruth_samples_audio'], mouse.float(), btn.float(), gather=False, max_samples=8, prefix='groundtruth_samples_')
 
             wandb.log({
-                'student_samples':     to_wandb_av(overlay_student, overlay_audio, mouse, btn, gather=False, max_samples=8, prefix='student_'),
-                'groundtruth_samples': to_wandb_av(groundtruth_v,   groundtruth_a, mouse, btn, gather=False, max_samples=8, prefix='groundtruth_')
+                'student_samples': log_dict['student_samples_video'],
+                'bidirectional_samples': log_dict['bidirectional_samples_video'],
+                'critic_samples': log_dict['critic_samples_video'],
+                'groundtruth_samples': log_dict['groundtruth_samples_video'],
             }, step=self.log_step_counter, commit=False)
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -415,9 +473,7 @@ class SelfForcingTrainer(BaseTrainer):
             wandb.log(
                 popped_metrics,
                 step=self.log_step_counter,
-                commit=True,
-            )
-
+                commit=True)
 
     def _optimizer_step(self,
                         loss: Tensor,
@@ -434,8 +490,7 @@ class SelfForcingTrainer(BaseTrainer):
                     loss_fn: Callable[[Any], dict[str, Tensor]],
                     optim: torch.optim.Optimizer, 
                     clip_grad: bool = True,
-                    debug_basic: bool = False,
-                    use_sf_sampler: bool = True):
+                    debug_basic: bool = False):
     
         assert self.context_len + self.num_gen_frames == self.model_cfg.n_frames, \
             f'context_len + num_gen_frames must equal n_frames: {self.context_len=} + {self.num_gen_frames=} != {self.model_cfg.n_frames=}'
@@ -449,30 +504,13 @@ class SelfForcingTrainer(BaseTrainer):
             mouse = torch.zeros_like(mouse)
             btn = torch.zeros_like(btn)
 
-        # -- warmup the KV cache with the context frames
-        if use_sf_sampler: # -- NOTE: kvcache warmups done in autoregressive rollout instead of separately
-            # self.sampler._warmup_kv(clip_bnchw  [:, :self.context_len],
-            #                         audio       [:, :self.context_len],
-            #                         mouse       [:, :self.context_len],
-            #                         btn         [:, :self.context_len])
-            
-            # -- generate the frames, with the warm cache
-            rollout_info = self.sampler.hail_mary(
-                clip_bnchw  = clip_bnchw,
-                audio_bcd   = audio,
-                btn         = btn,
-                mouse       = mouse)
-        else:
-            video, audio, mouse, btn = self.av_window_sampler.__call__(model,
-                                                 clip_bnchw,
-                                                 audio,
-                                                 mouse,
-                                                 btn)
-            rollout_info = {
-                'clean_latents_video': video,
-                'clean_latents_audio': audio,
-                'selected_timesteps': torch.randn((self.batch_size, self.num_gen_frames), device=self.device),
-            }
+        # -- generate the frames, while warming up the kv-cache
+        rollout_info = self.sampler.autoregressive_rollout(
+            model       = self.causal_model,
+            clip_bnchw  = clip_bnchw,
+            audio_bcd   = audio,
+            btn         = btn,
+            mouse       = mouse)
 
         loss_info = loss_fn(causal_latent_video = rollout_info['clean_latents_video'],
                             causal_latent_audio = rollout_info['clean_latents_audio'],
@@ -508,21 +546,25 @@ class SelfForcingTrainer(BaseTrainer):
                                 clip_grad=True,
                                 debug_basic=False)
 
+    def _train_stage_one(self):
+        pass
+
     def train(self):
         timer = Timer()
         while not self.should_break:
             critic_time: list[float] = []
             info: list[dict]         = []
             with self.ctx:
-                unfreeze(self.causal_model) ; freeze(self.critic_model)
-                info        += [self._train_causal_step()] ; gen_time     = timer.hit()
                 unfreeze(self.critic_model) ; freeze(self.causal_model)
                 for _ in range(self.update_ratio):
                     info    += [self._train_critic_step()] ; critic_time += [timer.hit()]
 
+                unfreeze(self.causal_model) ; freeze(self.critic_model)
+                info        += [self._train_causal_step()] ; gen_time     = timer.hit()
+
                 self.ema.update()
             
-            causal_info, *critic_info = info
+            *critic_info, causal_info = info
 
             self.metrics.log_dict({
                 'causal_total_loss': causal_info['total_loss'],
@@ -580,7 +622,10 @@ class SelfForcingTrainer(BaseTrainer):
             future_mouse = mouse       [:, self.context_len:]
             future_btn   = btn         [:, self.context_len:]
 
-            info = sampler.autoregressive_rollout(future_btn, future_mouse, audio) # audio only used for channel size
+            info = sampler.old_autoregressive_rollout(clip_bnchw  = clip_bnchw,
+                                                 audio_bcd   = audio,
+                                                 btn         = btn,
+                                                 mouse       = mouse) # audio only used for channel size
 
 
             print(f'{len(TOTAL_LATENT_FRAMES)=} {info['clean_latents_video'].shape=}')
@@ -596,7 +641,7 @@ class SelfForcingTrainer(BaseTrainer):
             sampler = deepcopy(self.sampler)
             sampler.model = model
 
-            info = sampler.hail_mary(clip_bnchw  = clip_bnchw,
+            info = sampler.autoregressive_rollout(clip_bnchw  = clip_bnchw,
                                      audio_bcd   = audio,
                                      btn         = btn,
                                      mouse       = mouse) # audio only used for channel size
@@ -606,7 +651,6 @@ class SelfForcingTrainer(BaseTrainer):
             TOTAL_FRAMES = self.decoder_fn(info['clean_latents_video'] * self.vae_scale)
             return TOTAL_FRAMES
 
-    
     def test_av_window_sampler(self, model: GameRFTAudio):
         with self.ctx:
             av_window_sampler = self.av_window_sampler

@@ -67,25 +67,8 @@ class SelfForcingSampler:
         assert self.frame_gradient_cutoff < self.context_len
 
     @torch.no_grad()
-    def _warmup_kv(self, clip_bnchw: Tensor, audio: Tensor, mouse: Tensor, btn: Tensor):
-        """Fill rolling KV cache without tracking grads."""
-        self.kv_cache.reset(self.batch_size * 2) # NOTE doubles for cfg 
-        self.kv_cache.enable_cache_updates()
-        num_frames = clip_bnchw.shape[1]
-
-        _ = self.model.velocity_fn( x_t      = clip_bnchw,
-                                    t        = torch.ones_like(clip_bnchw[:,:,0,0,0]),
-                                    mouse    = mouse,
-                                    btn      = btn,
-                                    audio    = audio,
-                                    kv_cache = self.kv_cache,
-                                    cfg_weight=self.cfg_scale)
-        
-        self.kv_cache.disable_cache_updates()
-        _truncate_if_overflow(self.kv_cache)
-
-    @torch.no_grad()
-    def hail_mary(self, # NOTE Takes the batch directly from the dataloader, no indexing whatsoever!
+    def autoregressive_rollout(self, # NOTE Takes the batch directly from the dataloader, no indexing whatsoever!
+                  model: GameRFTAudio,
                   clip_bnchw: Tensor,
                   audio_bcd: Tensor,
                   btn: Tensor,
@@ -126,7 +109,7 @@ class SelfForcingSampler:
             next_btn   = torch.randn_like(ctxt_btn  [:, frame_idx:1+frame_idx])
 
             while t[0,0].item() != s: # -- note: cfg done in velocity_fn
-                velocity_clip, velocity_audio = self.model.velocity_fn( next_frame, t,
+                velocity_clip, velocity_audio = model.velocity_fn( next_frame, t,
                                                                         next_mouse, next_btn, next_audio,
                                                                         kv_cache=kv_cache )
                 next_frame -= dt * velocity_clip
@@ -135,7 +118,7 @@ class SelfForcingSampler:
             
             with torch.enable_grad():
                 kv_cache.enable_cache_updates()
-                velocity_clip, velocity_audio = self.model.velocity_fn( next_frame, t,
+                velocity_clip, velocity_audio = model.velocity_fn( next_frame, t,
                                                                         next_mouse, next_btn, next_audio,
                                                                         kv_cache=kv_cache )
                 kv_cache.disable_cache_updates()
@@ -147,11 +130,11 @@ class SelfForcingSampler:
         return {
             'clean_latents_video':  ctxt_clip,
             'clean_latents_audio':  ctxt_audio,
-            'selected_timesteps':   (s * torch.ones_like(t)).repeat(B, clip_bnchw.shape[1]),
+            'selected_timesteps':   (s * torch.ones_like(t)).repeat(1, clip_bnchw.shape[1]),
         }
 
 
-    def autoregressive_rollout(self,
+    def old_autoregressive_rollout(self,
                                btn: Tensor,
                                mouse: Tensor,
                                audio: Tensor) -> dict[str, Tensor]:
@@ -240,3 +223,21 @@ class SelfForcingSampler:
             'clean_latents_audio':  torch.cat(clean_latents_audio, dim=1),
             'selected_timesteps':   torch.tensor(selected_timesteps, device=device).repeat(B, 1),
         }
+
+    @torch.no_grad()
+    def _warmup_kv(self, clip_bnchw: Tensor, audio: Tensor, mouse: Tensor, btn: Tensor):
+        """Fill rolling KV cache without tracking grads."""
+        self.kv_cache.reset(self.batch_size * 2) # NOTE doubles for cfg 
+        self.kv_cache.enable_cache_updates()
+        num_frames = clip_bnchw.shape[1]
+
+        _ = self.model.velocity_fn( x_t      = clip_bnchw,
+                                    t        = torch.ones_like(clip_bnchw[:,:,0,0,0]),
+                                    mouse    = mouse,
+                                    btn      = btn,
+                                    audio    = audio,
+                                    kv_cache = self.kv_cache,
+                                    cfg_weight=self.cfg_scale)
+        
+        self.kv_cache.disable_cache_updates()
+        _truncate_if_overflow(self.kv_cache)
