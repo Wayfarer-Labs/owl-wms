@@ -1,5 +1,6 @@
 from __future__ import annotations
 from ast import BoolOp
+import os
 import random
 from copy import deepcopy
 from ema_pytorch import EMA
@@ -29,13 +30,9 @@ from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectif
 from owl_wms.sampling.av_window_cached import AVWindowSampler
 from owl_wms.nn.kv_cache import KVCache
 
-def as_decorator(context_manager: ContextManager) -> Callable[[Callable], Callable]:
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            with context_manager: return func(*args, **kwargs)
-        return wrapper
-    return decorator
+def remove_learned_abs_poc_enc(model: GameRFTAudio):
+    model.core.pos_enc = nn.Identity()
+    return model
 
 
 class Loss_SelfForcing(nn.Module):
@@ -354,6 +351,7 @@ class SelfForcingTrainer(BaseTrainer):
             #  e.g. if config.causal=True vs False affects some architectural changes,
             #  this would catch them when the time comes, instead of introducing a sneaky bug
             self.causal_model.load_state_dict(self.bidirectional_model.state_dict())
+            self.causal_model = remove_learned_abs_poc_enc(self.causal_model)
             return
         
         save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
@@ -369,6 +367,8 @@ class SelfForcingTrainer(BaseTrainer):
         self.ode_init_step_counter = save_dict['initialization_steps']
         self.log_step_counter   = save_dict['log_step_counter']
 
+        self.causal_model = remove_learned_abs_poc_enc(self.causal_model)
+
     def load_critic(self):
         if self.train_cfg.critic_ckpt is None:
             print(f'critic checkpoint not specified, using bi-directional teacher weights.')
@@ -379,7 +379,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.critic_model.load_state_dict(save_dict.get('critic_model'))
         return
 
-    def save(self):
+    def save(self, suffix: str = ''):
         save_dict = {
             'causal_model':        self.causal_model       .state_dict(),
             'critic_model':        self.critic_model       .state_dict(),
@@ -393,10 +393,13 @@ class SelfForcingTrainer(BaseTrainer):
             'scheduler_critic':    self.scheduler_critic   .state_dict(),
             'initialization_steps':self.ode_init_step_counter,
             'distillation_steps':  self.distill_step_counter,
+         
             'log_step_counter':    self.log_step_counter,
         }
+        os.makedirs(self.train_cfg.checkpoint_dir, exist_ok = True)
+        fp = os.path.join(self.train_cfg.checkpoint_dir, f"step_{self.total_step_counter}_{suffix}.pt")
+        torch.save(save_dict, fp)
 
-        super().save(save_dict)
 
     def _format_batch(self) -> tuple[Tensor, ...]:
         try:
@@ -689,6 +692,7 @@ class SelfForcingTrainer(BaseTrainer):
             })
             self._log_step(info, maybe_evaluate=False) ; self.log_step_counter += int(self.should_log)
 
+        self.save(suffix='_ode_init_done')
 
         # ---- distillation training
         while self.should_distill:
@@ -733,7 +737,7 @@ class SelfForcingTrainer(BaseTrainer):
             print(f'Distillation step {self.distill_step_counter} - critic loss {step_info["total_loss"]} - causal loss {causal_info["total_loss"]}')
             self.distill_step_counter += 1
 
-        self.save()
+        self.save(suffix='_distill_done')
 
     def test_self_forcing_sampler(self, model: GameRFTAudio):
         with self.ctx:

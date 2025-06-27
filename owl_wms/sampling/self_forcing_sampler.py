@@ -300,8 +300,8 @@ class SelfForcingSampler:
         """Fill rolling KV cache without tracking grads."""
         kv_cache.reset(self.batch_size * 2) # NOTE doubles for cfg 
         kv_cache.enable_cache_updates()
-
-        _ = model.velocity_fn(      x_t      = clip_bnchw,
+        velociraptor = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+        _ = velociraptor.velocity_fn(      x_t      = clip_bnchw,
                                     t        = torch.zeros_like(clip_bnchw[:,:,0,0,0]),
                                     mouse    = mouse,
                                     btn      = btn,

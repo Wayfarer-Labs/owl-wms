@@ -16,7 +16,7 @@ model:
 
 train:
   trainer_id: self_forcing
-  ode_init_steps: 6000 # TODO they use 16k in the repo but this is just for testing loss going down
+  ode_init_steps: 5000 # TODO they use 16k in the repo but this is just for testing loss going down
   n_steps: 4
   frame_gradient_cutoff: 28 # TODO set this carefully in case it interferes with context length and num_gen_frames
   latent_shape: [128, 4, 4]
