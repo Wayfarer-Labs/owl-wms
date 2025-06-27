@@ -4,14 +4,15 @@ import random
 from copy import deepcopy
 from ema_pytorch import EMA
 import torch ; from torch import Tensor
-from typing import Callable, Optional, Any
+from contextlib import nullcontext
+from typing import Callable, ContextManager, Optional, Any
 import einops as eo
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_, get_total_norm
 from torch.nn.parallel import DistributedDataParallel
 from owl_wms.trainers.base import BaseTrainer
-from functools import partial
+from functools import partial, wraps
 from owl_wms.models.gamerft_audio import GameRFTAudio
 from owl_wms.models import get_model_cls
 from owl_wms.utils import (
@@ -26,6 +27,16 @@ import wandb
 from owl_wms.utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
 from owl_wms.sampling.av_window_cached import AVWindowSampler
+from owl_wms.nn.kv_cache import KVCache
+
+def as_decorator(context_manager: ContextManager) -> Callable[[Callable], Callable]:
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with context_manager: return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
 
 class Loss_SelfForcing(nn.Module):
 
@@ -135,10 +146,10 @@ class Loss_SelfForcing(nn.Module):
 
         velocity_clip_critic, velocity_audio_critic   = self.critic.velocity_fn(noisy_causal_clip, t,
                                                                             mouse, btn, noisy_causal_audio,
-                                                                            cfg_weight=self.critic_cfg_weight)
+                                                                            cfg_weight=self.critic_cfg_weight, kv_cache = None) # no need for kv cause critic is bidirectional
         
-        loss_clip  = F.mse_loss(velocity_clip_critic,  noise_c - causal_latent_video)
-        loss_audio = F.mse_loss(velocity_audio_critic, noise_a - causal_latent_audio)
+        loss_clip  = 0.5 * F.mse_loss(velocity_clip_critic,  noise_c - causal_latent_video)
+        loss_audio = 0.5 * F.mse_loss(velocity_audio_critic, noise_a - causal_latent_audio)
         total_loss = loss_clip + loss_audio
     
         return {
@@ -146,8 +157,56 @@ class Loss_SelfForcing(nn.Module):
             'audio_loss': loss_audio,
             'total_loss': total_loss,
         }
+    
+    def loss_ode_regression(self,
+            teacher_clip_inputs: Tensor,   # [(b*d), n, c, h, w] where d is denoising steps. contains denoised iamges and not velocities
+            teacher_clip_targets: Tensor,  # ^
+            teacher_audio_inputs: Tensor,  # [(b*d), n, c, h, w]
+            teacher_audio_targets: Tensor, # ^
+            timesteps_start: Tensor,       # [(b*d), n, 1]
+            timesteps_end: Tensor,         # [(b*d), n, 1]
+            mouse: Tensor, # [(b*d) n 2]
+            btn: Tensor,   # [(b*d) n 11]
+            student_kv_cache:    KVCache,
+            cfg_override: float = 0.0,
+        ) -> dict[str, Tensor]:
+        assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) > 0, 'student must not be frozen'
+        assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
+
+        dt = timesteps_start - timesteps_end # -- should all be 0.05. we denoise from high t to low t so it's start - end for a positive number
+        cfg_weight = self.teacher_cfg_weight if cfg_override == 0.0 else cfg_override
+        student_kv_cache.disable_cache_updates()
+
+        # -- cant calculate the loss directly since the kv cache was warmed up with a different batch-size that
+        # does not include the denoising steps. therefore we sliding-window over the batch-dimension where window_size=batch_size
+        denoising_steps = teacher_clip_inputs.shape[1]
+        clip_loss  = torch.tensor(0., device=teacher_clip_inputs.device)
+        audio_loss = torch.tensor(0., device=teacher_clip_inputs.device)
+
+        for d in range(denoising_steps):
+            x_t_d   = teacher_clip_inputs [:, d, ::]
+            t_d     = timesteps_start     [:, d, ::]
+            mouse_d = mouse               [:, d, ::]
+            btn_d   = btn                 [:, d, ::]
+            audio_d = teacher_audio_inputs[:, d, ::]
+            dt_d    = dt                  [0, d, 0].item()
+
+            velocity_clip_student, velocity_audio_student = self.student.velocity_fn(x_t = x_t_d, t = t_d,
+                                                                                    mouse = mouse_d, btn = btn_d, audio = audio_d,
+                                                                                    kv_cache = student_kv_cache, cfg_weight = cfg_weight)
+            # trying to minimize where the student would have taken us vs where the teacher ended up
+            clip_loss  += 0.5 * F.mse_loss(teacher_clip_targets [:, d, ::], x_t_d   - (dt_d * velocity_clip_student))
+            audio_loss += 0.5 * F.mse_loss(teacher_audio_targets[:, d, ::], audio_d - (dt_d * velocity_audio_student))
+
+        return {
+            'clip_loss':  clip_loss,
+            'audio_loss': audio_loss,
+            'total_loss': clip_loss + audio_loss,
+        }
+
 
 class SelfForcingTrainer(BaseTrainer):
+    
     def __init__(
             self,
             train_cfg:      TrainingConfig,
@@ -193,9 +252,10 @@ class SelfForcingTrainer(BaseTrainer):
             print(f"\tCritic Score Model has {n_params_critic:,} parameters")
 
         # -- metrics & logging
-        self.metrics            = LogHelper()
-        self.total_step_counter = 0
-        self.log_step_counter   = 0
+        self.metrics                        = LogHelper()
+        self.distill_step_counter           = 0
+        self.ode_init_step_counter          = 0
+        self.log_step_counter               = 0
         if self.rank == 0:        wandb.watch(self.get_module(), log = 'all')
 
         # -- make sure that eval frequency is a multiple of log frequency
@@ -208,6 +268,8 @@ class SelfForcingTrainer(BaseTrainer):
         self.train_loader   = iter(self.train_loader)
         self.vae_scale      = self.train_cfg.vae_scale
         self.audio_scale    = self.train_cfg.audio_vae_scale
+        self.latent_shape   = self.train_cfg.latent_shape
+        self.audio_channels = self.model_cfg.audio_channels
         
         # -- dmd2-style loss (https://arxiv.org/pdf/2405.14867) 
         # - two time-scale update rule (section 4.2)
@@ -220,6 +282,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.critic_lr: float = self.causal_lr / self.update_ratio
         self.cfg_scale: float = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
         self.denoising_steps  = self.train_cfg.n_steps
+        self.ode_init_steps   = self.train_cfg.ode_init_steps
         self.loss_module      = Loss_SelfForcing(self.bidirectional_model,
                                                  self.critic_model,
                                                  self.causal_model,
@@ -246,7 +309,8 @@ class SelfForcingTrainer(BaseTrainer):
         self.frame_gradient_cutoff = self.train_cfg.frame_gradient_cutoff
         self.num_gen_frames        = self.model_cfg.n_frames - self.context_len
         self.sampler               = SelfForcingSampler(
-            model=self.causal_model,
+            causal_model=self.causal_model,
+            bidirectional_model=self.bidirectional_model,
             model_config=self.model_cfg,
             batch_size=self.batch_size,
             latent_shape=self.train_cfg.latent_shape,
@@ -301,7 +365,8 @@ class SelfForcingTrainer(BaseTrainer):
         self.scheduler_causal   .load_state_dict(save_dict['scheduler_causal'])
         self.scheduler_critic   .load_state_dict(save_dict['scheduler_critic'])
         self.decoder            .load_state_dict(save_dict['decoder'])
-        self.total_step_counter = save_dict['steps']
+        self.distill_step_counter = save_dict['distillation_steps']
+        self.ode_init_step_counter = save_dict['initialization_steps']
         self.log_step_counter   = save_dict['log_step_counter']
 
     def load_critic(self):
@@ -326,7 +391,8 @@ class SelfForcingTrainer(BaseTrainer):
             'decoder':             self.decoder            .state_dict(),
             'scheduler_causal':    self.scheduler_causal   .state_dict(),
             'scheduler_critic':    self.scheduler_critic   .state_dict(),
-            'steps':               self.total_step_counter,
+            'initialization_steps':self.ode_init_step_counter,
+            'distillation_steps':  self.distill_step_counter,
             'log_step_counter':    self.log_step_counter,
         }
 
@@ -347,21 +413,30 @@ class SelfForcingTrainer(BaseTrainer):
             self.train_loader = iter(self.train_loader)
             return self._format_batch()
 
+
+    @property
+    def total_step_count(self):
+        return self.ode_init_step_counter + self.distill_step_counter
+    
     @property
     def should_log(self):
-        return self.rank == 0 and self.total_step_counter % self.train_cfg.log_interval == 0
+        return self.rank == 0 and self.total_step_count % self.train_cfg.log_interval == 0
     
     @property
     def should_sample(self):
-        return self.rank == 0 and self.total_step_counter % self.train_cfg.sample_interval == 0
+        return self.rank == 0 and self.total_step_count % self.train_cfg.sample_interval == 0
 
     @property
     def should_save(self):
-        return self.rank == 0 and self.total_step_counter % self.train_cfg.save_interval == 0
+        return self.rank == 0 and self.total_step_count % self.train_cfg.save_interval == 0
     
     @property
-    def should_break(self):
-        return hasattr(self.train_cfg, 'max_steps') and self.total_step_counter >= self.train_cfg.max_steps
+    def should_distill(self):
+        return self.distill_step_counter < self.train_cfg.ode_init_steps
+
+    @property
+    def should_ode_init(self):
+        return self.ode_init_step_counter < self.ode_init_steps
 
     def get_module(self, ema = False): # TODO fix this shit
         if ema: return self.ema.ema_model if self.world_size == 1 else self.ema.ema_model
@@ -485,7 +560,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.scaler.step(optimizer)         ; optimizer.zero_grad() ; self.scaler.update()
         return grad_norm
 
-    def _train_step(self,
+    def _train_step_self_forcing(self,
                     model: GameRFTAudio,
                     loss_fn: Callable[[Any], dict[str, Tensor]],
                     optim: torch.optim.Optimizer, 
@@ -506,7 +581,7 @@ class SelfForcingTrainer(BaseTrainer):
 
         # -- generate the frames, while warming up the kv-cache
         rollout_info = self.sampler.autoregressive_rollout(
-            model       = self.causal_model,
+            model       = model,
             clip_bnchw  = clip_bnchw,
             audio_bcd   = audio,
             btn         = btn,
@@ -532,7 +607,7 @@ class SelfForcingTrainer(BaseTrainer):
         }
 
     def _train_causal_step(self):
-        return self._train_step(self.causal_model,
+        return self._train_step_self_forcing(self.causal_model,
                                 partial(self.loss_module.loss_distribution_matching_distillation,
                                         normalize=True,
                                         mask_frame_idx=1), # ignore the first frame
@@ -540,18 +615,83 @@ class SelfForcingTrainer(BaseTrainer):
                                 debug_basic=False)
 
     def _train_critic_step(self):
-        return self._train_step(self.critic_model,
+        return self._train_step_self_forcing(self.critic_model, # -- but optim the critic 
                                 self.loss_module.loss_rectified_flow,
                                 self.opt_critic,
                                 clip_grad=True,
                                 debug_basic=False)
 
-    def _train_stage_one(self):
-        pass
+    def _train_step_ode_init(self) -> dict[str, Tensor]:
+        clip_bnchw, audio, mouse, btn = self._format_batch()
+
+        rollout_info = self.sampler.ode_initialization_rollout(
+            teacher_model = self.bidirectional_model,
+            clip_bnchw    = clip_bnchw,
+            audio_bcd     = audio,
+            btn           = btn,
+            mouse         = mouse)
+        
+        num_denoising_steps   = rollout_info['trajectories_ts'].shape[1]
+        # -- match pre- and post-denoising by an offset-by-1. also flatten into batch dim and re-add temporal dim
+        teacher_clip_inputs   = rollout_info['trajectories_clip'] [:, :num_denoising_steps-1, ::]
+        teacher_clip_targets  = rollout_info['trajectories_clip'] [:, 1:num_denoising_steps,   ::]
+        teacher_audio_inputs  = rollout_info['trajectories_audio'][:,  :num_denoising_steps-1, ::]
+        teacher_audio_targets = rollout_info['trajectories_audio'][:, 1:num_denoising_steps,   ::]
+        timesteps_start       = rollout_info['trajectories_ts']   [:,  :num_denoising_steps-1, ::]
+        timesteps_end         = rollout_info['trajectories_ts']   [:,  1:num_denoising_steps,  ::]
+
+        # -- repeat the mouse and btn alongside the d dimension
+        mouse_d = eo.repeat(mouse[:, self.context_len:, ::], 'b n x -> b d n x', d = (num_denoising_steps-1))
+        btn_d   = eo.repeat(btn  [:, self.context_len:, ::], 'b n x -> b d n x', d = (num_denoising_steps-1))
+
+        # -- warmup the student's kv cache on the clean context, so that the student & teacher are conditioned on the same frames
+        student_kv_cache = KVCache(self.model_cfg, rank=self.device.index).to(device=self.device.type, rank=self.device.index)
+        self.sampler._warmup_kv(self.causal_model, student_kv_cache,
+                                clip_bnchw  [:, :self.context_len, ::],
+                                audio       [:, :self.context_len, ::],
+                                mouse       [:, :self.context_len, ::],
+                                btn         [:, :self.context_len, ::])
+
+        loss = self.loss_module.loss_ode_regression(
+            teacher_clip_inputs   = teacher_clip_inputs,  # noisy frames 
+            teacher_clip_targets  = teacher_clip_targets, # corresponding clean frames
+            teacher_audio_inputs  = teacher_audio_inputs, 
+            teacher_audio_targets = teacher_audio_targets, 
+            timesteps_start       = timesteps_start, # timesteps of noisy frames
+            timesteps_end         = timesteps_end, # timesteps of clean frames
+            mouse                 = mouse_d,
+            btn                   = btn_d,
+            cfg_override          = 0.,
+            student_kv_cache      = student_kv_cache
+        )
+
+        grad_norm = self._optimizer_step(loss['total_loss'], self.opt_causal, self.causal_model, clip_grad=True)
+
+        return {**loss, 'grad_norm': grad_norm}
+
 
     def train(self):
         timer = Timer()
-        while not self.should_break:
+
+        # ---- ODE initialization (section 4 paragraph 1)
+        unfreeze(self.causal_model)
+        while self.should_ode_init:
+            with self.ctx:
+                info = self._train_step_ode_init()
+            self.ode_init_step_counter += 1
+            self.metrics.log_dict({
+                'ode_init_loss':        info['total_loss'],
+                'ode_init_audio_loss':  info['audio_loss'],
+                'ode_init_clip_loss':   info['clip_loss'],
+                'ode_init_grad_norm':   info['grad_norm'],
+                'ode_init_lr':          self.scheduler_causal.get_last_lr()[0],
+                'ode_init_time':        timer.hit()
+            })
+            self._log_step(info, maybe_evaluate=False) ; self.log_step_counter += int(self.should_log)
+
+
+        # ---- distillation training
+        while self.should_distill:
             critic_time: list[float] = []
             info: list[dict]         = []
             with self.ctx:
@@ -590,8 +730,8 @@ class SelfForcingTrainer(BaseTrainer):
 
             self.barrier()
             if self.should_save: self.save()
-            print(f'Step {self.total_step_counter} - critic loss {step_info["total_loss"]} - causal loss {causal_info["total_loss"]}')
-            self.total_step_counter += 1
+            print(f'Distillation step {self.distill_step_counter} - critic loss {step_info["total_loss"]} - causal loss {causal_info["total_loss"]}')
+            self.distill_step_counter += 1
 
         self.save()
 
@@ -602,7 +742,7 @@ class SelfForcingTrainer(BaseTrainer):
             N = self.num_gen_frames
             (clip_bnchw, audio, mouse, btn) = self._format_batch()
             sampler = deepcopy(self.sampler)
-            sampler.model = model
+            sampler.causal_model = model
 
             history_clip  = clip_bnchw  [:, :self.context_len]
             history_audio = audio       [:, :self.context_len]
@@ -639,12 +779,14 @@ class SelfForcingTrainer(BaseTrainer):
             N = self.num_gen_frames
             (clip_bnchw, audio, mouse, btn) = self._format_batch()
             sampler = deepcopy(self.sampler)
-            sampler.model = model
+            sampler.causal_model = model
 
-            info = sampler.autoregressive_rollout(clip_bnchw  = clip_bnchw,
-                                     audio_bcd   = audio,
-                                     btn         = btn,
-                                     mouse       = mouse) # audio only used for channel size
+            info = sampler.autoregressive_rollout(
+                model       = self.causal_model,
+                clip_bnchw  = clip_bnchw,
+                audio_bcd   = audio,
+                btn         = btn,
+                mouse       = mouse)
 
 
             print(f'{len(TOTAL_LATENT_FRAMES)=} {info['clean_latents_video'].shape=}')

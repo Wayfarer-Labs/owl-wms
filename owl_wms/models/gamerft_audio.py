@@ -80,7 +80,7 @@ class GameRFTAudio(nn.Module):
     
     def velocity_fn(self,
                 x_t:   torch.Tensor,       # [B, N, C, H, W] noisy video latents
-                t:     torch.Tensor,       # [B, N] or scalar
+                t:     torch.Tensor,       # [B, N]
                 mouse: torch.Tensor | None = None,
                 btn:   torch.Tensor | None = None,
                 audio: torch.Tensor | None = None,
@@ -114,9 +114,9 @@ class GameRFTAudio(nn.Module):
         velocity_video_cond, velocity_video_uncond = velocity_video.chunk(2)
         velocity_audio_cond, velocity_audio_uncond = velocity_audio.chunk(2)
 
-        velocity_video = (velocity_video_uncond + cfg_weight) * (velocity_video_cond - velocity_video_uncond)
-        velocity_audio = (velocity_audio_uncond + cfg_weight) * (velocity_audio_cond - velocity_audio_uncond)
-        
+        velocity_video = velocity_video_uncond + cfg_weight * (velocity_video_cond - velocity_video_uncond)
+        velocity_audio = velocity_audio_uncond + cfg_weight * (velocity_audio_cond - velocity_audio_uncond)
+
         return velocity_video, velocity_audio
 
 
