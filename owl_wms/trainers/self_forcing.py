@@ -397,7 +397,7 @@ class SelfForcingTrainer(BaseTrainer):
             'log_step_counter':    self.log_step_counter,
         }
         os.makedirs(self.train_cfg.checkpoint_dir, exist_ok = True)
-        fp = os.path.join(self.train_cfg.checkpoint_dir, f"step_{self.total_step_counter}_{suffix}.pt")
+        fp = os.path.join(self.train_cfg.checkpoint_dir, f"step_{self.total_step_count}_{suffix}.pt")
         torch.save(save_dict, fp)
 
 
