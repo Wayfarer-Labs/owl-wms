@@ -47,7 +47,7 @@ train:
 
 
   # ---------- checkpoints ----------
-  checkpoint_dir: /mnt/data/checkpoints/self-forcing/
+  checkpoint_dir: ./checkpoints/self-forcing/
   teacher_ckpt: /mnt/data/checkpoints/av_huge/av_huge_1b_step_205k_ema.pt
   student_ckpt: null
   critic_ckpt: null
