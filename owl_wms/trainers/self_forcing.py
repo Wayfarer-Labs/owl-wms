@@ -40,6 +40,9 @@ def module_from_ddp(model: GameRFTAudio | DistributedDataParallel) -> GameRFTAud
 def remove_module_prefix(state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
     return {k.replace('module.', ''): v for k, v in state_dict.items()}
 
+def remove_learned_posenc(state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+    return {k: v for k, v in state_dict.items() if 'pos_enc.p' not in k}
+
 class Loss_SelfForcing(nn.Module):
 
     def __init__(self,
@@ -360,7 +363,7 @@ class SelfForcingTrainer(BaseTrainer):
             return
         
         save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
-        self.causal_model       .load_state_dict(remove_module_prefix(save_dict.get('causal_model') or save_dict['model']))
+        self.causal_model       .load_state_dict(remove_module_prefix(remove_learned_posenc(save_dict.get('causal_model') or save_dict['model']))) # we removed the posenc
         self.ema                .load_state_dict(save_dict['ema'])
         self.opt_causal         .load_state_dict(save_dict['opt_causal'])
         self.opt_critic         .load_state_dict(save_dict['opt_critic'])
