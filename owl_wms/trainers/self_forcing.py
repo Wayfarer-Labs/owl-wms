@@ -233,7 +233,9 @@ class SelfForcingTrainer(BaseTrainer):
         teacher_cfg.causal = False
         # -- models. order of loading matters. 
         self.bidirectional_model: GameRFTAudio = get_model_cls(model_id)(teacher_cfg) ; self.load_bidirectional()
-        self.causal_model:        GameRFTAudio = get_model_cls(model_id)(student_cfg) ; self.load_causal()
+        self.causal_model:        GameRFTAudio = remove_learned_abs_poc_enc(get_model_cls(model_id)(student_cfg)) 
+        self.ema                               = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
+        self.load_causal()
         self.critic_model:        GameRFTAudio = deepcopy(self.bidirectional_model)   ; self.load_critic()
 
         self.decoder: nn.Module         = get_decoder_only(self.train_cfg.vae_id,
@@ -363,7 +365,6 @@ class SelfForcingTrainer(BaseTrainer):
             return
         
         save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
-        self.causal_model       = remove_learned_abs_poc_enc(self.causal_model)
         self.causal_model       .load_state_dict(remove_module_prefix(remove_learned_posenc_state_dict(save_dict.get('causal_model') or save_dict['model']))) # we removed the posenc
         self.ema                .load_state_dict(save_dict['ema'])
         self.opt_causal         .load_state_dict(save_dict['opt_causal'])
