@@ -33,8 +33,8 @@ train:
     bucket_name: cod-data-latent-360x640to4x4
 
   # ---------- batching ----------
-  target_batch_size: 64     # effective (across GPUs × grad-accum)
-  batch_size: 8     # clips / GPU
+  target_batch_size: 48     # effective (across GPUs × grad-accum)
+  batch_size: 6     # clips / GPU
   epochs: 200
 
   # ---------- optimizer ----------
