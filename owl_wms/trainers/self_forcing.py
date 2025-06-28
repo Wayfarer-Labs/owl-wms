@@ -688,7 +688,8 @@ class SelfForcingTrainer(BaseTrainer):
                 'ode_init_clip_loss':   info['clip_loss'],
                 'ode_init_grad_norm':   info['grad_norm'],
                 'ode_init_lr':          self.scheduler_causal.get_last_lr()[0],
-                'ode_init_time':        timer.hit()
+                'ode_init_time':        timer.hit(),
+                'ode_init_step':        self.ode_init_step_counter
             })
             self._log_step(info, maybe_evaluate=False) ; self.log_step_counter += int(self.should_log)
 
@@ -716,7 +717,8 @@ class SelfForcingTrainer(BaseTrainer):
                 'causal_clip_loss':  causal_info['clip_loss'],
                 'causal_grad_norm':  causal_info['grad_norm'],
                 'causal_time':       gen_time,
-                'causal_lr':         self.scheduler_causal.get_last_lr()[0]
+                'causal_lr':         self.scheduler_causal.get_last_lr()[0],
+                'distill_step':      self.distill_step_counter
             })
 
             self._log_step(causal_info, maybe_evaluate=True) ; self.log_step_counter += int(self.should_log)
@@ -728,7 +730,8 @@ class SelfForcingTrainer(BaseTrainer):
                     'critic_clip_loss':  step_info['clip_loss'],
                     'critic_grad_norm':  step_info['grad_norm'],
                     'critic_lr':         self.scheduler_critic.get_last_lr()[0],
-                    'critic_time':       _time
+                    'critic_time':       _time,
+                    'distill_step':      self.distill_step_counter
                 })
                 self._log_step(step_info, maybe_evaluate=False) ; self.log_step_counter += int(self.should_log)
 
