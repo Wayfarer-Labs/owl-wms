@@ -34,6 +34,8 @@ def remove_learned_abs_poc_enc(model: GameRFTAudio):
     model.core.pos_enc = nn.Identity()
     return model
 
+def module_from_ddp(model: GameRFTAudio | DistributedDataParallel) -> GameRFTAudio:
+    return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
 
 class Loss_SelfForcing(nn.Module):
 
@@ -73,7 +75,7 @@ class Loss_SelfForcing(nn.Module):
             normalize:           Optional[bool] = None,
             mask_frame_idx:      Optional[int]  = None, # index uptil frames are ignored. "2" will ignore the first two frames
         ) -> dict[str, Tensor]:
-
+        critic, teacher = module_from_ddp(self.critic), module_from_ddp(self.teacher)
         assert sum(x.numel() for x in self.critic.parameters() if x.requires_grad) == 0, 'critic must be frozen'
         assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) > 0, 'student must not be frozen'
         assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
@@ -91,7 +93,7 @@ class Loss_SelfForcing(nn.Module):
         noisy_causal_audio, *_  = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
         
         # -- teacher predicts on groundtruth noisy data, with cfg
-        velocity_clip_teacher, velocity_audio_teacher = self.teacher.velocity_fn(noisy_causal_clip, t,
+        velocity_clip_teacher, velocity_audio_teacher = teacher.velocity_fn(noisy_causal_clip, t,
                                                                         mouse, btn, noisy_causal_audio,
                                                                         cfg_weight=self.teacher_cfg_weight) # -- causvid: 200: s_real
         if self.debug_basic:
@@ -99,7 +101,7 @@ class Loss_SelfForcing(nn.Module):
             velocity_audio_teacher = torch.zeros_like(velocity_audio_teacher)
 
         # -- critic score predicts on student noisy data, without cfg
-        velocity_clip_critic, velocity_audio_critic   = self.critic.velocity_fn(noisy_causal_clip, t,
+        velocity_clip_critic, velocity_audio_critic   = critic.velocity_fn(noisy_causal_clip, t,
                                                                         mouse, btn, noisy_causal_audio,
                                                                         cfg_weight=self.critic_cfg_weight) # -- casuvid: 202: s_fake
         
@@ -136,12 +138,12 @@ class Loss_SelfForcing(nn.Module):
         assert sum(x.numel() for x in self.critic.parameters() if x.requires_grad) > 0, 'critic must not be frozen'
         assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) == 0, 'student must be frozen'
         assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
-        
+        critic = module_from_ddp(self.critic)
         noisy_causal_clip,  noise_c = self.q_sample_fn(causal_latent_video, eo.repeat(t, 'b n -> b n 1 1 1'))
         noisy_causal_audio, noise_a = self.q_sample_fn(causal_latent_audio, eo.repeat(t, 'b n -> b n 1'))
         # TODO SAMI Might be a bit more complicated cause the causal video must be generated with no-grad?
 
-        velocity_clip_critic, velocity_audio_critic   = self.critic.velocity_fn(noisy_causal_clip, t,
+        velocity_clip_critic, velocity_audio_critic   = critic.velocity_fn(noisy_causal_clip, t,
                                                                             mouse, btn, noisy_causal_audio,
                                                                             cfg_weight=self.critic_cfg_weight, kv_cache = None) # no need for kv cause critic is bidirectional
         
@@ -169,7 +171,7 @@ class Loss_SelfForcing(nn.Module):
         ) -> dict[str, Tensor]:
         assert sum(x.numel() for x in self.student.parameters() if x.requires_grad) > 0, 'student must not be frozen'
         assert sum(x.numel() for x in self.teacher.parameters() if x.requires_grad) == 0, 'teacher must be frozen'
-
+        student = module_from_ddp(self.student)
         dt = timesteps_start - timesteps_end # -- should all be 0.05. we denoise from high t to low t so it's start - end for a positive number
         cfg_weight = self.teacher_cfg_weight if cfg_override == 0.0 else cfg_override
         student_kv_cache.disable_cache_updates()
@@ -188,7 +190,7 @@ class Loss_SelfForcing(nn.Module):
             audio_d = teacher_audio_inputs[:, d, ::]
             dt_d    = dt                  [0, d, 0].item()
 
-            velocity_clip_student, velocity_audio_student = self.student.velocity_fn(x_t = x_t_d, t = t_d,
+            velocity_clip_student, velocity_audio_student = student.velocity_fn(x_t = x_t_d, t = t_d,
                                                                                     mouse = mouse_d, btn = btn_d, audio = audio_d,
                                                                                     kv_cache = student_kv_cache, cfg_weight = cfg_weight)
             # trying to minimize where the student would have taken us vs where the teacher ended up
@@ -610,7 +612,8 @@ class SelfForcingTrainer(BaseTrainer):
         }
 
     def _train_causal_step(self):
-        return self._train_step_self_forcing(self.causal_model,
+        return self._train_step_self_forcing(
+                                module_from_ddp(self.causal_model),
                                 partial(self.loss_module.loss_distribution_matching_distillation,
                                         normalize=True,
                                         mask_frame_idx=1), # ignore the first frame
@@ -618,7 +621,8 @@ class SelfForcingTrainer(BaseTrainer):
                                 debug_basic=False)
 
     def _train_critic_step(self):
-        return self._train_step_self_forcing(self.critic_model, # -- but optim the critic 
+        return self._train_step_self_forcing(
+                                module_from_ddp(self.critic_model), # -- but optim the critic 
                                 self.loss_module.loss_rectified_flow,
                                 self.opt_critic,
                                 clip_grad=True,
@@ -628,7 +632,7 @@ class SelfForcingTrainer(BaseTrainer):
         clip_bnchw, audio, mouse, btn = self._format_batch()
 
         rollout_info = self.sampler.ode_initialization_rollout(
-            teacher_model = self.bidirectional_model,
+            teacher_model = module_from_ddp(self.bidirectional_model),
             clip_bnchw    = clip_bnchw,
             audio_bcd     = audio,
             btn           = btn,
@@ -649,7 +653,8 @@ class SelfForcingTrainer(BaseTrainer):
 
         # -- warmup the student's kv cache on the clean context, so that the student & teacher are conditioned on the same frames
         student_kv_cache = KVCache(self.model_cfg, rank=self.device.index).to(device=self.device.type, rank=self.device.index)
-        self.sampler._warmup_kv(self.causal_model, student_kv_cache,
+        self.sampler._warmup_kv(module_from_ddp(self.causal_model),
+                                student_kv_cache,
                                 clip_bnchw  [:, :self.context_len, ::],
                                 audio       [:, :self.context_len, ::],
                                 mouse       [:, :self.context_len, ::],
