@@ -27,7 +27,7 @@ from owl_wms.configs import TrainingConfig, TransformerConfig as ModelConfig, WA
 import wandb
 from owl_wms.utils.logging import LogHelper, to_wandb_av
 from owl_wms.sampling.self_forcing_sampler import SelfForcingSampler, fwd_rectified_flow
-from owl_wms.sampling.av_window_cached import AVWindowSampler
+from owl_wms.sampling.av_window import AVWindowSampler
 from owl_wms.nn.kv_cache import KVCache
 
 def remove_learned_abs_poc_enc(model: GameRFTAudio):

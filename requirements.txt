@@ -21,6 +21,6 @@ accelerate
 boto3
 python-dotenv
 wandb[media]
-alias-free-torch
+alias_free_torch
 taskgroup # only here to backport to 3.10 cause hotel wifi is too slow to remake venv
 moviepy==1.0.3
