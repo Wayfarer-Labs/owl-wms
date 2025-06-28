@@ -235,8 +235,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.bidirectional_model: GameRFTAudio = get_model_cls(model_id)(teacher_cfg) ; self.load_bidirectional()
         self.causal_model:        GameRFTAudio = remove_learned_abs_poc_enc(get_model_cls(model_id)(student_cfg)) 
         self.ema                               = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
-        self.load_causal()
-        self.critic_model:        GameRFTAudio = deepcopy(self.bidirectional_model)   ; self.load_critic()
+        self.critic_model:        GameRFTAudio = deepcopy(self.bidirectional_model)
 
         self.decoder: nn.Module         = get_decoder_only(self.train_cfg.vae_id,
                                                            self.train_cfg.vae_cfg_path,
@@ -302,7 +301,6 @@ class SelfForcingTrainer(BaseTrainer):
         self.init_hardware()
         self.dtype = torch.bfloat16
         # -- optim tomfoolery, shenanigans, etc. - needs to be done after init_hardware so device casting calls work as intended
-        self.ema                = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
         self.opt_causal         = torch.optim.AdamW(self.causal_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.causal_lr}))
         self.opt_critic         = torch.optim.AdamW(self.critic_model.parameters(), **(dict(self.train_cfg.opt_kwargs) | {'lr': self.critic_lr}))
         self.scaler             = torch.amp.GradScaler(enabled = self.dtype != torch.bfloat16)
@@ -340,6 +338,8 @@ class SelfForcingTrainer(BaseTrainer):
         )
 
         # -- ddp
+        self.load_causal()
+        self.load_critic()
         self.causal_model       = DistributedDataParallel(self.causal_model)     if self.world_size > 1 else self.causal_model
         self.critic_model       = DistributedDataParallel(self.critic_model) if self.world_size > 1 else self.critic_model
 
