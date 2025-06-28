@@ -465,17 +465,17 @@ class SelfForcingTrainer(BaseTrainer):
                                 mouse       = info['mouse'])
 
             self.causal_model       .eval()
-            causal_samples = sample_fn(self.causal_model)
+            causal_samples = sample_fn(module_from_ddp(self.causal_model))
             causal_clip    = causal_samples['clean_latents_video']
             causal_audio   = causal_samples['clean_latents_audio']
 
             self.bidirectional_model.eval()
-            bidirectional_samples = sample_fn(self.bidirectional_model)
+            bidirectional_samples = sample_fn(module_from_ddp(self.bidirectional_model))
             bidirectional_clip    = bidirectional_samples['clean_latents_video']
             bidirectional_audio   = bidirectional_samples['clean_latents_audio']
 
             self.critic_model       .eval()
-            critic_samples = sample_fn(self.critic_model)
+            critic_samples = sample_fn(module_from_ddp(self.critic_model))
             critic_clip    = critic_samples['clean_latents_video']
             critic_audio   = critic_samples['clean_latents_audio']
 
