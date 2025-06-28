@@ -302,7 +302,7 @@ class SelfForcingSampler:
         kv_cache.reset(self.batch_size * 2) # NOTE doubles for cfg 
         kv_cache.enable_cache_updates()
         
-        _ = velociraptor.velocity_fn(      x_t      = clip_bnchw,
+        _ = model.velocity_fn(      x_t      = clip_bnchw,
                                     t        = torch.zeros_like(clip_bnchw[:,:,0,0,0]),
                                     mouse    = mouse,
                                     btn      = btn,
