@@ -275,11 +275,11 @@ class SelfForcingTrainer(BaseTrainer):
         # - TODO ensure whether the self-forcing paper has a GAN term (4.3), i don't think they do?
         # - multi-step generator, based on t-schedule (section 4.4) 
         # - i believe section 4.5 (reducing train-inference mismatch) is implicit in the autoregressive step of self-forcing as a whole
-        self.update_ratio: int  = getattr(self.train_cfg, 'update_ratio', 25)
+        self.update_ratio: int  = self.train_cfg.update_ratio
         # -- make sure critic learning rate is 5x less (corresponding to update ratio) than the causal (generator, in DMD) student
         self.causal_lr: float = self.train_cfg.opt_kwargs.lr
         self.critic_lr: float = self.causal_lr / self.update_ratio
-        self.cfg_scale: float = getattr(self.train_cfg, 'cfg_scale',  1.3)  # cfg scale of the teacher
+        self.cfg_scale: float = self.train_cfg.cfg_scale  # cfg scale of the teacher
         self.denoising_steps  = self.train_cfg.n_steps
         self.ode_init_steps   = self.train_cfg.ode_init_steps
         self.loss_module      = Loss_SelfForcing(self.bidirectional_model,

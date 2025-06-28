@@ -37,6 +37,8 @@ class TrainingConfig:
     batch_size : int = 2
     max_grad_norm : float = 5.0
     epochs : int = 200
+    update_ratio: int = 5
+    cfg_scale: float = 1.3
 
     opt : str = "AdamW"
     opt_kwargs : Optional[dict] = None

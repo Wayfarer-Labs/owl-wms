@@ -26,6 +26,8 @@ train:
     total_iters: 1
 
   max_grad_norm: 5.0
+  update_ratio: 5
+  cfg_scale: 1.3
   # ---------- data ----------
   data_id: cod_s3_audio
   data_kwargs:
@@ -49,7 +51,7 @@ train:
   # ---------- checkpoints ----------
   checkpoint_dir: ./checkpoints/self-forcing/
   teacher_ckpt: /mnt/data/checkpoints/av_huge/av_huge_1b_step_205k_ema.pt
-  student_ckpt: null
+  student_ckpt: ./checkpoints/self-forcing/step_5000__ode_init_done.pt
   critic_ckpt: null
 
   # ---------- logging / sampling ----------
