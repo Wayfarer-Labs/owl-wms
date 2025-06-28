@@ -37,6 +37,9 @@ def remove_learned_abs_poc_enc(model: GameRFTAudio):
 def module_from_ddp(model: GameRFTAudio | DistributedDataParallel) -> GameRFTAudio:
     return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
 
+def remove_module_prefix(state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+    return {k.replace('module.', ''): v for k, v in state_dict.items()}
+
 class Loss_SelfForcing(nn.Module):
 
     def __init__(self,
@@ -357,7 +360,7 @@ class SelfForcingTrainer(BaseTrainer):
             return
         
         save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
-        self.causal_model       .load_state_dict(save_dict.get('causal_model') or save_dict['model'])
+        self.causal_model       .load_state_dict(remove_module_prefix(save_dict.get('causal_model') or save_dict['model']))
         self.ema                .load_state_dict(save_dict['ema'])
         self.opt_causal         .load_state_dict(save_dict['opt_causal'])
         self.opt_critic         .load_state_dict(save_dict['opt_critic'])
@@ -374,11 +377,11 @@ class SelfForcingTrainer(BaseTrainer):
     def load_critic(self):
         if self.train_cfg.critic_ckpt is None:
             print(f'critic checkpoint not specified, using bi-directional teacher weights.')
-            self.critic_model.load_state_dict(self.bidirectional_model.state_dict())
+            self.critic_model.load_state_dict(remove_module_prefix(self.bidirectional_model.state_dict()))
             return
         
         save_dict = versatile_load(self.train_cfg.critic_ckpt)
-        self.critic_model.load_state_dict(save_dict.get('critic_model'))
+        self.critic_model.load_state_dict(remove_module_prefix(save_dict.get('critic_model')))
         return
 
     def save(self, suffix: str = ''):
