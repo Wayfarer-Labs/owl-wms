@@ -289,6 +289,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.cfg_scale: float = self.train_cfg.cfg_scale  # cfg scale of the teacher
         self.denoising_steps  = self.train_cfg.n_steps
         self.ode_init_steps   = self.train_cfg.ode_init_steps
+        self.distill_steps    = self.train_cfg.distill_steps
         self.loss_module      = Loss_SelfForcing(self.bidirectional_model,
                                                  self.critic_model,
                                                  self.causal_model,
@@ -373,9 +374,9 @@ class SelfForcingTrainer(BaseTrainer):
         self.scheduler_causal   .load_state_dict(save_dict['scheduler_causal'])
         self.scheduler_critic   .load_state_dict(save_dict['scheduler_critic'])
         self.decoder            .load_state_dict(save_dict['decoder'])
-        self.distill_step_counter = save_dict['distillation_steps']
-        self.ode_init_step_counter = save_dict['initialization_steps']
-        self.log_step_counter   = save_dict['log_step_counter']
+        self.distill_step_counter   = save_dict['distillation_steps']
+        self.ode_init_step_counter  = save_dict['initialization_steps']
+        self.log_step_counter       = save_dict['log_step_counter']
 
 
     def load_critic(self):
@@ -444,7 +445,7 @@ class SelfForcingTrainer(BaseTrainer):
     
     @property
     def should_distill(self):
-        return self.distill_step_counter < self.train_cfg.ode_init_steps
+        return self.distill_step_counter < self.distill_steps
 
     @property
     def should_ode_init(self):

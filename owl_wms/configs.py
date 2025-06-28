@@ -32,6 +32,7 @@ class TrainingConfig:
     trainer_id : Optional[str] = None
     data_id : Optional[str] = None
     ode_init_steps : int = 1000
+    distill_steps : int = 20000
     n_steps : int = 4
     target_batch_size : int = 128
     batch_size : int = 2
