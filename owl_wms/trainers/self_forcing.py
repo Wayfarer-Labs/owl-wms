@@ -923,3 +923,26 @@ class SelfForcingTrainer(BaseTrainer):
                                  audio_scale=self.audio_scale)
 
             return frames
+
+    def test_av_window_kv_sampler(self):
+        from owl_wms.sampling.av_window_kv import AVWindowKVSampler
+        model = self.bidirectional_model
+        sampler = AVWindowKVSampler()
+        (clip_bnchw, audio, mouse, btn) = self._format_batch()
+        with self.ctx:
+            history_clip  = clip_bnchw  
+            history_audio = audio       
+            # -- we use history for these because av_sampler extends it by default
+            history_mouse = mouse       
+            history_btn   = btn         
+
+            frames, *_ = sampler(model, dummy_batch=history_clip,
+                                 audio=history_audio,
+                                 mouse=history_mouse,
+                                 btn=history_btn,
+                                 decode_fn=self.decoder_fn,
+                                 audio_decode_fn=self.audio_decoder_fn,
+                                 image_scale=self.vae_scale,
+                                 audio_scale=self.audio_scale)
+
+            return frames

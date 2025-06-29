@@ -90,8 +90,10 @@ class GameRFTAudio(nn.Module):
         Return velocities with optional CFG
         """
         B, N, *_   = x_t.shape
-        mouse_null = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
-        btn_null   = torch.zeros(B, N, self.config.n_buttons, device=x_t.device, dtype=x_t.dtype)
+        # mouse_null = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
+        # mouse_null = torch.zeros(B, N, 2, device=x_t.device, dtype=x_t.dtype)
+        mouse_null = torch.zeros_like(mouse)
+        btn_null   = torch.zeros_like(btn)
 
         mouse = mouse if mouse is not None else mouse_null
         btn   = btn   if btn   is not None else btn_null
