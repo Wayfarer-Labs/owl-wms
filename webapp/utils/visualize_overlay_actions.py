@@ -316,7 +316,7 @@ def _draw_video(
     fps: int = 30,
     arrow_scale_factor: Optional[float] = None,
     arrow_max_scale: Optional[float] = None,
-) -> list[np.ndarray]:
+) -> np.ndarray:
     """
     Draw video with input device monitoring overlays.
     
@@ -336,7 +336,7 @@ def _draw_video(
     if arrow_max_scale is not None:
         ARROW_MAX_SCALE = arrow_max_scale
 
-    video = video.float().cpu().numpy()
+    video = video.float().cpu().detach().numpy()
     
     # Get original dimensions
     original_height, original_width = video.shape[1], video.shape[2]
@@ -350,7 +350,7 @@ def _draw_video(
         
         frames = [cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC) for frame in video]
         # UI scaling ratio - keep icons at base size since we're scaling up small frames
-        ratio = 1.0
+        ratio = 0.5
     else:
         frames = video
         # UI scaling ratio - scale icons proportional to how much larger the frame is than minimum
@@ -365,7 +365,7 @@ def _draw_video(
     if save_path is not None:
         imio.mimsave(save_path, [f.astype(np.uint8) for f in frames], fps=fps)
 
-    return frames
+    return np.stack(frames, axis=0) # [num_frames, 256, 256, 3]
 
 
 # Example usage

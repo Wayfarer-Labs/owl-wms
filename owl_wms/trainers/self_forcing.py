@@ -1,11 +1,11 @@
 from __future__ import annotations
-from ast import BoolOp
 import os
-import random
+import numpy as np
 from copy import deepcopy
 from ema_pytorch import EMA
+from moviepy.editor import VideoClip, ImageSequenceClip
+from moviepy.audio.AudioClip import AudioArrayClip
 import torch ; from torch import Tensor
-from contextlib import nullcontext
 from typing import Callable, ContextManager, Optional, Any
 import einops as eo
 import torch.nn.functional as F
@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_, get_total_norm
 from torch.nn.parallel import DistributedDataParallel
 from owl_wms.trainers.base import BaseTrainer
-from functools import partial, wraps
+from functools import partial
 from owl_wms.models.gamerft_audio import GameRFTAudio
 from owl_wms.models import get_model_cls
 from owl_wms.utils import (
@@ -23,6 +23,7 @@ from owl_wms.utils import (
 from owl_wms.data import get_loader
 from owl_wms.utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn, make_batched_audio_decode_fn
 from owl_wms.schedulers import get_scheduler_cls
+from webapp.utils.visualize_overlay_actions import _draw_video
 from owl_wms.configs import TrainingConfig, TransformerConfig as ModelConfig, WANDBConfig as LoggingConfig
 import wandb
 from owl_wms.utils.logging import LogHelper, to_wandb_av
@@ -235,6 +236,7 @@ class SelfForcingTrainer(BaseTrainer):
         self.bidirectional_model: GameRFTAudio = get_model_cls(model_id)(teacher_cfg) ; self.load_bidirectional()
         self.causal_model:        GameRFTAudio = remove_learned_abs_poc_enc(get_model_cls(model_id)(student_cfg)) 
         self.ema                               = EMA(self.causal_model, beta=0.999, update_after_step=200, update_every=1)
+        self.ema.init_ema(self.causal_model)
         self.critic_model:        GameRFTAudio = deepcopy(self.bidirectional_model)
 
         self.decoder: nn.Module         = get_decoder_only(self.train_cfg.vae_id,
@@ -345,11 +347,12 @@ class SelfForcingTrainer(BaseTrainer):
         self.critic_model       = DistributedDataParallel(self.critic_model) if self.world_size > 1 else self.critic_model
 
     def init_hardware(self):
-        self.causal_model        = self.causal_model.to(self.device).train()
-        self.critic_model        = self.critic_model.to(self.device).train()
+        self.causal_model        = self.causal_model.to(self.device).train().bfloat16()
+        self.critic_model        = self.critic_model.to(self.device).train().bfloat16()
         self.bidirectional_model = self.bidirectional_model\
                                                     .to(self.device).eval().bfloat16()
         self.loss_module         = self.loss_module .to(self.device).eval().bfloat16()
+
 
     def load_bidirectional(self):
         assert self.train_cfg.teacher_ckpt is not None
@@ -367,7 +370,7 @@ class SelfForcingTrainer(BaseTrainer):
         
         save_dict      = super().load_causal    (self.train_cfg.student_ckpt)
         self.causal_model       .load_state_dict(remove_module_prefix(remove_learned_posenc_state_dict(save_dict.get('causal_model') or save_dict['model']))) # we removed the posenc
-        self.ema                .load_state_dict(save_dict['ema'])
+        self.ema                .load_state_dict(remove_module_prefix(save_dict['ema']))
         self.opt_causal         .load_state_dict(save_dict['opt_causal'])
         self.opt_critic         .load_state_dict(save_dict['opt_critic'])
         self.scaler             .load_state_dict(save_dict['scaler'])
@@ -377,7 +380,6 @@ class SelfForcingTrainer(BaseTrainer):
         self.distill_step_counter   = save_dict['distillation_steps']
         self.ode_init_step_counter  = save_dict['initialization_steps']
         self.log_step_counter       = save_dict['log_step_counter']
-
 
     def load_critic(self):
         if self.train_cfg.critic_ckpt is None:
@@ -465,9 +467,8 @@ class SelfForcingTrainer(BaseTrainer):
                                 mouse       = info['mouse'])
 
             self.causal_model       .eval()
-            causal_samples = sample_fn(module_from_ddp(self.causal_model))
-            causal_clip    = causal_samples['clean_latents_video']
-            causal_audio   = causal_samples['clean_latents_audio']
+            causal_clip    = info['clip']
+            causal_audio   = info['audio']
 
             self.bidirectional_model.eval()
             bidirectional_samples = sample_fn(module_from_ddp(self.bidirectional_model))
@@ -685,7 +686,6 @@ class SelfForcingTrainer(BaseTrainer):
 
         return {**loss, 'grad_norm': grad_norm}
 
-
     def train(self):
         timer = Timer()
 
@@ -754,6 +754,52 @@ class SelfForcingTrainer(BaseTrainer):
             self.distill_step_counter += 1
 
         self.save(suffix='_distill_done')
+
+
+    def _render_samples(self, model: GameRFTAudio,
+                        path: str | None = None,
+                        overlay_actions: bool = True,
+                        as_wandb: bool = True) -> wandb.Video | tuple[list[np.ndarray], list[np.ndarray]]:
+        
+        model = module_from_ddp(model)
+        model.eval()
+        
+        path = path or f'eval_{self.log_step_counter}.mp4'
+
+        clip_bnchw, audio, mouse, btn = self._format_batch()
+        rollout_info = self.sampler.autoregressive_rollout(
+            model       = model,
+            clip_bnchw  = clip_bnchw,
+            audio_bcd   = audio,
+            btn         = btn,
+            mouse       = mouse)
+        
+        latent_frames = rollout_info['clean_latents_video'][0:1, ::]
+        latent_audio  = rollout_info['clean_latents_audio'][0:1, ::]
+        btn           = btn[0:1, ::]
+        mouse         = mouse[0:1, ::]
+        
+        audio_frames = self.audio_decoder_fn(latent_audio.bfloat16()  * self.audio_scale).cpu().float().detach().numpy()
+        video_frames = self.decoder_fn      (latent_frames.bfloat16() * self.vae_scale)  .cpu().float().detach()
+        video_frames = ((video_frames * 255) / 2 + 127.5).permute(0,1,3,4,2).to(dtype=torch.uint8).contiguous() # to be uint8
+        if overlay_actions:
+            video_frames = _draw_video(video_frames[0,::], # to be nhwc
+                                       btn[0].bool(), mouse[0], fps=60)
+            video_frames = video_frames[None, ::]
+        else:
+            video_frames = video_frames.cpu().detach().numpy()
+
+        video_frames = video_frames.astype('uint8')
+        mp4: VideoClip = ImageSequenceClip(list(video_frames[0,::]), fps=60).set_audio(AudioArrayClip(audio_frames[0,::], fps=44100))
+
+        mp4.write_videofile(path,
+                            fps=60,
+                            codec='libx264',
+                            audio_codec='aac',
+                            temp_audiofile=f'tmp_audio_{self.log_step_counter}.m4a',
+                            remove_temp=True)
+
+        return wandb.Video(path, format='mp4')
 
     def test_self_forcing_sampler(self, model: GameRFTAudio):
         with self.ctx:
@@ -835,4 +881,45 @@ class SelfForcingTrainer(BaseTrainer):
                                                     audio_scale     = self.audio_scale)
             
             print(f'{len(frames)=} {frames[0].shape=}')
+            return frames
+
+
+    def test_my_sampler(self):
+        (clip_bnchw, audio, mouse, btn) = self._format_batch()
+        with self.ctx:
+            sampler = deepcopy(self.sampler)
+            sampler.causal_model = self.bidirectional_model
+
+
+            info = sampler.autoregressive_rollout(model=self.bidirectional_model,
+                                 clip_bnchw=clip_bnchw,
+                                 audio_bcd=audio,
+                                 mouse=mouse,
+                                 btn=btn,
+                                 cfg_override=0.0)
+            frames = info['clean_latents_video']
+            frames_rgb = self.decoder_fn(frames * self.vae_scale)
+            return frames_rgb
+
+    def test_cache_sampler(self):
+        from owl_wms.sampling.shab_sampler import AVCachingSampler
+        model = self.bidirectional_model
+        sampler = AVCachingSampler()
+        (clip_bnchw, audio, mouse, btn) = self._format_batch()
+        with self.ctx:
+            history_clip  = clip_bnchw  [:, :self.context_len]
+            history_audio = audio       [:, :self.context_len]
+            # -- we use history for these because av_sampler extends it by default
+            history_mouse = mouse       [:, :self.context_len]
+            history_btn   = btn         [:, :self.context_len]
+
+            frames, *_ = sampler(model.core, dummy_batch=history_clip,
+                                 audio=history_audio,
+                                 mouse=history_mouse,
+                                 btn=history_btn,
+                                 decode_fn=self.decoder_fn,
+                                 audio_decode_fn=self.audio_decoder_fn,
+                                 image_scale=self.vae_scale,
+                                 audio_scale=self.audio_scale)
+
             return frames

@@ -10,6 +10,7 @@ import torch
 from owl_wms.configs import Config
 from owl_wms.utils.ddp import setup
 from owl_wms.trainers.self_forcing import SelfForcingTrainer
+import wandb
 
 CONFIG_PATH = "configs/self_forcing.yaml"
 
@@ -24,42 +25,46 @@ trainer = SelfForcingTrainer(
 )
 MODEL = trainer.bidirectional_model
 
-sf_frames = trainer.test_self_forcing_sampler(model=MODEL)
-hm_frames = trainer.test_hail_mary_sampler(model=MODEL)
-av_frames = trainer.test_av_window_sampler(model=MODEL)
+wandb_video = trainer._render_samples(model=MODEL, as_wandb=True)
+wandb_video2= trainer._
+wandb.log({"video": wandb_video})
+
+# sf_frames = trainer.test_self_forcing_sampler(model=MODEL)
+# hm_frames = trainer.test_hail_mary_sampler(model=MODEL)
+# av_frames = trainer.test_av_window_sampler(model=MODEL)
 
 
-target_av_frames = av_frames[0, :6]
-target_sf_frames = sf_frames[0, :6]
-target_hm_frames = hm_frames[0, :6]
-import os
-import cv2
-from PIL import Image
+# target_av_frames = av_frames[0, :6]
+# target_sf_frames = sf_frames[0, :6]
+# target_hm_frames = hm_frames[0, :6]
+# import os
+# import cv2
+# from PIL import Image
 
-# TODO Save last 3 frames as png, vertically stacked
-# Helper to take the last N frames and stack them vertically into one PNG
-def save_vertical_stack(frames, path, ):
-    imgs = []
-    for f in frames:
-        # unwrap any extra batch/frame dims into a [C,H,W] tensor
-        # now f is [C,H,W], want as HWC:
-        array = (f.permute(1,2,0).cpu().float().numpy() * 255).clip(0,255).astype("uint8")
+# # TODO Save last 3 frames as png, vertically stacked
+# # Helper to take the last N frames and stack them vertically into one PNG
+# def save_vertical_stack(frames, path, ):
+#     imgs = []
+#     for f in frames:
+#         # unwrap any extra batch/frame dims into a [C,H,W] tensor
+#         # now f is [C,H,W], want as HWC:
+#         array = (f.permute(1,2,0).cpu().float().numpy() * 255).clip(0,255).astype("uint8")
 
-        imgs.append(Image.fromarray(array))
+#         imgs.append(Image.fromarray(array))
 
-    # compute stacked canvas size
-    widths, heights = zip(*(im.size for im in imgs))
-    canvas = Image.new("RGB", (max(widths), sum(heights)))
-    y = 0
-    for im in imgs:
-        canvas.paste(im, (0, y))
-        y += im.size[1]
+#     # compute stacked canvas size
+#     widths, heights = zip(*(im.size for im in imgs))
+#     canvas = Image.new("RGB", (max(widths), sum(heights)))
+#     y = 0
+#     for im in imgs:
+#         canvas.paste(im, (0, y))
+#         y += im.size[1]
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    canvas.save(path)
+#     os.makedirs(os.path.dirname(path), exist_ok=True)
+#     canvas.save(path)
 
-# Save the last 3 frames for both samplers
-save_vertical_stack(target_av_frames, "output_frames/av_last3.png")
-save_vertical_stack(target_sf_frames, "output_frames/sf_last3.png")
-save_vertical_stack(target_hm_frames, "output_frames/hm_last3.png")
+# # Save the last 3 frames for both samplers
+# save_vertical_stack(target_av_frames, "output_frames/av_last3.png")
+# save_vertical_stack(target_sf_frames, "output_frames/sf_last3.png")
+# save_vertical_stack(target_hm_frames, "output_frames/hm_last3.png")
 print("Saved stacked frames in output_frames/") 
