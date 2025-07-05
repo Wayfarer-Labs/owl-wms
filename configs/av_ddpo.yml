@@ -1,0 +1,94 @@
+# Config for DDPO trainer - based on basic.yml
+model:
+  model_id: game_rft_audio
+  sample_size: 4
+  channels: 128
+  audio_channels: 64
+  
+  n_layers: 12 # 25
+  n_heads: 12 # 24
+  d_model: 768 # 1536
+
+  tokens_per_frame: 17
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.1
+  n_frames: 60
+
+  causal: false
+
+train:
+  trainer_id: ddpo
+  data_id: cod_s3_audio
+  data_kwargs:
+    window_length: 60
+    bucket_name: cod-data-latent-360x640to4x4
+
+  # DDPO-specific parameters
+  sampling_steps: 64 # might not be right?
+  timestep_fraction: 0.5
+  clip_range: 0.2
+  adv_clip_max: 5.0
+  sample_batch_size: 16 # TODO: Remove this maybe? Is it used?
+  num_batches_per_epoch: 8
+  num_inner_epochs: 1
+  
+  # Reward function configuration
+  # Option 1: Load from file
+  # reward_fn:
+  #   module: "rewards/example_reward.py"
+  #   function: "reward_function"
+  # Option 2: Load from importable module
+  # reward_fn: "my_rewards.simple_reward"
+  reward_fn: 
+    module: "/home/pcurtin/owl-wms/rewards.py"
+    function: "darkness_reward"
+
+  # Standard training parameters
+  target_batch_size: 256
+  batch_size: 4
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    eps: 1.0e-8
+    betas: [0.9, 0.999]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/ddpo
+  resume_ckpt: null
+
+  sample_interval: 1000
+  save_interval: 5000
+
+  # VAE configuration (required for DDPO)
+  vae_id: null
+  vae_cfg_path: ../models/cod_128x.yml
+  vae_ckpt_path: ../models/cod_128x_30k_ema.pt
+  vae_scale: 0.13
+  audio_vae_scale: 0.17
+  vae_batch_size: 4
+
+  audio_vae_id: null
+  audio_vae_cfg_path: ../models/cod_audio.yml
+  audio_vae_ckpt_path: ../models/cod_audio_20k_ema.pt
+
+  sampler_id: av_window
+  sampler_kwargs:
+    n_steps: 20
+    cfg_scale: 1.3
+    window_length: 60
+    num_frames: 120
+    noise_prev: 0.2
+    only_return_generated: false
+    
+  n_samples: 4
+
+wandb:
+  name: peter_curtin
+  project: owl
+  run_name: av_ddpo
