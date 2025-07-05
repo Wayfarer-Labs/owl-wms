@@ -12,6 +12,7 @@ import tqdm
 from ema_pytorch import EMA
 import importlib.util
 import os
+import math
 
 from .base import BaseTrainer
 from ..utils import freeze, Timer, find_unused_params
@@ -185,6 +186,8 @@ class DDPOTrainer(BaseTrainer):
         """
         Sample a batch of videos using the current model with log probability tracking.
         
+        Treats the model as a standard denoising diffusion model with fresh noise sampling.
+        
         :param batch_vid: Input video frames 
         :param batch_mouse: Mouse movement data
         :param batch_btn: Button press data
@@ -204,7 +207,7 @@ class DDPOTrainer(BaseTrainer):
             model = get_ema_core()
             batch_size = batch_vid.shape[0]
             
-            # Initialize with noise (rectified flow starts from noise)
+            # Initialize with noise
             x = torch.randn_like(batch_vid)
             n_frames = batch_mouse.shape[1]  # Get sequence length from mouse data
             ts = torch.ones(batch_size, n_frames, device=x.device, dtype=x.dtype)
@@ -215,24 +218,33 @@ class DDPOTrainer(BaseTrainer):
             all_log_probs = []
             all_timesteps = [ts.clone()]
             all_preds = []
+            all_noise = []
             
             # Sampling loop with log probability tracking
             for step in range(self.sampling_steps):
                 with self.ctx:
-                    # Get model prediction
+                    # Get model prediction (this is our v-network prediction)
                     pred_video, pred_audio = model(x, batch_audio, ts, batch_mouse, batch_btn)
                     all_preds.append((pred_video.clone(), pred_audio.clone()))
                     
-                    # Rectified flow update: x = x - pred_video * dt
                     if step < self.sampling_steps - 1:
-                        next_x = x - pred_video * dt
+                        # Sample fresh noise for the transition
+                        noise = torch.randn_like(x)
+                        all_noise.append(noise.clone())
+                        
+                        # Standard DDPM update: x = x - pred_video * dt + noise * sqrt(dt)
+                        # where pred_video is the velocity field (v-network output)
+                        next_x = x - pred_video * dt + noise * torch.sqrt(torch.tensor(dt, device=x.device))
                         next_ts = ts - dt
                         
-                        # Compute log probability of the transition
-                        # For rectified flow, this is the log probability of next_x given current state
-                        # Simplified computation - can be made more sophisticated
-                        diff = next_x - (x - pred_video * dt)
-                        log_prob = -0.5 * torch.sum(diff ** 2, dim=(1, 2, 3, 4))
+                        # Empirical variance for velocity difference
+                        actual_velocity = (x - next_x) / dt
+                        velocity_var = torch.var(actual_velocity).item() + 1e-6
+                        # Clamp to a reasonable minimum to avoid division by zero
+                        velocity_var = max(velocity_var, 1e-6)
+                        
+                        # Log probability based on velocity prediction
+                        log_prob = -0.5 * torch.sum((pred_video - actual_velocity) ** 2, dim=(1, 2, 3, 4)) / velocity_var
                         
                         all_latents.append(next_x.clone())
                         all_log_probs.append(log_prob)
@@ -245,6 +257,8 @@ class DDPOTrainer(BaseTrainer):
             all_latents = torch.stack(all_latents, dim=1)  # (batch, timesteps+1, ...)
             all_log_probs = torch.stack(all_log_probs, dim=1)  # (batch, timesteps)
             all_timesteps = torch.stack(all_timesteps[:-1], dim=1)  # (batch, timesteps)
+            all_noise = torch.stack(all_noise, dim=1)  # (batch, timesteps, ...)
+            
             # Separate video and audio predictions
             all_video_preds = torch.stack([pred[0] for pred in all_preds], dim=1)  # (batch, timesteps, ...)
             all_audio_preds = torch.stack([pred[1] for pred in all_preds], dim=1)  # (batch, timesteps, ...)
@@ -256,6 +270,7 @@ class DDPOTrainer(BaseTrainer):
                 'timesteps': all_timesteps,
                 'video_predictions': all_video_preds,
                 'audio_predictions': all_audio_preds,
+                'noise': all_noise,
                 'final_latents': x,
                 'mouse': batch_mouse,
                 'buttons': batch_btn,
@@ -305,7 +320,10 @@ class DDPOTrainer(BaseTrainer):
         :param advantages: Computed advantages
         :return: PPO loss
         """
-        # Importance sampling ratio
+        # https://github.com/pmcurtin/owl-wms/blob/5f5a118f9a02be4dea1e75460494e9354a80f194/resources/train.py#L539
+        # Importance sampling 
+        # j is a timestep
+        # ratio = torch.exp(log_prob - sample["log_probs"][:, j])
         ratio = torch.exp(log_probs - old_log_probs)
         
         # Clipped advantages
@@ -352,14 +370,13 @@ class DDPOTrainer(BaseTrainer):
                 # Note: mouse and buttons need to be full sequences for this model
                 current_pred_video, current_pred_audio = model.core(latents, samples['audio'], timesteps, samples['mouse'], samples['buttons'])
                 
-                # TODO: Should we be using the audio here somewhow too?
-
-                # Compute log probability under current policy
-                # For rectified flow, the log prob is related to how well we predict the flow
-                dt = 1.0 / self.sampling_steps
-                expected_next = latents - current_pred_video * dt
-                diff = next_latents - expected_next
-                log_prob = -0.5 * torch.sum(diff ** 2, dim=(1, 2, 3, 4))
+                # Empirical variance for velocity difference (use detached tensors to avoid gradients through var)
+                actual_velocity = (latents - next_latents).detach() / (1.0 / self.sampling_steps)
+                velocity_var = torch.var(actual_velocity).item() + 1e-6
+                velocity_var = max(velocity_var, 1e-6)
+                
+                # Log probability based on velocity prediction
+                log_prob = -0.5 * torch.sum((current_pred_video - actual_velocity) ** 2, dim=(1, 2, 3, 4)) / velocity_var
                 
                 # Compute PPO loss
                 loss = self.ppo_loss(log_prob, old_log_probs, advantages) / self.accum_steps
@@ -491,7 +508,7 @@ class DDPOTrainer(BaseTrainer):
             # if self.logging_cfg is not None:
             wandb.log(log_dict, step=self.total_step_counter)
             
-            print(f"Epoch {epoch}: Reward {log_dict['reward_mean']:.3f} � {log_dict['reward_std']:.3f}")
+            print(f"Epoch {epoch}: Reward {log_dict['reward_mean']:.3f} ± {log_dict['reward_std']:.3f}")
         
         self.total_step_counter += 1
         
