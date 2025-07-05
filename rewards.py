@@ -5,3 +5,7 @@ def random_reward(*args):
     batch_size = len(args[0])
 
     return np.random.random(batch_size)
+
+def darkness_reward(videos, *args):
+
+    return -videos.mean(dim=(1,2,3,4))

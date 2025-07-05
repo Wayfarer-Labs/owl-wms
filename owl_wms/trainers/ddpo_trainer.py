@@ -276,9 +276,11 @@ class DDPOTrainer(BaseTrainer):
             raise ValueError("Reward function not set. Use set_reward_function() to set it.")
         
         # Decode latents to videos
-        with torch.no_grad():
-            videos = self.decode_fn(final_latents * self.train_cfg.vae_scale)
-        
+        # with torch.no_grad():
+        #     videos = self.decode_fn(final_latents * self.train_cfg.vae_scale)
+        # TODO: undo this
+        videos = final_latents
+
         # Compute rewards asynchronously
         if audio_data is not None:
             rewards_future = self.executor.submit(self.reward_fn, videos, mouse_data, button_data, audio_data)
@@ -350,6 +352,8 @@ class DDPOTrainer(BaseTrainer):
                 # Note: mouse and buttons need to be full sequences for this model
                 current_pred_video, current_pred_audio = model.core(latents, samples['audio'], timesteps, samples['mouse'], samples['buttons'])
                 
+                # TODO: Should we be using the audio here somewhow too?
+
                 # Compute log probability under current policy
                 # For rectified flow, the log prob is related to how well we predict the flow
                 dt = 1.0 / self.sampling_steps
@@ -406,7 +410,8 @@ class DDPOTrainer(BaseTrainer):
         for batch_idx, (batch_vid, batch_audio, batch_mouse, batch_btn) in enumerate(tqdm(
             loader,
             desc=f"Epoch {epoch}: Sampling",
-            disable=self.rank != 0
+            disable=self.rank != 0,
+            total=self.num_batches_per_epoch
         )):
             # Prepare batch data
             batch_vid = batch_vid.cuda().bfloat16() / self.train_cfg.vae_scale
@@ -427,10 +432,11 @@ class DDPOTrainer(BaseTrainer):
             samples['rewards'] = rewards
             
             all_samples.append(samples)
-            all_rewards.extend(rewards.cpu().numpy())
+            all_rewards.extend(rewards.cpu().float().numpy())
             
             # Limit number of batches for sampling
             if batch_idx >= self.num_batches_per_epoch - 1:
+                
                 break
         
         # Compute advantages
@@ -482,8 +488,8 @@ class DDPOTrainer(BaseTrainer):
                     else:
                         log_dict[k] = np.mean(v)
             
-            if self.logging_cfg is not None:
-                wandb.log(log_dict, step=self.total_step_counter)
+            # if self.logging_cfg is not None:
+            wandb.log(log_dict, step=self.total_step_counter)
             
             print(f"Epoch {epoch}: Reward {log_dict['reward_mean']:.3f} � {log_dict['reward_std']:.3f}")
         

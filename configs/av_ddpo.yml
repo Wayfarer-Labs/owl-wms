@@ -6,8 +6,8 @@ model:
   audio_channels: 64
   
   n_layers: 12 # 25
-  n_heads: 24
-  d_model: 1536
+  n_heads: 12 # 24
+  d_model: 768 # 1536
 
   tokens_per_frame: 17
   n_buttons: 11
@@ -30,8 +30,8 @@ train:
   timestep_fraction: 0.5
   clip_range: 0.2
   adv_clip_max: 5.0
-  sample_batch_size: 16
-  num_batches_per_epoch: 128
+  sample_batch_size: 16 # TODO: Remove this maybe? Is it used?
+  num_batches_per_epoch: 8
   num_inner_epochs: 1
   
   # Reward function configuration
@@ -43,16 +43,16 @@ train:
   # reward_fn: "my_rewards.simple_reward"
   reward_fn: 
     module: "/home/pcurtin/owl-wms/rewards.py"
-    function: "random_reward"
+    function: "darkness_reward"
 
   # Standard training parameters
   target_batch_size: 256
-  batch_size: 2
+  batch_size: 4
   epochs: 200
 
   opt: AdamW
   opt_kwargs:
-    lr: 2.0e-4
+    lr: 1.0e-3
     weight_decay: 1.0e-4
     eps: 1.0e-8
     betas: [0.9, 0.999]
@@ -89,6 +89,6 @@ train:
   n_samples: 4
 
 wandb:
-  name: shahbuland
-  project: video_models
-  run_name: ddpo_basic
+  name: peter_curtin
+  project: owl
+  run_name: av_ddpo

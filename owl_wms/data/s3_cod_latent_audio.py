@@ -84,7 +84,9 @@ class S3CoDLatentAudioDataset(IterableDataset):
                     tar_data = response['Body'].read()
                     self.tar_queue.add(tar_data)
                 except Exception as e:
-                    print(f"Error downloading tar {tar_path}: {e}")
+                    # TODO: Uncomment this before merge - can't stand the error messages.
+                    # print(f"Error downloading tar {tar_path}: {e}")
+                    pass
             else:
                 time.sleep(1)
 
