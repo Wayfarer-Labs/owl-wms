@@ -16,11 +16,11 @@ class FlatVideoRoPE(nn.Module):
     """
     RoPE on video + audio assuming each frame flat'd to [n_frame_toks+n_audio_toks]
     """
-    def __init__(self, cfg):
+    def __init__(self, config):
         super().__init__()
-        d_head = cfg.d_model // cfg.n_heads
-        self.m = cfg.tokens_per_frame
-        self.p = cfg.sample_size  # video is PxP pixels
+        d_head = config.d_model // config.n_heads
+        self.m = config.tokens_per_frame
+        self.p = config.sample_size  # video is PxP pixels
         assert self.m == self.p**2 + 1
 
         # pre-compute cos / sin tables
