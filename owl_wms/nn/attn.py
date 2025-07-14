@@ -60,11 +60,8 @@ class Attn(nn.Module):
         self.rope = FlatVideoRoPE(config)
         #self.rope = FrameRoPE(config)
 
-        self.tokens_per_frame = config.tokens_per_frame
-        self.causal = config.causal
-
     @torch.compile
-    def forward(self, x, kv_cache=None):
+    def forward(self, x, block_mask, kv_cache=None):
         B, L, _ = x.shape
 
         qkv = self.qkv(x)
@@ -82,17 +79,7 @@ class Attn(nn.Module):
             if kv_cache.should_update:
                 kv_cache.update(k.clone(), v.clone(), self.layer_ind)
 
-        q, k = self.rope(q, k, offset)
-
-        if not self.causal:
-            block_mask = None  # default: full unmasked attention
-        else:
-            block_mask = create_causal_block_mask(
-                n_tokens=L + offset,
-                tokens_per_frame=self.tokens_per_frame,
-                n_cached_tokens=offset,
-                device=x.device
-            )
+        q, k = self.rope(q, k)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.shape[0], L, -1)
@@ -114,10 +101,10 @@ class DiTBlock(nn.Module):
         self.adaln2 = AdaLN(dim)
         self.gate2 = Gate(dim)
 
-    def forward(self, x, cond, kv_cache = None):
+    def forward(self, x, cond, block_mask, kv_cache = None):
         res1 = x.clone()
         x = self.adaln1(x, cond)
-        x = self.attn(x, kv_cache)
+        x = self.attn(x, block_mask, kv_cache)
         x = self.gate1(x, cond)
         x = res1 + x
 
@@ -133,21 +120,42 @@ class DiT(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.tokens_per_frame = config.tokens_per_frame
+        self.causal = config.causal
+
         blocks = []
         for i in range(config.n_layers):
             blocks.append(DiTBlock(config))
             blocks[-1].attn.layer_ind = i
         self.blocks = nn.ModuleList(blocks)
 
+    def get_block_mask(self, x, kv_cache):
+        if not self.causal:
+            return None
+        B, L, _ = x.shape
+        offset = kv_cache.length_at(0) if kv_cache is not None else 0
+        return create_causal_block_mask(
+            n_tokens=L + offset,
+            tokens_per_frame=self.tokens_per_frame,
+            n_cached_tokens=offset,
+            device=x.device
+        )
+
     def forward(self, x, cond, kv_cache = None):
+        block_mask = self.get_block_mask(x, kv_cache)
         for block in self.blocks:
-            x = block(x, cond, kv_cache)
+            x = block(x, cond, block_mask, kv_cache)
 
         return x
 
 class UViT(nn.Module):
+    get_block_mask = DiT.get_block_mask
+
     def __init__(self, config):
         super().__init__()
+
+        self.tokens_per_frame = config.tokens_per_frame
+        self.causal = config.causal
 
         blocks = []
         for i in range(config.n_layers):
@@ -164,6 +172,8 @@ class UViT(nn.Module):
         self.skip_projs = nn.ModuleList(skip_projs)
 
     def forward(self, x, cond, kv_cache = None):
+        block_mask = self.get_block_mask(x, kv_cache)
+
         # Cache early block outputs for skip connections
         early_features = []
         n_blocks = len(self.blocks)
@@ -171,11 +181,11 @@ class UViT(nn.Module):
 
         # Early blocks
         for i in range(mid_idx):
-            x = self.blocks[i](x, cond, kv_cache)
+            x = self.blocks[i](x, cond, block_mask, kv_cache)
             early_features.append(x)
 
         # Middle block (if odd number of layers)
-        x = self.blocks[mid_idx](x, cond, kv_cache)
+        x = self.blocks[mid_idx](x, cond, block_mask, kv_cache)
 
         # Late blocks with skip connections
         for i in range(mid_idx + 1, n_blocks):
