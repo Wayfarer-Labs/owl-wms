@@ -220,5 +220,35 @@ def test_rope_speed():
     print(f"Batch size: {batch_size}, Sequence length: {seq_len}")
     print(f"Heads: {config.n_heads}, Head dim: {d_head}")
 
+
+def test_flat_video_rope_integrity():
+    from types import SimpleNamespace
+    import numpy as np
+
+    cfg = SimpleNamespace(
+        d_model=512,
+        n_heads=8,
+        tokens_per_frame=17,      # 16 video + 1 audio
+        sample_size=4,       # 4×4 → 16 video tokens
+        n_frames=8
+    )
+
+    rope = FlatVideoRoPE(cfg)  # use cpu for cross-device seeded rng
+
+    # use numpy rng - reproducable across machines
+    rng = np.random.default_rng(seed=0)
+    shape = (2, cfg.n_heads, cfg.n_frames * cfg.tokens_per_frame, cfg.d_model)
+    q = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32))
+    k = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32))
+
+    with torch.no_grad():
+        q_out, k_out = rope(q, k)
+
+    checksum = (q_out.sum() + k_out.sum()).item()
+
+    assert checksum == 484.2119140625, checksum
+    print("FlatVideoRoPE implementation consistent")
+
+
 if __name__ == "__main__":
     test_rope_speed()
