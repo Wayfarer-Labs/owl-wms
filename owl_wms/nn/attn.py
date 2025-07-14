@@ -84,7 +84,7 @@ class Attn(nn.Module):
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.shape[0], L, -1)
 
-        return self.out(x)
+        return self.out(attn_out)
 
 
 class DiTBlock(nn.Module):
