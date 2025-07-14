@@ -25,9 +25,9 @@ class FlatVideoRoPE(nn.Module):
 
         # pre-compute cos / sin tables
         vid_ang = RotaryEmbedding(d_head // 4, freqs_for="pixel", max_freq=256)\
-            .get_axial_freqs(cfg.n_frames, self.p, self.p)[:4096]
+            .get_axial_freqs(config.n_frames, self.p, self.p)
         aud_ang = RotaryEmbedding(d_head // 2)\
-            .get_axial_freqs(cfg.n_frames)[:4096]
+            .get_axial_freqs(config.n_frames)
 
         self.register_buffer("vcos", vid_ang.cos(), persistent=False)
         self.register_buffer("vsin", vid_ang.sin(), persistent=False)
