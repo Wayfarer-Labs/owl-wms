@@ -188,7 +188,7 @@ if __name__ == "__main__":
     start = time.time()
     batch = next(iter(loader))
     video_latent, audio_latent, mouse, button = batch
-    for i in range(2, 6):
+    for i in range(0, 6):
         BASE_IDX=i
         basedir = f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}"
         os.makedirs(basedir, exist_ok=True)
@@ -198,9 +198,9 @@ if __name__ == "__main__":
         torch.save(button,       f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/buttons.pt")
     end = time.time()
     first_time = end - start
-    
+
     start = time.time()
-    batch = next(iter(loader)) 
+    batch = next(iter(loader))
     end = time.time()
     second_time = end - start
     
