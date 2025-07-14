@@ -22,25 +22,27 @@ def checkpoint(function, *args, **kwargs):
     return torch_checkpoint(function, *args, **kwargs)
 
 
-def create_causal_block_mask(tokens_per_frame: int, n_new_tokens: int, n_cached_tokens: int, device: torch.device):
-    """
-    Build a full (total_tokens × total_tokens) BlockMask that:
-      - lets each token attend within its frame of size tokens_per_frame
-      - lets it attend to any earlier frame
-      - but in the final frame, no attention to frame 0
-    Row index q is interpreted as absolute position q+offset.
-    """
-    total_tokens = n_cached_tokens + n_new_tokens
-    n_frames = total_tokens // tokens_per_frame
-    frame = torch.arange(total_tokens, device=device) // tokens_per_frame
+def create_causal_block_mask(n_tokens: int, tokens_per_frame: int, n_cached_tokens: int = 0, device="cpu"):
+    # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
+    assert 0 <= n_cached_tokens < n_tokens, "kv cache cannot exceept total tokens"
+
+    frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
+    n_frames = int(torch.div(n_tokens, tokens_per_frame, rounding_mode="floor"))
 
     def mask_mod(b, h, q, k):
         abs_q = q + n_cached_tokens
-        fq = frame[abs_q]
-        fk = frame[k]
-        return (fk <= fq) & ~((fq == n_frames - 1) & (fk == 0))
+        is_causal = frame_id[k] <= frame_id[abs_q]
+        is_wrap = (frame_id[abs_q] == n_frames - 1) & (frame_id[k] == 0)
+        return is_causal & ~is_wrap
 
-    return create_block_mask(mask_mod, None, None, n_new_tokens, total_tokens)
+    return create_block_mask(
+        mask_mod,
+        B=None,
+        H=None,
+        Q_LEN=n_tokens - n_cached_tokens,
+        KV_LEN=n_tokens,
+        device=device
+    )
 
 
 class Attn(nn.Module):
@@ -85,7 +87,12 @@ class Attn(nn.Module):
         if not self.causal:
             block_mask = None  # default: full unmasked attention
         else:
-            block_mask = create_causal_block_mask(self.tokens_per_frame, L, offset, device=x.device)
+            block_mask = create_causal_block_mask(
+                n_tokens=L + offset,
+                tokens_per_frame=self.tokens_per_frame,
+                n_cached_tokens=offset,
+                device=x.device
+            )
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.shape[0], L, -1)
@@ -205,13 +212,21 @@ class FinalLayer(nn.Module):
 def test_attn_mask():
     total_tokens = 64
     tokens_per_frame = 8
+    device = "cpu"
 
-    # Block causal mask
-    mask = create_block_causal_mask(total_tokens, tokens_per_frame)
+    block_mask = create_causal_block_mask(total_tokens, tokens_per_frame, device=device)
+
+    # Convert to dense grid
+    idx = torch.arange(total_tokens, device=device, dtype=torch.int32)
+    bool_mask = block_mask.mask_mod(0, 0, idx[:, None], idx[None, :])
+    dense_mask = torch.where(
+        bool_mask, torch.tensor(0., device=device),
+        torch.tensor(float("-inf"), device=device)
+    )
+
     import matplotlib.pyplot as plt
-
     plt.figure(figsize=(10,10))
-    plt.imshow(mask.float().cpu().numpy(), cmap='gray')
+    plt.imshow(dense_mask.float().cpu().numpy(), cmap='gray')
     plt.colorbar()
     plt.title(f'Block Causal Mask ({total_tokens} tokens, {tokens_per_frame} per frame)')
     plt.xlabel('Key Position')
