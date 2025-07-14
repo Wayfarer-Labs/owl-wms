@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import os
+import tarfile
 import yaml
 import torch
+import random
 from dataclasses import dataclass
 
 from owl_wms.configs import Config as RunConfig
@@ -45,11 +48,16 @@ class StreamingConfig:
     device: str = 'cuda'
     n_buttons: int = 11
     n_mouse_axes: int = 2
+    window_size: int = 30
     mouse_range: tuple[float, float] = (-1.0, 1.0)
+    history_tar_path: os.PathLike = None
+    tar_base_idx: int = 0
     video_latent_history_path: os.PathLike = None
     audio_latent_history_path: os.PathLike = None
     mouse_history_path: os.PathLike = None
     button_history_path: os.PathLike = None
+    with_audio: bool = False
+
 
     @property
     def frame_interval(self) -> float: return 1.0 / self.fps
@@ -76,3 +84,16 @@ class StreamingConfig:
     def button_history(self) -> torch.Tensor:
         if self.button_history_path is None:         raise ValueError("button_history_path is not set")
         return torch.load(self.button_history_path)
+    
+if __name__ == '__main__':
+    window_size = 60
+    with tarfile.open('/home/louis/owl-wms/webapp/static/0000.tar') as tar:
+        members = tar.getmembers()
+        for member in members:
+            if member.name.endswith('.latent.pt'):
+                f = tar.extractfile(member.name)
+                tensor_data = f.read()
+                tensor = torch.load(io.BytesIO(tensor_data))
+                num_base_indices = tensor.shape[0] // window_size
+                print(tensor.shape)
+                break

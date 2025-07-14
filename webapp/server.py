@@ -11,7 +11,7 @@ from webapp.user_session    import UserGameSession
 from webapp.utils.configs   import WebappConfig
 
 
-DEBUG = True 
+DEBUG = False 
 
 # -- lifespan
 config: WebappConfig    = None
@@ -90,4 +90,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()  

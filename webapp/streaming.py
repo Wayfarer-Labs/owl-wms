@@ -3,7 +3,7 @@ import torch
 import asyncio
 from torch import nn
 
-from webapp.utils.configs                           import StreamingConfig
+from webapp.utils.configs                           import StreamingConfig, SamplingConfig
 from webapp.utils.av_window_inference_pipeline      import AV_WindowInferencePipeline
 from owl_wms.configs                                import Config as RunConfig
 
@@ -63,7 +63,9 @@ class StreamingFrameGenerator:
         
         self.run_config       = run_config
         self.streaming_config = streaming_config
+
         self.debug            = debug
+
 
         self.av_window_inference_pipeline = AV_WindowInferencePipeline(
             config                  = self.run_config,
@@ -73,7 +75,8 @@ class StreamingFrameGenerator:
             mouse_history           = self.streaming_config.mouse_history,
             button_history          = self.streaming_config.button_history,
             return_only_generated   = True,
-            compile                 = True
+            compile                 = True,
+            with_audio              = self.streaming_config.with_audio
         )
 
 
@@ -110,11 +113,10 @@ class StreamingFrameGenerator:
             # between 0 and 255
             full_frames = (full_frames * 255).to(torch.uint8)
         else:
-            device_type = 'cuda' if self.streaming_config.device == 'cuda' else 'cpu'
-            with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with torch.no_grad():
                 full_frames, audio_frames = self.av_window_inference_pipeline(
-                    user_input_mouse=mouse.float().unsqueeze(0),  # NOTE Need batch dimension
-                    user_input_button=button.float().unsqueeze(0) # NOTE Need batch dimension
+                    user_input_mouse=mouse.bfloat16().unsqueeze(0),  # NOTE Need batch dimension
+                    user_input_button=button.bfloat16().unsqueeze(0) # NOTE Need batch dimension
                 )  # [3, 256, 256], [f, 2]
 
                 # convert the frames to a pixel-range of [0-255] from [-1,1]

@@ -1,4 +1,4 @@
-run_config_path: "webapp/checkpoints/configs/av.yml"
+run_config_path: "webapp/checkpoints/configs/video_only.yml"
 device: "cuda"
 
 stream_config:
@@ -8,11 +8,12 @@ stream_config:
   n_buttons: 11
   n_mouse_axes: 2
   mouse_range: [-1.0, 1.0]
-  video_latent_history_path: "webapp/static/histories/base1/video_latent.pt"
+  video_latent_history_path: "webapp/static/histories/base1/video_latent.pt" 
   audio_latent_history_path: "webapp/static/histories/base1/audio_latent.pt"
   mouse_history_path: "webapp/static/histories/base1/mouse.pt"
   button_history_path: "webapp/static/histories/base1/buttons.pt"
-  model_checkpoint_path: "webapp/checkpoints/models/av_dfot_35k_ema_200m.pt"
+  model_checkpoint_path: "webapp/checkpoints/models/v_dfot_170k_ema_200m.pt"
+  with_audio: false
 
 sampling_config:
   sampling_steps: 20
@@ -23,5 +24,3 @@ sampling_config:
   noise_prev: 0.25
 
 run_config: null # loaded at runtime from model_config_path, and used to access model and train config
-
-
