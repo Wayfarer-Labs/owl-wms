@@ -1,5 +1,6 @@
 from diffusers import FlowMatchEulerDiscreteScheduler
 import torch
+import numpy as np
 
 def get_sd3_euler(n_steps):
     scheduler = FlowMatchEulerDiscreteScheduler(

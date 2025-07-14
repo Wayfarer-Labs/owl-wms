@@ -97,7 +97,8 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     x = x.clamp(-1, 1)
     x = x[:max_samples].cpu().float()
     
-    if x.shape[2] > 3:
+    
+    if False: #x.shape[2] > 3:
         depth = x[:,:,3:4]
         flow = x[:,:,4:7]
         x = x[:,:,:3]

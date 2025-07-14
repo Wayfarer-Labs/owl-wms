@@ -20,3 +20,6 @@ def get_trainer_cls(trainer_id):
     if trainer_id == "sforce3":
         from .sf_trainer import SelfForceTrainer
         return SelfForceTrainer
+    if trainer_id == "ode_distill":
+        from .ode_regression import DistillODETrainer
+        return DistillODETrainer

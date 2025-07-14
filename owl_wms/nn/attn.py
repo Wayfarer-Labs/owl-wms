@@ -92,6 +92,7 @@ class Attn(nn.Module):
 
         return self.out(x)
 
+
 class DiTBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -112,7 +113,7 @@ class DiTBlock(nn.Module):
         x = self.attn(x, kv_cache)
         x = self.gate1(x, cond)
         x = res1 + x
-        
+
         res2 = x.clone()
         x = self.adaln2(x, cond)
         x = self.mlp(x)
@@ -174,12 +175,12 @@ class UViT(nn.Module):
             # Get corresponding early block output
             early_idx = n_blocks - 1 - i
             early_feat = early_features[early_idx]
-            
+
             # Concatenate early and current features
             skip_idx = i - (mid_idx + 1)
             x = torch.cat([x, early_feat], dim=-1)
             x = self.skip_projs[skip_idx](x)
-            
+
             x = self.blocks[i](x, cond, kv_cache)
 
         return x
@@ -202,7 +203,7 @@ class FinalLayer(nn.Module):
         return x
 
 def test_attn_mask():
-    total_tokens = 64 
+    total_tokens = 64
     tokens_per_frame = 8
 
     # Block causal mask
@@ -227,7 +228,7 @@ def test_kv_cache():
     # Create test configs
     config = TransformerConfig(
         n_layers=2,
-        n_heads=8, 
+        n_heads=8,
         d_model=64,
         tokens_per_frame=8
     )
@@ -249,7 +250,7 @@ def test_kv_cache():
 
     # First forward pass should populate cache
     out1 = model(x, cond, cache)
-    
+
     # Second pass should use cached values
     cache.disable_cache_updates()
     out2 = model(x, cond, cache)

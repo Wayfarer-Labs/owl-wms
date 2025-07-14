@@ -1,5 +1,5 @@
 """
-Variants of RoPE were becoming heavy for embeddings so 
+Variants of RoPE were becoming heavy for embeddings so
 I made a unique script for all of them here
 """
 
@@ -16,7 +16,6 @@ class FlatVideoRoPE(nn.Module):
     """
     RoPE on video + audio assuming each frame flat'd to [n_frame_toks+n_audio_toks]
     """
-    def __init__(self, config):
     def __init__(self, cfg):
         super().__init__()
         d_head = cfg.d_model // cfg.n_heads
@@ -98,8 +97,8 @@ class FrameRoPE(nn.Module):
             pos_emb.get_axial_freqs(config.n_frames, self.p+1, self.p+1),
             persistent=False
         )
-    
-    def forward(self, q, k):
+
+    def forward(self, q, k, offset=0):
         b,h,_,d = k.shape
 
         # q|k is [b,h,n_frames*tokens_per_frame,d]
@@ -133,8 +132,8 @@ class FrameRoPE(nn.Module):
         # Right pad and bottom pad
         with torch.no_grad():
             right_pad = torch.zeros(b, h, n, self.p, 1, d, device=k.device, dtype=k.dtype)
-            bottom_pad = torch.zeros(b, h, 1, self.p+1, d, device=k.device, dtype=k.dtype)
-        
+            bottom_pad = torch.zeros(b, h, n, 1, self.p+1, d, device=k.device, dtype=k.dtype)
+
         q_video = torch.cat([q_video, right_pad[:,:,:n_q]], dim = -2)
         q_video = torch.cat([q_video, bottom_pad[:,:,:n_q]], dim = -3)
         k_video = torch.cat([k_video, right_pad], dim = -2)
@@ -144,19 +143,22 @@ class FrameRoPE(nn.Module):
         q_video[:,:,:,-1,-1] = q_audio
         k_video[:,:,:,-1,-1] = k_audio
 
-        q_video = apply_rotary_emb(self.freqs[-n_q:].detach(), q_video)
-        k_video = apply_rotary_emb(self.freqs.detach(), k_video)
+        with torch.no_grad():
+            freqs = self.freqs[:n].detach()
+
+        q_video = apply_rotary_emb(freqs[-n_q:].detach(), q_video)
+        k_video = apply_rotary_emb(freqs.detach(), k_video)
 
         q_audio = q_video[:,:,:,-1,-1]
         k_audio = k_video[:,:,:,-1,-1]
 
-        q_video = q_video[:,:,:,-1,-1]
-        k_video = k_video[:,:,:,-1,-1]
+        q_video = q_video[:,:,:,:-1,:-1]
+        k_video = k_video[:,:,:,:-1,:-1]
 
         q_video = q_video.reshape(
             b,
             h,
-            n_q, self.p2, 
+            n_q, self.p2,
             d
         ) # bhn(16)d
         q = torch.cat([q_video, q_audio.unsqueeze(-2)], dim = -2)
@@ -164,23 +166,23 @@ class FrameRoPE(nn.Module):
         k_video = k_video.reshape(
             b,
             h,
-            n, self.p2, 
+            n, self.p2,
             d
         )
         k = torch.cat([k_video, k_audio.unsqueeze(-2)], dim = -2)
-        
+
         q = q.view(b,h,n_q*m,d)
         k = k.view(b,h,n*m,d)
 
         return q, k
-        
+
 def test_rope_speed():
     """
     Test the speed of RoPE implementation
     """
     from ..configs import TransformerConfig
     import time
-    
+
     # Create test configs matching AV model
     config = TransformerConfig(
         n_heads=24,
@@ -192,11 +194,11 @@ def test_rope_speed():
 
     # Create model and inputs
     rope = FlatVideoRoPE(config).cuda()
-    
+
     batch_size = 32
     seq_len = 60 * config.tokens_per_frame # 60 frames
     d_head = config.d_model // config.n_heads
-    
+
     q = torch.randn(batch_size, config.n_heads, seq_len, d_head).cuda()
     k = torch.randn(batch_size, config.n_heads, seq_len, d_head).cuda()
 
@@ -220,4 +222,3 @@ def test_rope_speed():
 
 if __name__ == "__main__":
     test_rope_speed()
-

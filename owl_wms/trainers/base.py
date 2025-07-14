@@ -6,7 +6,6 @@ import torch
 import wandb
 import os
 import torch.distributed as dist
-from dotenv import load_dotenv
 
 class BaseTrainer:
     def __init__(
@@ -23,12 +22,6 @@ class BaseTrainer:
         self.model_cfg = model_cfg
 
         self.device = f'cuda:{self.local_rank}'
-        
-        # Check if we have an api key, if we don't just load the dotenv.
-        wandb_api_key = os.getenv("WANDB_API_KEY")
-        if not wandb_api_key:
-            load_dotenv()
-
 
         if self.logging_cfg is not None and self.rank == 0:
             log = self.logging_cfg
@@ -37,7 +30,7 @@ class BaseTrainer:
             if wandb_api_key:
                 wandb.login(key=wandb_api_key)
             else:
-                print("Warning: WANDB_API_KEY not found in environment")
+                raise Exception("WANDB key not found, did you correctly load your .env file?")
             
             wandb.init(
                 project = log.project,

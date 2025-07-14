@@ -18,6 +18,9 @@ def get_sampler_cls(sampler_id):
     elif sampler_id == "av_causal":
         from .av_window import CausalAVWindowSampler
         return CausalAVWindowSampler
+    elif sampler_id == "av_causal_no_cfg":
+        from .av_window import CausalAVWindowSamplerNoCFG
+        return CausalAVWindowSamplerNoCFG
     elif sampler_id == "av_caching_one_step":
         from .av_caching import AVCachingOneStepSampler
         return AVCachingOneStepSampler

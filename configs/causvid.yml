@@ -1,69 +1,97 @@
-# Config for a simple 256 -> 16 autoencoder
 model:
-  model_id: game_rft
-  sample_size: 4
-  channels: 128
+  model_id: game_rft_audio
+  sample_size: 8
+  channels: 64
+  audio_channels: 64
   
-  n_layers: 17
-  n_heads: 16
-  d_model: 1024
+  n_layers: 24
+  n_heads: 24
+  d_model: 1536
 
-  tokens_per_frame: 16
+  tokens_per_frame: 65
   n_buttons: 11
   n_mouse_axes: 2
 
   cfg_prob: 0.0
-  n_frames: 30
+  n_frames: 16
 
-  causal: false
+  causal: true
+  uncond: false
+  backbone: dit
 
 train:
   trainer_id: causvid
-  data_id: cod_latent
+  data_id: cod_s3_audio
   data_kwargs:
-    window_length: 30
-    root: ../cod_data/BlackOpsColdWar
-    add_optical_flow: false
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to8x8
+    prefix: depth-and-raw/labelled
+    file_share_max: 50
 
-  target_batch_size: 256
-  batch_size: 32
+  sample_data_id: cod_s3_audio
+  sample_data_kwargs:
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to8x8
+    prefix: depth-and-raw/labelled
+    file_share_max: 50
+
+  target_batch_size: 224
+  batch_size: 14
 
   epochs: 200
 
   opt: AdamW
   opt_kwargs:
     lr: 2.0e-6
-    weight_decay: 1.0e-4
-    eps: 1.0e-15
-    betas: [0.9, 0.95]
-
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  d_opt_kwargs:
+    lr: 2.0e-6
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+    
   scheduler: null
 
-  checkpoint_dir: checkpoints/360p
+  checkpoint_dir: /mnt/data/shahbuland/checkpoints/av_v6_causvid_v2
+  output_path: /mnt/data/shahbuland/checkpoints/av_v2_causvid_output
+  resume_ckpt: null #checkpoints/av_v2/step_30000.pt
+        
+  sample_interval: 50
+  save_interval: 500
 
-  sample_interval: 1000
-  save_interval: 5000
-
-  sampler_id: window
+  sampler_id: av_causal_one_step
   sampler_kwargs:
-    n_steps: 20
-    cfg_scale: 1.3
-    window_length: 30
-    num_frames: 60
+    num_frames: 240
+    window_length: 16
     noise_prev: 0.2
-    only_return_generated: true
+    only_return_generated: false
 
-  n_samples: 8
+  n_samples: 4
 
-  vae_id: 720pr3dc
+  vae_id: null
   vae_batch_size: 4
-  vae_scale: 0.35
-  vae_cfg_path: configs/owl_vaes/128x_cod_stage2.yml
-  vae_ckpt_path: 720p_cod_vae_30m_35k_steps.pt
+  vae_scale: 0.87
+  audio_vae_scale: 0.45
 
-  teacher_ckpt: null # Set later TODO
+  vae_cfg_path: configs/owl_vaes/cod_64x_c64_depth_distill_dec.yml
+  vae_ckpt_path: cod_64x_c64_distill_dec.pt
+
+  audio_vae_id: null
+  audio_vae_cfg_path: configs/owl_vaes/audio_ae_2.yml
+  audio_vae_ckpt_path: /mnt/data/checkpoints/cache_for_wm/sf_v0/cod_audio.pt
+
+  teacher_ckpt: checkpoints/av_v6_8x8_causal/step_200000.pt
+  teacher_cfg: configs/av_v5_8x8_weak.yml
+  
+  student_ckpt: checkpoints/av_v6_8x8_causal/step_200000.pt
+
+  min_rollout_frames: 16
+  update_ratio: 5
+  rollout_steps: 1
 
 wandb:
   name: shahbuland
   project: video_models
-  run_name: v2
+  run_name: av_v6_causvid

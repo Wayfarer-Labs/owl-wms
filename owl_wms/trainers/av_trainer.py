@@ -171,7 +171,7 @@ class AVRFTTrainer(BaseTrainer):
                     # Updates
                     if self.train_cfg.opt.lower() != "muon":
                         self.scaler.unscale_(self.opt)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
 
                     self.scaler.step(self.opt)
                     self.opt.zero_grad(set_to_none=True)
@@ -206,10 +206,15 @@ class AVRFTTrainer(BaseTrainer):
                                     self.train_cfg.audio_vae_scale
                                 ) # -> [b,n,c,h,w]
                                 if self.rank == 0:
-                                    video, depth_gif, flow_gif = to_wandb_av(samples, audio, sample_mouse, sample_button)
-                                    wandb_dict['samples'] = video
-                                    wandb_dict['depth_gif'] = depth_gif
-                                    wandb_dict['flow_gif'] = flow_gif
+                                    wandb_av_out = to_wandb_av(samples, audio, sample_mouse, sample_button)
+                                    if len(wandb_av_out) == 3:  
+                                        video, depth_gif, flow_gif = wandb_av_out
+                                        wandb_dict['samples'] = video
+                                        wandb_dict['depth_gif'] = depth_gif
+                                        wandb_dict['flow_gif'] = flow_gif
+                                    else:
+                                        video = wandb_av_out
+                                        wandb_dict['samples'] = video
                             
                         if self.rank == 0:
                             wandb.log(wandb_dict)

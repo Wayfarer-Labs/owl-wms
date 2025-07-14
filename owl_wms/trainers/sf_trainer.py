@@ -24,9 +24,10 @@ import wandb
 # === ROLLOUTS ===
 
 class RolloutManager:
-    def __init__(self, model_cfg, min_rollout_frames=8):
+    def __init__(self, model_cfg, min_rollout_frames=8, rollout_steps = 1):
         self.model_cfg = model_cfg
         self.min_rollout_frames = min_rollout_frames
+        self.rollout_steps = rollout_steps
     
     def get_rollouts(
         self, 
@@ -43,7 +44,8 @@ class RolloutManager:
 
         # === init generation params ===
         window_length = video_bnchw.shape[1]
-        rollout_frames = random.randint(self.min_rollout_frames, window_length)
+        #rollout_frames = random.randint(self.min_rollout_frames, window_length)
+        rollout_frames = 16
         if dist.is_initialized():
             rollout_frames_tensor = torch.tensor(rollout_frames, device='cuda')
             dist.broadcast(rollout_frames_tensor, src=0)
@@ -71,21 +73,25 @@ class RolloutManager:
             mouse_b1d = rollout_mouse_bnd[:,frame_idx:frame_idx+1]
             btn_b1d = rollout_btn_bnd[:,frame_idx:frame_idx+1]
 
-            # eject oldest frame
+            # eject oldest frame, prepare to denoise new frame
             kv_cache.truncate(1, front=False)
+            end_frame = random.randint(1, self.rollout_steps) if enable_grad else self.rollout_steps
+            dt = 1./self.rollout_steps
+
+            for step_idx in range(end_frame):
+                with torch.enable_grad() if (enable_grad and step_idx == end_frame - 1) else torch.no_grad():
+                    vid_pred_b1chw, aud_pred_b1c = model(
+                        frame_b1chw.detach(),
+                        audio_b1c.detach(),
+                        ts_b1.detach(),
+                        mouse_b1d.detach(),
+                        btn_b1d.detach(),
+                        kv_cache=kv_cache
+                    )
             
-            with torch.enable_grad() if enable_grad else torch.no_grad():
-                vid_pred_b1chw, aud_pred_b1c = model(
-                    frame_b1chw.detach(),
-                    audio_b1c.detach(),
-                    ts_b1.detach(),
-                    mouse_b1d.detach(),
-                    btn_b1d.detach(),
-                    kv_cache=kv_cache
-                )
-            
-            frame_b1chw = frame_b1chw - vid_pred_b1chw
-            audio_b1c = audio_b1c - aud_pred_b1c
+                frame_b1chw = frame_b1chw - dt * vid_pred_b1chw
+                audio_b1c = audio_b1c - dt * aud_pred_b1c
+                ts_b1 = ts_b1 - dt
 
             with torch.no_grad():
                 kv_cache.enable_cache_updates()
@@ -225,8 +231,8 @@ def get_dmd_loss(
         mu_critic_aud = noisy_aud_bnc - ts_bn_exp_audio * v_critic_aud
         
         # Get normalizers
-        vid_normalizer = torch.abs(video_bnchw - mu_teacher_vid).mean(dim=[1,2,3,4],keepdim=True).clamp(min=1.0e-6)
-        aud_normalizer = torch.abs(audio_bnc - mu_teacher_aud).mean(dim=[1,2],keepdim=True).clamp(min=1.0e-6)
+        vid_normalizer = torch.abs(video_bnchw - mu_teacher_vid).mean(dim=[1,2,3,4],keepdim=True)
+        aud_normalizer = torch.abs(audio_bnc - mu_teacher_aud).mean(dim=[1,2],keepdim=True)
 
         # Get gradients
         grad_vid = (mu_critic_vid - mu_teacher_vid) / vid_normalizer
@@ -245,13 +251,13 @@ def get_dmd_loss(
         grad_mask_aud[:,:mask_length] = False
 
     # Get losses
-    vid_loss = F.mse_loss(
-        video_bnchw.double()[grad_mask_vid],
+    vid_loss = 0.5 * F.mse_loss(
+        video_bnchw[grad_mask_vid].double(),
         target_vid[grad_mask_vid],
         reduction = 'mean'
     )
-    aud_loss = F.mse_loss(
-        audio_bnc.double()[grad_mask_aud],
+    aud_loss = 0.5 * F.mse_loss(
+        audio_bnc[grad_mask_aud].double(),
         target_aud[grad_mask_aud],
         reduction = 'mean'
     )
@@ -266,20 +272,26 @@ class SelfForceTrainer(BaseTrainer):
         self.model_cfg.causal = True
 
         # === init teacher ===
-        teacher_cfg_path = self.train_cfg.teacher_cfg_path
-        teacher_ckpt_path = self.train_cfg.teacher_ckpt_path
+        teacher_cfg_path = self.train_cfg.teacher_cfg
+        teacher_ckpt_path = self.train_cfg.teacher_ckpt
         teacher_cfg = Config.from_yaml(teacher_cfg_path).model
         teacher_ckpt = versatile_load(teacher_ckpt_path)
 
         self.teacher = get_model_cls(teacher_cfg.model_id)(teacher_cfg)
-        self.teacher.load_state_dict(teacher_ckpt)
+        try:
+            self.teacher.load_state_dict(teacher_ckpt)
+        except:
+            self.teacher.core.load_state_dict(teacher_ckpt)
     
         # === init student (and fake score fn) ===
-        student_ckpt_path = self.train_cfg.student_ckpt_path
+        student_ckpt_path = self.train_cfg.student_ckpt
         student_ckpt = versatile_load(student_ckpt_path)
 
         self.student = get_model_cls(self.model_cfg.model_id)(self.model_cfg)
-        self.student.load_state_dict(student_ckpt)
+        try:
+            self.student.load_state_dict(student_ckpt)
+        except:
+            self.student.core.load_state_dict(student_ckpt)
 
         self.critic = deepcopy(self.student)
 
@@ -301,6 +313,7 @@ class SelfForceTrainer(BaseTrainer):
         self.scaler = None
         self.critic_scaler = None
         self.total_step_counter = 0
+        self.scheduler = None
 
         # === decoders for sampling ===
         self.decoder = get_decoder_only(
@@ -395,7 +408,7 @@ class SelfForceTrainer(BaseTrainer):
         loader = get_loader(self.train_cfg.data_id, self.train_cfg.batch_size, **self.train_cfg.data_kwargs)
         loader = iter(loader)
         sampler = get_sampler_cls(self.train_cfg.sampler_id)(**self.train_cfg.sampler_kwargs)
-        rollout_manager = RolloutManager(self.model_cfg, self.train_cfg.min_rollout_frames)
+        rollout_manager = RolloutManager(self.model_cfg, self.train_cfg.min_rollout_frames, self.train_cfg.rollout_steps)
 
         # Gradient accumulation setup
         accum_steps = self.train_cfg.target_batch_size // self.train_cfg.batch_size // self.world_size
@@ -404,10 +417,11 @@ class SelfForceTrainer(BaseTrainer):
         # optimizer step
         def optimizer_step(model, scaler, optimizer):
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            g_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             scaler.step(optimizer)
             optimizer.zero_grad(set_to_none=True)
             scaler.update()
+            return g_norm
 
         # simplify getting batches
         def get_batch():
@@ -460,10 +474,8 @@ class SelfForceTrainer(BaseTrainer):
                     metrics.log('dmd_loss', dmd_loss)
                     self.scaler.scale(dmd_loss).backward()
 
-                optimizer_step(self.student, self.scaler, self.opt)
-
-            unfreeze(self.student)
-            freeze(self.critic)
+                g_norm = optimizer_step(self.student, self.scaler, self.opt)
+                metrics.log('g_norm', g_norm)
 
             with torch.no_grad():
                 # Logging

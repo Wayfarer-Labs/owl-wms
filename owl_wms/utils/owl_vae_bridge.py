@@ -28,7 +28,10 @@ def get_decoder_only(vae_id, cfg_path, ckpt_path):
         else:
             cfg = Config.from_yaml(cfg_path).model
             model = get_model_cls(cfg.model_id)(cfg)
-            model.load_state_dict(torch.load(ckpt_path, map_location='cpu',weights_only=False))
+            try:
+                model.load_state_dict(torch.load(ckpt_path, map_location='cpu',weights_only=False))
+            except:
+                model.decoder.load_state_dict(torch.load(ckpt_path, map_location='cpu',weights_only=False))
             del model.encoder
             model = model.decoder
             model = model.bfloat16().cuda().eval()

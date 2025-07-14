@@ -1,31 +1,16 @@
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except (ImportError, OSError) as e:
-    # Handle both ImportError and OSError (which includes libGL.so.1 missing)
-    CV2_AVAILABLE = False
-
+import cv2
 import torch
+
 import torch.nn.functional as F
-import os
-import numpy as np
 
 KEYBINDS = ["W","A","S","D","LSHIFT","SPACE","R","F","E", "LMB", "RMB"]
+import os
+import numpy as np
 
 def draw_frame(frame, mouse, button):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
-    
-    if not CV2_AVAILABLE:
-        # Return the frame without drawing if cv2 is not available
-        frame = frame.squeeze(0)
-        frame = frame.permute(1,2,0)
-        frame = (frame + 1)*127.5
-        frame = frame.float().cpu().numpy()
-        frame = frame.astype(np.uint8)
-        frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
-        return frame
     
     #frame = F.interpolate(frame.unsqueeze(0),(512,512))
     frame = frame.squeeze(0)

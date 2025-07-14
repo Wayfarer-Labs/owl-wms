@@ -13,7 +13,6 @@ class KVCache:
         
         self.should_update = False
 
-        self.max_length = None
         self.noise_caches = 0.0
         self.offset = 0
 
@@ -44,26 +43,10 @@ class KVCache:
         return k,v
     
     @torch.no_grad()
-    def push(self, new_k, new_v, layer_ind):
-        assert self.cache is not None, "Must reset cache before using"
-        k,v = self.cache[layer_ind] # each [b,h,n,d]
-        k = torch.cat([k,new_k],dim=2)
-        v = torch.cat([v,new_v],dim=2)
-        self.cache[layer_ind] = (k,v)
-    
-    @torch.no_grad()
     def update(self, new_k, new_v, layer_ind):
         assert self.cache is not None, "Must reset cache before using"
 
-        def tuple_truncate(k, v):
-            k = k[:,:,-self.max_length:]
-            v = v[:,:,-self.max_length:]
-            return k, v
-
-        if self.max_length is None:
-            self.cache[layer_ind] = (new_k,new_v)
-        else:
-            self.cache[layer_ind] = tuple_truncate(new_k,new_v)
+        self.cache[layer_ind] = (new_k,new_v)
     
     @torch.no_grad()
     def truncate(self, truncate_amt, front = False):
@@ -83,7 +66,7 @@ class KVCache:
         for i in range(self.config.n_layers):
             self.cache[i] = tuple_truncate(*self.cache[i])
         if not front:
-            # When ejecting front frame, window slides forward, offset increases
+            # When ejecting first frame, window slides forward, offset increases
             self.offset += truncate_amt // self.config.tokens_per_frame
 
     def length_at(self, idx):
@@ -96,5 +79,6 @@ class KVCache:
     def n_frames(self):
         return len(self) // self.config.tokens_per_frame
 
+    @property
     def shape(self):
         return self.cache[0][0].shape

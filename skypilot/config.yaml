@@ -1,7 +1,7 @@
 name: owl-wms-multinode
 
 resources:
-  image_id: docker:us-central1-docker.pkg.dev/openworld-main/skypilot/owl-wm-cond@sha256:7da080f97ff64751b5df26657d5204481ce668cbd21e8ffdc896db5d0b76d75f
+  image_id: docker:us-central1-docker.pkg.dev/openworld-main/skypilot/owl-wm-cond@sha256:1076e5243d6eeb93bbe509e20aaec7032f417482d27d1f8c355192ba9e29771b
   accelerators: H200:8
   cloud: kubernetes
 

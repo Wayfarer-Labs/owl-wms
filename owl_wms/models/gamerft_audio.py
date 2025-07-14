@@ -126,6 +126,9 @@ class GameRFTAudio(nn.Module):
         # has_controls: [b,] boolean mask for which batch elements have controls
         b,n,c,h,w = x.shape
 
+        if has_controls is None:
+            has_controls = torch.ones(b, device=x.device, dtype=torch.bool)
+
         # Apply classifier-free guidance dropout
         has_controls = self.handle_cfg(has_controls, cfg_prob)
         with torch.no_grad():
