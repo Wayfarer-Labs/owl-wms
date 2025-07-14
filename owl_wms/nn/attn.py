@@ -1,31 +1,37 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from .normalization import LayerNorm, RMSNorm, QKNorm
 from .mlp import MLP
 
-import einops as eo
 
 from .modulation import AdaLN, Gate
-from .rope import FlatVideoRoPE
+from .rope import FlatVideoRoPE, FrameRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
-from einops._torch_specific import allow_ops_in_compiled_graph
-allow_ops_in_compiled_graph()
+def checkpoint(function, *args, **kwargs):
+    kwargs.setdefault("use_reentrant", False)
+    return torch_checkpoint(function, *args, **kwargs)
 
-def create_block_causal_mask(tokens, tokens_per_frame):
+def create_block_causal_mask(tokens, tokens_per_frame, device = 'cuda', dtype=torch.float32):
     frames = tokens // tokens_per_frame
-    
     # Create base causal mask, nothing is masked
-    mask = torch.zeros(tokens, tokens)
+    mask = torch.zeros(tokens, tokens, device = device, dtype=dtype)
     
-    # Allow attention within each frame
+    # Allow attention within each frame and to previous frames, except last frame can't see first frame
     for i in range(frames):
         start = i * tokens_per_frame
         end = (i + 1) * tokens_per_frame
-        mask[start:end, end:] = True # It can't see anything after its end
+        
+        # Mask future frames
+        mask[start:end, end:] = float('-inf')
+        
+        # For last frame, also mask first frame
+        if i == frames - 1:
+            mask[start:end, :tokens_per_frame] = float('-inf')
         
     return mask
 
@@ -42,42 +48,51 @@ class Attn(nn.Module):
         self.layer_ind = None
 
         self.rope = FlatVideoRoPE(config)
+        #self.rope = FrameRoPE(config)
 
         self.tokens_per_frame = config.tokens_per_frame
         self.causal = config.causal
-
+        
+        self.mask = create_block_causal_mask(
+            self.tokens_per_frame*config.n_frames,
+            self.tokens_per_frame
+        )
+    
     def forward(self, x, kv_cache = None):
-        q,k,v = eo.rearrange(self.qkv(x), 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
+        qkv = self.qkv(x)
+        qkv = qkv.view(qkv.shape[0], qkv.shape[1], 3, self.n_heads, -1)
+        q, k, v = qkv.permute(2, 0, 3, 1, 4)
         q,k = self.qk_norm(q,k)
 
-        if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
+        if not self.causal:
             mask = None
         else:
-            mask = create_block_causal_mask(x.shape[1], self.tokens_per_frame).to(x.device)
-            mask = mask.to(device=x.device,dtype=x.dtype)
+            mask = self.mask.to(device=x.device, dtype=x.dtype)
             mask = mask.unsqueeze(0).repeat(x.shape[0], 1, 1)
             mask = mask.unsqueeze(1)
 
         if kv_cache is not None:
             old_k, old_v = kv_cache.get(self.layer_ind)
+            n_q = q.shape[-2]
 
             len_k = old_k.shape[2]
 
             new_k = torch.cat([old_k, k], dim = 2).contiguous()
             new_v = torch.cat([old_v, v], dim = 2).contiguous()
-            
-            q,new_k = self.rope(q,new_k)
-            if kv_cache.should_update:
-                kv_cache.update(new_k, new_v, self.layer_ind)
 
-            # Add rope here if we do use it
+            if kv_cache.should_update:
+                kv_cache.update(new_k.clone(), new_v.clone(), self.layer_ind)
+
+            q,new_k = self.rope(q, new_k)
+
+            mask = mask[:,:,-n_q:,:] # Only new queries
             x = F.scaled_dot_product_attention(q, new_k, new_v, attn_mask = mask)
-            x = x[:,:,-q.shape[2]:] # Skip cached outputs (not relevant now)
+
         else:
             q,k = self.rope(q,k)
             x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
 
-        x = eo.rearrange(x, 'b h n d -> b n (h d)')
+        x = x.permute(0, 2, 1, 3).contiguous().view(x.shape[0], x.shape[2], -1)
         x = self.out(x)
         return x
 
@@ -248,4 +263,6 @@ def test_kv_cache():
     print("Cache test complete")
 
 if __name__ == "__main__":
+    import os
+    os.environ['KMP_DUPLICATE_LIB_OK'] = "TRUE"
     test_attn_mask()

@@ -6,21 +6,29 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-import einops as eo
 
 from ..nn.embeddings import (
     TimestepEmbedding,
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import UViT, FinalLayer
+from ..nn.attn import DiT, FinalLayer
 
-class GameRFTCore(nn.Module):
+class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.transformer = UViT(config)
-        self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
+        self.config = config
+
+        if config.backbone == 'dit':
+            backbone_cls = DiT
+        elif config.backbone == 'mmdit':
+            backbone_cls = MMDIT
+        self.backbone = config.backbone
+
+        self.transformer = backbone_cls(config)
+
+        if not config.uncond: self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
 
         self.proj_in = nn.Linear(config.channels, config.d_model, bias = False)
@@ -29,79 +37,105 @@ class GameRFTCore(nn.Module):
         self.audio_proj_in = nn.Linear(config.audio_channels, config.d_model, bias=False)
         self.audio_proj_out = FinalLayer(None, config.d_model, config.audio_channels)
 
-        self.pos_enc = LearnedPosEnc(config.tokens_per_frame * config.n_frames, config.d_model)
+        self.uncond = config.uncond
 
-    def forward(self, x, audio, t, mouse, btn):
+    def forward(self, x, audio, t, mouse, btn, has_controls = None, kv_cache = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # t is [b,n]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
 
-        ctrl_cond = self.control_embed(mouse, btn)
         t_cond = self.t_embed(t)
 
-        cond = ctrl_cond + t_cond # [b,n,d]
+        if not self.uncond:
+            ctrl_cond = self.control_embed(mouse, btn) # [b,n,d]
+            if has_controls is not None:
+                ctrl_cond = torch.where(has_controls[:,None,None], ctrl_cond, torch.zeros_like(ctrl_cond))
+            cond = t_cond + ctrl_cond # [b,n,d]
+        else:
+            cond = t_cond
         
         b,n,c,h,w = x.shape
-        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
+        x = x.permute(0,1,3,4,2) # bnhwc
+        x = x.reshape(b,n*h*w,c) # b(nhw)c
 
-        x = self.proj_in(x)
-        audio = self.audio_proj_in(audio).unsqueeze(-2) # [b,n,1,d]
+        x = self.proj_in(x) # b(nhw)d
+        audio = self.audio_proj_in(audio) # bnd
 
-        x = eo.rearrange(x, 'b (n f) d -> b n f d', n = n)
-        x = torch.cat([x, audio], dim = -2)
-        x = eo.rearrange(x, 'b n f d -> b (n f) d')
-
-        x = self.pos_enc(x)
-        x = self.transformer(x, cond)
+        if self.backbone == 'dit':
+            audio = audio.unsqueeze(-2) # bn1d
+            x = x.reshape(b, n, -1, x.shape[-1]) # bn(hw)d
+            x = torch.cat([x, audio], dim = -2) # bn(hw+1)d
+            x = x.reshape(b, n * x.shape[2], x.shape[-1]) # b(n(hw+1))d
+            x = self.transformer(x, cond, kv_cache)
+        elif self.backbone == 'mmdit':
+            x = self.transformer(x, audio, cond, kv_cache)
 
         # Split into video and audio tokens
-        x = eo.rearrange(x, 'b (n f) d -> b n f d', n=n)
-        video, audio = x[...,:-1,:], x[...,-1:,:]
+        x = x.view(b, n, -1, x.shape[-1]) # bn(hw+1)d
+        video, audio = x[...,:-1,:], x[...,-1:,:] # bn(hw)d | bn1d
 
         # Project video tokens
-        video = eo.rearrange(video, 'b n f d -> b (n f) d')
-        video = self.proj_out(video, cond)
-        video = eo.rearrange(video, 'b (n h w) c -> b n c h w', n=n, h=h, w=w)
+        video = video.reshape(b, n * video.shape[2], video.shape[-1]) # b(nhw)d
+        video = self.proj_out(video, cond) 
+        video = video.reshape(b, n, h, w, c).permute(0, 1, 4, 2, 3) # bnchw
 
         # Project audio tokens
-        audio = eo.rearrange(audio, 'b n 1 d -> b n d')
+        audio = audio.squeeze(-2) # bnd
         audio = self.audio_proj_out(audio, cond)
 
         return video, audio
 
-class GameRFT(nn.Module):
+class GameRFTAudio(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.core = GameRFTCore(config)
+        self.core = GameRFTAudioCore(config)
         self.cfg_prob = config.cfg_prob
     
-    def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None):
+    def handle_cfg(self, has_controls = None, cfg_prob = None):
+        if cfg_prob is None:
+            cfg_prob = self.cfg_prob
+        if cfg_prob <= 0.0 or has_controls is None:
+            return has_controls
+            
+        # Calculate current percentage without controls
+        pct_without = 1.0 - has_controls.float().mean()
+        
+        # Only apply CFG if we need more negatives
+        if pct_without < cfg_prob:
+            # Calculate how many more we need
+            needed = cfg_prob - pct_without
+            needed_frac = needed / has_controls.float().mean()
+            
+            # Only drop controls where has_controls is True
+            b = has_controls.shape[0]
+            mask = (torch.rand(b, device=has_controls.device) <= needed_frac) & has_controls
+            
+            # Update has_controls based on mask
+            has_controls = has_controls & (~mask)
+            
+        return has_controls
+
+    def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None, has_controls = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
         # mouse is [b,n,2]
         # btn is [b,n,n_buttons]
+        # has_controls: [b,] boolean mask for which batch elements have controls
         b,n,c,h,w = x.shape
 
+        if has_controls is None:
+            has_controls = torch.ones(b, device=x.device, dtype=torch.bool)
+
         # Apply classifier-free guidance dropout
-        if cfg_prob is None:
-            cfg_prob = self.cfg_prob
-        if cfg_prob > 0.0:
-            mask = torch.rand(b, device=x.device) <= self.cfg_prob
-            null_mouse = torch.zeros_like(mouse)
-            null_btn = torch.zeros_like(btn)
-            
-            # Where mask is True, replace with zeros
-            mouse = torch.where(mask.unsqueeze(-1).unsqueeze(-1), null_mouse, mouse)
-            btn = torch.where(mask.unsqueeze(-1).unsqueeze(-1), null_btn, btn)
-        
+        has_controls = self.handle_cfg(has_controls, cfg_prob)
         with torch.no_grad():
             ts = torch.randn(b,n,device=x.device,dtype=x.dtype).sigmoid()
             
             # Video noise
-            ts_exp = eo.repeat(ts, 'b n -> b n 1 1 1')
+            ts_exp = ts[:, :, None, None, None]
             z_video = torch.randn_like(x)
             lerpd_video = x * (1. - ts_exp) + z_video * ts_exp
             target_video = z_video - x
@@ -112,7 +146,7 @@ class GameRFT(nn.Module):
             lerpd_audio = audio * (1. - ts_exp_audio) + z_audio * ts_exp_audio
             target_audio = z_audio - audio
             
-        pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn)
+        pred_video, pred_audio = self.core(lerpd_video, lerpd_audio, ts, mouse, btn, has_controls)
         video_loss = F.mse_loss(pred_video, target_video)
         audio_loss = F.mse_loss(pred_audio, target_audio)
         diff_loss = video_loss + audio_loss
@@ -130,7 +164,8 @@ class GameRFT(nn.Module):
                 'pred_audio': pred_audio,
                 'ts': ts,
                 'z_video': z_video,
-                'z_audio': z_audio
+                'z_audio': z_audio,
+                'cfg_mask' : has_controls 
             }
 
 if __name__ == "__main__":

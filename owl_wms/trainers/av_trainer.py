@@ -72,15 +72,11 @@ class AVRFTTrainer(BaseTrainer):
         super().save(save_dict)
     
     def load(self):
-        has_ckpt = False
-        try:
-            if self.train_cfg.resume_ckpt is not None:
-                save_dict = super().load(self.train_cfg.resume_ckpt)
-                has_ckpt = True
-        except:
-            print("Error loading checkpoint")
-        
-        if not has_ckpt:
+        if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
+            save_dict = super().load(self.train_cfg.resume_ckpt)
+            has_ckpt = True
+        else:
+            print("Failed to load checkpoint")
             return
 
         
@@ -145,6 +141,12 @@ class AVRFTTrainer(BaseTrainer):
         
         # Dataset setup
         loader = get_loader(self.train_cfg.data_id, self.train_cfg.batch_size, **self.train_cfg.data_kwargs)
+        sample_loader = get_loader(self.train_cfg.sample_data_id, self.train_cfg.n_samples, **self.train_cfg.sample_data_kwargs)
+        sample_loader = iter(sample_loader)
+
+        if self.train_cfg.data_id == "cod_s3_mixed":
+            loader.dataset.sleep_until_queues_filled()
+            self.barrier()
         sampler = get_sampler_cls(self.train_cfg.sampler_id)(**self.train_cfg.sampler_kwargs)
 
         local_step = 0
@@ -154,6 +156,7 @@ class AVRFTTrainer(BaseTrainer):
                 batch_audio = batch_audio.cuda().bfloat16() / self.train_cfg.audio_vae_scale
                 batch_mouse = batch_mouse.cuda().bfloat16()
                 batch_btn = batch_btn.cuda().bfloat16()
+                #cfg_mask = cfg_mask.cuda()
 
                 with ctx:
                     loss = self.model(batch_vid,batch_audio,batch_mouse,batch_btn) / accum_steps
@@ -168,7 +171,7 @@ class AVRFTTrainer(BaseTrainer):
                     # Updates
                     if self.train_cfg.opt.lower() != "muon":
                         self.scaler.unscale_(self.opt)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
 
                     self.scaler.step(self.opt)
                     self.opt.zero_grad(set_to_none=True)
@@ -188,24 +191,31 @@ class AVRFTTrainer(BaseTrainer):
                         # Sampling commented out for now
                         if self.total_step_counter % self.train_cfg.sample_interval == 0:
                             with ctx, torch.no_grad():
+
+                                vid_for_sample, aud_for_sample, mouse_for_sample, btn_for_sample = next(sample_loader)
                                 n_samples = self.train_cfg.n_samples
                                 samples, audio, sample_mouse, sample_button = sampler(
                                     get_ema_core(),
-                                    batch_vid[:n_samples],
-                                    batch_audio[:n_samples],
-                                    batch_mouse[:n_samples],
-                                    batch_btn[:n_samples],
+                                    vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
+                                    aud_for_sample.bfloat16().cuda() / self.train_cfg.audio_vae_scale,
+                                    mouse_for_sample.bfloat16().cuda(),
+                                    btn_for_sample.bfloat16().cuda(),
                                     decode_fn,
                                     audio_decode_fn,
                                     self.train_cfg.vae_scale,
                                     self.train_cfg.audio_vae_scale
                                 ) # -> [b,n,c,h,w]
                                 if self.rank == 0:
-                                    video, audio = to_wandb_av(samples, audio, sample_mouse, sample_button)
-                                    wandb_dict['samples'] = video
-                                    wandb_dict['audio_samples'] = audio
+                                    wandb_av_out = to_wandb_av(samples, audio, sample_mouse, sample_button)
+                                    if len(wandb_av_out) == 3:  
+                                        video, depth_gif, flow_gif = wandb_av_out
+                                        wandb_dict['samples'] = video
+                                        wandb_dict['depth_gif'] = depth_gif
+                                        wandb_dict['flow_gif'] = flow_gif
+                                    else:
+                                        video = wandb_av_out
+                                        wandb_dict['samples'] = video
                             
-
                         if self.rank == 0:
                             wandb.log(wandb_dict)
 

@@ -7,11 +7,11 @@ model:
   latent_channels: 128
 
   noise_decoder_inputs: 0.0
-  ch_0: 128
-  ch_max: 1024
+  ch_0: 256
+  ch_max: 2048
 
-  encoder_blocks_per_stage: [3, 3, 3, 3, 3, 3, 3, 3]
-  decoder_blocks_per_stage: [3, 3, 3, 3, 3, 3, 3, 3]
+  encoder_blocks_per_stage: [4, 4, 4, 4, 4, 4, 4]
+  decoder_blocks_per_stage: [4, 4, 4, 4, 4, 4, 4]
 
   checkpoint_grads: true
 

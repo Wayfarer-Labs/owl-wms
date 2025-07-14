@@ -1,0 +1,97 @@
+model:
+  model_id: game_rft_audio
+  sample_size: 8
+  channels: 64
+  audio_channels: 64
+  
+  n_layers: 24
+  n_heads: 24
+  d_model: 1536
+
+  tokens_per_frame: 65
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.0
+  n_frames: 16
+
+  causal: true
+  uncond: false
+  backbone: dit
+
+train:
+  trainer_id: sforce3
+  data_id: cod_s3_audio
+  data_kwargs:
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to8x8
+    prefix: depth-and-raw/labelled
+    file_share_max: 50
+
+  sample_data_id: cod_s3_audio
+  sample_data_kwargs:
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to8x8
+    prefix: depth-and-raw/labelled
+    file_share_max: 50
+
+  target_batch_size: 224
+  batch_size: 14
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 2.0e-6
+    betas: [0.0, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  d_opt_kwargs:
+    lr: 4.0e-7
+    betas: [0.0, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+    
+  scheduler: null
+
+  checkpoint_dir: /mnt/data/shahbuland/checkpoints/av_v6_sf
+  output_path: /mnt/data/shahbuland/checkpoints/av_v2_s6_output
+  resume_ckpt: null #checkpoints/av_v2/step_30000.pt
+        
+  sample_interval: 50
+  save_interval: 500
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 1
+    num_frames: 60
+    window_length: 16
+    only_return_generated: false
+
+  n_samples: 4
+
+  vae_id: null
+  vae_batch_size: 4
+  vae_scale: 0.87
+  audio_vae_scale: 0.45
+
+  vae_cfg_path: configs/owl_vaes/cod_64x_c64_depth.yml
+  vae_ckpt_path: cod_64x_depth_85k.pt
+
+  audio_vae_id: null
+  audio_vae_cfg_path: configs/owl_vaes/audio_ae_2.yml
+  audio_vae_ckpt_path: /mnt/data/checkpoints/cache_for_wm/sf_v0/cod_audio.pt
+
+  teacher_ckpt: checkpoints/av_v6_8x8_causal/step_165000.pt
+  teacher_cfg: configs/av_v5_8x8_weak.yml
+  
+  student_ckpt: checkpoints/av_v6_8x8_causal/step_165000.pt
+
+  min_rollout_frames: 16
+  update_ratio: 5
+  rollout_steps: 1
+
+wandb:
+  name: shahbuland
+  project: video_models
+  run_name: av_v2_selfforce

@@ -10,15 +10,13 @@ class RMSNorm(nn.Module):
 
         # small init to default to no gain
         self.gain = nn.Parameter(torch.randn(dim) * 0.02)
+        self.eps = 1e-6
     
     def forward(self, x):
-        b,h,n,d = x.shape
-        gain = self.gain[None,None,None,:] # [1,1,1,d]
-
-        gain = (1. + gain)
-        rms = (x.float().pow(2).mean(-1,keepdim=True)+1.0e-6).rsqrt().to(x.dtype)
-
-        return x * rms * gain
+        # x: [b, h, n, d]
+        rms = x.float().pow(2).mean(dim=-1, keepdim=True)  # [b,h,n,1]
+        norm = rms.add(self.eps).rsqrt().to(x.dtype)        # stable inverse sqrt
+        return x * norm * (1. + self.gain[None, None, None, :])
 
 class L2Norm(nn.Module):
     def __init__(self):

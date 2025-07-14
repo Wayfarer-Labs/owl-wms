@@ -1,0 +1,58 @@
+# Config for a simple 256 -> 16 autoencoder
+model:
+  model_id: dcae
+  sample_size: [360,640]
+  channels: 4
+  latent_size: 8
+  latent_channels: 128
+
+  noise_decoder_inputs: 0.0
+  ch_0: 256
+  ch_max: 2048
+
+  encoder_blocks_per_stage: [3, 3, 3, 3, 3, 3]
+  decoder_blocks_per_stage: [3, 3, 3, 3, 3, 3]
+
+  checkpoint_grads: true
+
+train:
+  trainer_id: rec
+  data_id: s3_cod_features
+  data_kwargs:
+    bucket_name: cod-raw-360p-30fs
+    prefix: depth-and-raw
+    include_depth: true
+
+  target_batch_size: 32
+  batch_size: 4
+
+  epochs: 200
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 3.0e-5
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-15
+
+  lpips_type: convnext
+  loss_weights:
+    kl: 1.0e-6
+    lpips: 12.0
+    se_reg: 0.0
+
+  scheduler: LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 3000
+    min_lr: 3.0e-6
+
+  checkpoint_dir: checkpoints/cod_128x_depth
+  resume_ckpt: null
+
+  sample_interval: 1000
+  save_interval: 5000
+
+wandb:
+  name: ${env:WANDB_USER_NAME}
+  project: new_vaes
+  run_name: 128x_cod_scaled

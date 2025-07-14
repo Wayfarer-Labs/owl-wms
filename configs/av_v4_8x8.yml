@@ -1,0 +1,96 @@
+model:
+  model_id: game_rft_audio
+  sample_size: 8
+  channels: 128
+  audio_channels: 64
+  
+  n_layers: 24
+  n_heads: 24
+  d_model: 1536
+
+  tokens_per_frame: 65
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.0
+  n_frames: 16
+
+  causal: false
+  uncond: true
+  backbone: dit
+
+train:
+  trainer_id: av
+  data_id: cod_s3_audio
+  data_kwargs:
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to4x4
+    prefix: feats
+    file_share_max: 50
+
+  sample_data_id: cod_s3_audio
+  sample_data_kwargs:
+    window_length: 16
+    bucket_name: cod-data-latent-360x640to4x4
+    prefix: feats
+    file_share_max: 50
+
+  target_batch_size: 256
+  batch_size: 32
+
+  epochs: 200
+
+#  opt: AdamW
+#  opt_kwargs:
+#    lr: 1.0e-4
+#    weight_decay: 1.0e-4
+#    eps: 1.0e-15
+#    betas: [0.9, 0.95]
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [core.proj_in, core.proj_out.proj]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/av_v4_8x8
+  output_path: /mnt/data/owl-wms/checkpoints/av_v4_8x8
+  resume_ckpt: null #checkpoints/av_v2_4x4/step_90000.pt
+        
+  sample_interval: 1000
+  save_interval: 5000
+
+  sampler_id: av_window
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.3
+    window_length: 16
+    num_frames: 104
+    noise_prev: 0.2
+    only_return_generated: false
+
+  n_samples: 4
+
+  vae_id: null
+  vae_batch_size: 4
+  vae_scale: 0.63
+  audio_vae_scale: 0.45
+
+  vae_cfg_path: configs/owl_vaes/cod_128x_feats.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_128x_feats/cod_128x_feats_160k_ema.pt
+
+  audio_vae_id: null
+  audio_vae_cfg_path: configs/owl_vaes/audio_ae_2.yml
+  audio_vae_ckpt_path: /mnt/data/checkpoints/cache_for_wm/sf_v0/cod_audio.pt
+
+  uncond: true
+
+wandb:
+  name: shahbuland
+  project: video_models
+  run_name: av_v2_4x4

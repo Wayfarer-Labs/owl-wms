@@ -4,14 +4,12 @@ import torch.nn.functional as F
 
 import math
 
-import einops as eo
 from .mlp import MLPCustom
 
 from rotary_embedding_torch import (
     RotaryEmbedding,
     apply_rotary_emb
 )
-import einops as eo
 
 class LearnedPosEnc(nn.Module):
     def __init__(self, n_seq, dim):
@@ -24,9 +22,9 @@ class LearnedPosEnc(nn.Module):
         b,n,d = x.shape
         if n < self.n_seq:
             # Only add positional embeddings for the last n tokens
-            p = eo.repeat(self.p[-n:], 'n d -> b n d', b=b)
+            p = self.p[-n:].unsqueeze(0).repeat(b, 1, 1)
         else:
-            p = eo.repeat(self.p, 'n d -> b n d', b=b)
+            p = self.p.unsqueeze(0).repeat(b, 1, 1)
         return x + p
 
 class SinCosEmbed(nn.Module):
@@ -51,7 +49,7 @@ class SinCosEmbed(nn.Module):
         reshape_out = False
         if x.dim() == 2:
             b, n = x.shape
-            x = x.reshape(b*n)
+            x = x.view(b*n)
             reshape_out = True
             
         x = x * self.mult
@@ -147,8 +145,8 @@ class MouseEmbedding(nn.Module):
             angle_emb = torch.stack([
                 torch.cos(angles),
                 torch.sin(angles)
-            ], dim=-1)  # [b,n,2]
-            magnitude_emb = self.magnitude_embed(magnitudes)  # [b,n,dim//2]
+            ], dim=-1).to(x.dtype)  # [b,n,2]
+            magnitude_emb = self.magnitude_embed(magnitudes).to(x.dtype)  # [b,n,dim//2]
 
         angle_emb = self.angle_proj(angle_emb)  # [b,n,dim//2]
         
@@ -176,9 +174,10 @@ class ControlEmbedding(nn.Module):
         self.mouse = MouseEmbedding(dim_out, dim)
         self.button = ButtonEmbeddding(n_buttons, dim_out, dim)
 
-    def forward(self, mouse, button):
+    def forward(self, mouse, button, has_controls=None):
         # mouse : [b,n,2]
         # button : [b,n,n_buttons]
+        # has_controls : [b,] boolean mask
 
         # out is [b,n,d]
 

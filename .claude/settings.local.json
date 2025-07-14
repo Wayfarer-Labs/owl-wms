@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker build:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(kubectl config:*)",
+      "Bash(gcloud container clusters:*)",
+      "Bash(gcloud auth:*)",
+      "Bash(gcloud components install:*)",
+      "Bash(kubectl:*)"
+    ],
+    "deny": []
+  }
+}
