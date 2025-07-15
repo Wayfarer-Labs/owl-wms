@@ -1,8 +1,4 @@
-<<<<<<< HEAD
---extra-index-url https://download.pytorch.org/whl/cu128
-=======
 numpy==1.26.0
->>>>>>> uncond
 opencv-python
 wandb
 einops
@@ -26,10 +22,6 @@ accelerate
 boto3
 python-dotenv
 wandb[media]
-<<<<<<< HEAD
-alias-free-torch
-taskgroup # only here to backport to 3.10 cause hotel wifi is too slow to remake venv
-=======
 moviepy==1.0.3
 fvcore
 pynvml
@@ -43,4 +35,3 @@ alias-free-torch
 git+https://github.com/sypsyp97/convnext_perceptual_loss
 wandb[media]
 torchtyping
->>>>>>> uncond

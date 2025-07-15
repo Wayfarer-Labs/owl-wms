@@ -1,14 +1,3 @@
-<<<<<<< HEAD
-checkpoints/*
-venv/
-__pycache__/*
-generated_videos/
-owl-vaes/
-*.pt
-*.env
-*.pyc
-.vscode/*
-=======
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -219,4 +208,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
->>>>>>> uncond

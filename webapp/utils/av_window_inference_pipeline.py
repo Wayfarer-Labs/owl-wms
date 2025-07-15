@@ -5,7 +5,7 @@ from torch.nn import Module
 from owl_wms.models import get_model_cls
 from owl_wms.utils.owl_vae_bridge import get_decoder_only
 from owl_wms.configs import Config as RunConfig
-from owl_wms.models.gamerft_audio import GameRFTCore
+from owl_wms.models.gamerft_audio import GameRFTAudioCore
 
 def zlerp(x, alpha):
     return x * (1. - alpha) + alpha * torch.randn_like(x)
@@ -45,7 +45,7 @@ class AV_WindowInferencePipeline:
         self.device = device
         self.with_audio = with_audio
 
-        self.model: GameRFTCore = get_model_cls(self.config.model.model_id)(self.config.model).core
+        self.model: GameRFTAudioCore = get_model_cls(self.config.model.model_id)(self.config.model).core
         state_dict = torch  .load(ckpt_path, map_location="cpu")
         self.model          .load_state_dict(state_dict)
         self.model          .eval().bfloat16()
@@ -70,7 +70,7 @@ class AV_WindowInferencePipeline:
 
         self.frame_scale    = self.config.train.vae_scale
         if self.with_audio:
-            self.audio_scale    = self.config.train.audio_vae_scale
+            self.audio_scale = self.config.train.audio_vae_scale
 
         self.history_buffer = (video_latent_history / self.frame_scale).to(self.device).bfloat16()
         if self.with_audio:
@@ -178,3 +178,4 @@ class AV_WindowInferencePipeline:
             print(f"Audio decoding took {audio_time:.3f} seconds")
 
         return frame, audio
+

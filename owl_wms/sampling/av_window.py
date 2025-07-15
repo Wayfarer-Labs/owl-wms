@@ -125,12 +125,7 @@ class AVWindowSampler:
     
         return x, audio, extended_mouse, extended_btn
 
-<<<<<<< HEAD
-
-class Inference_AV_WindowSampler:
-=======
 class CausalAVWindowSampler:
->>>>>>> uncond
     """
     Window CFG Sampler samples new frames one by one, by inpainting the final frame.
     This is basically diffusion forcing.
@@ -156,36 +151,21 @@ class CausalAVWindowSampler:
         # audio is [b,n,c] and should be treated same as video (it'e being generated)
         # mouse is [b,n,2]
         # btn is [b,n,n_button]
-<<<<<<< HEAD
-
-=======
         
->>>>>>> uncond
         # output will be [b,n+self.num_frames,c,h,w]
         
         sampling_steps = self.n_steps
         num_frames = self.num_frames
 
-<<<<<<< HEAD
-        dt = 1. / sampling_steps
-=======
         cache_cond = KVCache(model.config)
         cache_uncond = KVCache(model.config)
 
         dt = get_sd3_euler(self.n_steps)
->>>>>>> uncond
 
         clean_history = dummy_batch.clone()
         clean_audio_history = audio.clone()
         
-<<<<<<< HEAD
-        assert mouse.shape[1] == num_frames + self.window_length
-        assert btn.shape[1]   == num_frames + self.window_length
-
-        extended_mouse, extended_btn = mouse, btn
-=======
         extended_mouse, extended_btn = batch_permute_to_length(mouse, btn, num_frames + self.window_length)
->>>>>>> uncond
 
         def step_history():
             # Video history
@@ -209,12 +189,6 @@ class CausalAVWindowSampler:
             mouse = extended_mouse[:,frame_idx:frame_idx+self.window_length]
             btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
 
-<<<<<<< HEAD
-            mouse_batch = torch.cat([mouse, torch.zeros_like(mouse)], dim=0) 
-            btn_batch = torch.cat([btn, torch.zeros_like(btn)], dim=0)
-            for _ in range(sampling_steps):
-                # CFG Branches
-=======
             # Create masks for conditional and unconditional branches
             b = local_history.shape[0]
             uncond_mask = torch.zeros(b, dtype=torch.bool, device=local_history.device)
@@ -227,29 +201,10 @@ class CausalAVWindowSampler:
             cache_uncond.enable_cache_updates()
 
             for step_idx in range(sampling_steps):
->>>>>>> uncond
                 x = local_history.clone()
                 a = local_audio.clone()
                 ts = ts_history.clone()
 
-<<<<<<< HEAD
-                x_batch = torch.cat([x, x], dim=0)
-                a_batch = torch.cat([a, a], dim=0)
-                ts_batch = torch.cat([ts, ts], dim=0)
-                
-                pred_video_batch, pred_audio_batch = model(x_batch, a_batch, ts_batch, mouse_batch, btn_batch)
-                
-                # Split predictions back into conditional and unconditional
-                cond_pred_video, uncond_pred_video = pred_video_batch.chunk(2)
-                cond_pred_audio, uncond_pred_audio = pred_audio_batch.chunk(2)
-
-                pred_video = uncond_pred_video + self.cfg_scale * (cond_pred_video - uncond_pred_video)
-                pred_audio = uncond_pred_audio + self.cfg_scale * (cond_pred_audio - uncond_pred_audio)
-                
-                x = x - pred_video*dt
-                a = a - pred_audio*dt
-                ts = ts - dt
-=======
                 if step_idx > 0:
                     x = x[:,-1:]
                     a = a[:,-1:]
@@ -272,13 +227,10 @@ class CausalAVWindowSampler:
                 x = x - pred_video*dt[step_idx]
                 a = a - pred_audio*dt[step_idx]
                 ts = ts - dt[step_idx]
->>>>>>> uncond
 
                 local_history[:,-1] = x[:,-1]
                 local_audio[:,-1] = a[:,-1]
                 ts_history[:,-1] = ts[:,-1]
-<<<<<<< HEAD
-=======
 
                 if step_idx == 0:
                     mouse = mouse[:,-1:]
@@ -289,7 +241,6 @@ class CausalAVWindowSampler:
                     cache_uncond.truncate(1, front = True)
                     cache_cond.disable_cache_updates()
                     cache_uncond.disable_cache_updates()
->>>>>>> uncond
             
             # Frame is entirely cleaned now
             new_frame = local_history[:,-1:]
@@ -305,30 +256,6 @@ class CausalAVWindowSampler:
             extended_mouse = extended_mouse[:,-num_frames:]
             extended_btn = extended_btn[:,-num_frames:]
 
-<<<<<<< HEAD
-        pixel_latents = x
-        pixels = None
-
-        audio_latents = audio
-        audio_wav = None
-
-        if decode_fn is not None:
-            pixels = decode_fn(pixel_latents * image_scale)
-
-        if audio_decode_fn is not None:
-            audio_wav = audio_decode_fn(audio_latents * audio_scale)
-    
-        return (
-            pixel_latents, audio_latents,  # NOTE Need this for history
-            pixels, audio_wav,             # NOTE Need this for rendering
-            extended_mouse, extended_btn,
-            clean_history, clean_audio_history
-        )
-
-
-def test_av_window_sampler():
-    sampler = AVWindowSampler()
-=======
         if decode_fn is not None:
             x = x * image_scale
             x = decode_fn(x)
@@ -447,7 +374,6 @@ class CausalAVWindowSamplerNoCFG(CausalAVWindowSampler):
 
 def test_window_cfg_sampler():
     sampler = WindowCFGSampler()
->>>>>>> uncond
     model = lambda x, ts, mouse, btn: x
     dummy_batch = torch.randn(1, 32, 128, 4, 4)
     audio = torch.randn(1, 32, 128)

@@ -277,15 +277,11 @@ def get_loader(batch_size, **data_kwargs):
 
 if __name__ == "__main__":
     import time
-<<<<<<< HEAD
-    loader = get_loader(1, window_length = 30, file_share_max = 20)
-=======
     loader = get_loader(16, 
                        window_length=16,
-                       bucket_name="cod-data-latent-360x640to4x4",
-                       prefix="feats/unlabelled",
+                       bucket_name="cod-data-latent-360x640to8x8",
+                       prefix="depth-and-raw/labelled",
                        file_share_max=50)
->>>>>>> uncond
 
     start = time.time()
     batch = next(iter(loader))
@@ -294,10 +290,10 @@ if __name__ == "__main__":
         BASE_IDX=i
         basedir = f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}"
         os.makedirs(basedir, exist_ok=True)
-        torch.save(video_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/video_latent.pt")
-        torch.save(audio_latent, f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/audio_latent.pt")
-        torch.save(mouse,        f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/mouse.pt")
-        torch.save(button,       f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/buttons.pt")
+        torch.save(video_latent[i:i+1], f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/video_latent.pt")
+        torch.save(audio_latent[i:i+1], f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/audio_latent.pt")
+        torch.save(mouse[i:i+1],        f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/mouse.pt")
+        torch.save(button[i:i+1],       f"/home/louis/owl-wms/webapp/static/histories/base{BASE_IDX}/buttons.pt")
     end = time.time()
     first_time = end - start
 
