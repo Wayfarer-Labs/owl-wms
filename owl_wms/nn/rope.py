@@ -3,75 +3,47 @@ Variants of RoPE were becoming heavy for embeddings so
 I made a unique script for all of them here
 """
 
-from rotary_embedding_torch import (
-    RotaryEmbedding,
-    apply_rotary_emb
-)
+from ret import RotaryEmbedding, apply_rotary_emb
 import torch
 from torch import nn
-import time
 
 
 class FlatVideoRoPE(nn.Module):
     """
     RoPE on video + audio assuming each frame flat'd to [n_frame_toks+n_audio_toks]
+    Rotate non-pad portion of feature-dims of q/k. Video 1/4th padded, audio 1/2 padded
     """
     def __init__(self, config):
         super().__init__()
         d_head = config.d_model // config.n_heads
-        self.m = config.tokens_per_frame
-        self.p = config.sample_size  # video is PxP pixels
-        assert self.m == self.p**2 + 1
+        p = config.sample_size  # video is PxP pixels
 
-        # pre-compute cos / sin tables
-        vid_ang = RotaryEmbedding(d_head // 4, freqs_for="pixel", max_freq=256)\
-            .get_axial_freqs(config.n_frames, self.p, self.p)
-        aud_ang = RotaryEmbedding(d_head // 2)\
-            .get_axial_freqs(config.n_frames)
+        # Video freqs. Rot features: (L, P, P, <pad>)
+        vid_freqs = RotaryEmbedding(d_head // 4, freqs_for="pixel", max_freq=256)\
+            .get_axial_freqs(config.n_frames, p, p, 1, offsets=(0, 0, 0, 1))\
+            .view(config.n_frames, p**2, -1)
 
-        self.register_buffer("vcos", vid_ang.cos(), persistent=False)
-        self.register_buffer("vsin", vid_ang.sin(), persistent=False)
-        self.register_buffer("acos", aud_ang.cos(), persistent=False)
-        self.register_buffer("asin", aud_ang.sin(), persistent=False)
+        # Audio freqs. Rot features: (L, <pad>)
+        aud_freqs = RotaryEmbedding(d_head // 2)\
+            .get_axial_freqs(config.n_frames, 1, offsets=(0, 1))\
+            .view(config.n_frames, 1, -1)
 
-    @staticmethod
-    def _rot(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        # Rotate first half of each channel
-        rot_dim = cos.size(-1)
-        n = x.shape[2]
-        cos, sin = cos[:n], sin[:n]   # apply offset to cos
-        x_rot, x_pass = x.float().split([rot_dim, x.size(-1) - rot_dim], dim=-1)
-        x_pair = x_rot.view(*x_rot.shape[:-1], rot_dim // 2, 2)
-        x_pair = torch.stack((-x_pair[..., 1], x_pair[..., 0]), dim=-1).view_as(x_rot)
-        x_rot = x_rot * cos + x_pair * sin
-        return torch.cat((x_rot, x_pass), dim=-1).type_as(x)
+        # unified video / audio freqs. Shape: [n_frames, P^2 + 1, H]
+        freqs = torch.cat([vid_freqs, aud_freqs], dim=1).flatten(0, 1)
 
-    def forward(self, q: torch.torch.Tensor, k: torch.torch.Tensor):
-        assert self.vcos.dtype == torch.float32  # RoPE numerically unstable w/ bf16
-        b, h, tq, d = q.shape
-        nk, nq = k.size(2) // self.m, tq // self.m
+        cos, sin = freqs.cos()[..., ::2], freqs.sin()[..., ::2]  # subsampling
+        self.cos = nn.Buffer(cos.contiguous(), persistent=False)
+        self.sin = nn.Buffer(sin.contiguous(), persistent=False)
 
-        q = q.view(b, h, nq, self.m, d)
-        k = k.view(b, h, nk, self.m, d)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x is either q or k. Shaped as [B, H, n_frames*tokens_per_frame, Dh]"""
+        assert self.cos.dtype == torch.float32
+        cos, sin = self.cos[..., :x.size(2), :], self.sin[..., :x.size(2), :]
+        x0, x1 = x.float().unfold(-1, 2, 2).unbind(-1)
+        y0 = x0 * cos - x1 * sin
+        y1 = x1 * cos + x0 * sin
+        return torch.cat((y0, y1), dim=-1).type_as(x)
 
-        # split video / audio
-        qv, qa = q[..., :self.p**2, :], q[..., self.p**2, :]
-        kv, ka = k[..., :self.p**2, :], k[..., self.p**2, :]
-
-        # HxH pixel video RoPE on q/k
-        q_grid_shape = b, h, nq, self.p, self.p, d
-        kv_grid_shape = b, h, nk, self.p, self.p, d
-        qv = self._rot(qv.view(*q_grid_shape), self.vcos, self.vsin).reshape_as(qv)
-        kv = self._rot(kv.view(*kv_grid_shape), self.vcos, self.vsin).reshape_as(kv)
-
-        # audio RoPE on q/k
-        qa = self._rot(qa, self.acos, self.asin).unsqueeze(-2)
-        ka = self._rot(ka, self.acos, self.asin).unsqueeze(-2)
-
-        # Recombine
-        q = torch.cat((qv, qa), dim=-2).view(b, h, nq * self.m, d)
-        k = torch.cat((kv, ka), dim=-2).view(b, h, nk * self.m, d)
-        return q, k
 
 class FrameRoPE(nn.Module):
     """
@@ -221,34 +193,62 @@ def test_rope_speed():
     print(f"Heads: {config.n_heads}, Head dim: {d_head}")
 
 
+@torch.no_grad()
 def test_flat_video_rope_integrity():
     from types import SimpleNamespace
     import numpy as np
 
-    cfg = SimpleNamespace(
-        d_model=512,
-        n_heads=8,
-        tokens_per_frame=17,      # 16 video + 1 audio
-        sample_size=4,       # 4×4 → 16 video tokens
-        n_frames=8
-    )
-
-    rope = FlatVideoRoPE(cfg)  # use cpu for cross-device seeded rng
+    cfg = SimpleNamespace(d_model=512, n_heads=8, tokens_per_frame=17, sample_size=4, n_frames=100)
+    rope = FlatVideoRoPE(cfg)
 
     # use numpy rng - reproducable across machines
     rng = np.random.default_rng(seed=0)
-    shape = (2, cfg.n_heads, cfg.n_frames * cfg.tokens_per_frame, cfg.d_model)
-    q = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32))
-    k = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32))
+    shape = (2, cfg.n_heads, cfg.n_frames * cfg.tokens_per_frame, cfg.d_model // cfg.n_heads)
+    q = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32)).bfloat16()
+    k = torch.from_numpy(rng.standard_normal(size=shape).astype(np.float32)).bfloat16()
 
-    with torch.no_grad():
-        q_out, k_out = rope(q, k)
+    q_out, k_out = rope(q), rope(k)
 
-    checksum = (q_out.sum() + k_out.sum()).item()
-
-    assert checksum == 484.2119140625, checksum
+    checksum = q_out.float().sum() + k_out.float().sum()
+    ref_impl_checksum = torch.tensor(1678.122802734375)
+    assert torch.allclose(checksum, ref_impl_checksum, rtol=1e-6), checksum.item()
     print("FlatVideoRoPE implementation consistent")
 
 
+@torch.no_grad()
+def test_flat_video_rope_dot_product_invariance():
+    from types import SimpleNamespace
+    import numpy as np
+
+    cfg = SimpleNamespace(d_model=512, n_heads=8, tokens_per_frame=17, sample_size=4, n_frames=100)
+    rope = FlatVideoRoPE(cfg)
+
+    B, H, L, Dh = 1, cfg.n_heads, cfg.tokens_per_frame * cfg.n_frames, cfg.d_model // cfg.n_heads
+
+    rng = np.random.default_rng(seed=0)
+
+    for dtype, rtol in zip([torch.float32, torch.bfloat16], [1e-4, 1e-2]):
+        q = torch.from_numpy(rng.standard_normal((B, H, 1, Dh))).repeat(1, 1, L, 1).to(dtype)
+        k = torch.from_numpy(rng.standard_normal((B, H, 1, Dh))).repeat(1, 1, L, 1).to(dtype)
+
+        q, k = rope(q), rope(k)
+
+        # q/k idxs, equidistant (53 frames away from one another)
+        q0, q1, k0, k1 = [0, 30, 53, 83]
+        q0, q1, k0, k1 = [idx * cfg.tokens_per_frame for idx in (q0, q1, k0, k1)]
+
+        # per-head dot product
+        q, k = q.float(), k.float()  # ignore dot product accumulation precision, only testing RoPE
+        dp1 = (q[0, :, q0, :] * k[0, :, k0, :]).sum(-1)
+        dp2 = (q[0, :, q1, :] * k[0, :, k1, :]).sum(-1)
+
+        # they should be equal up to numerical tolerance
+        if not torch.allclose(dp1, dp2, rtol=rtol):
+            raise ValueError(f"dot product not equivalent. Per head output:\ndp1={dp1}\ndp2={dp2}")
+        print("RoPE dot-product check passed")
+
+
 if __name__ == "__main__":
+    test_flat_video_rope_integrity()
+    test_flat_video_rope_dot_product_invariance()
     test_rope_speed()

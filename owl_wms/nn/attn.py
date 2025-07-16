@@ -79,7 +79,7 @@ class Attn(nn.Module):
             if kv_cache.should_update:
                 kv_cache.update(k.clone(), v.clone(), self.layer_ind)
 
-        q, k = self.rope(q, k)
+        q, k = self.rope(q), self.rope(k)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.shape[0], L, -1)
