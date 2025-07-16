@@ -2,7 +2,7 @@ numpy==1.26.0
 opencv-python
 wandb
 einops
-rotary-embedding-torch
+rotary-embedding-torch>=0.8.8
 ema-pytorch
 omegaconf
 diffusers
