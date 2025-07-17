@@ -148,6 +148,19 @@ class DiT(nn.Module):
 
         return x
 
+class SkipProjection(nn.Module):
+    def __init__(self, d):
+        super().__init__()
+
+        self.norm = LayerNorm(d)
+        self.proj = nn.Linear(d, d)
+
+    def forward(self, new, old):
+        x = new + old
+        x = self.norm(x)
+        x = self.proj(x)
+        return x
+
 class UViT(nn.Module):
     get_block_mask = DiT.get_block_mask
 
@@ -168,7 +181,7 @@ class UViT(nn.Module):
         n_skip_connections = config.n_layers // 2
         skip_projs = []
         for _ in range(n_skip_connections):
-            skip_projs.append(nn.Linear(config.d_model * 2, config.d_model))
+            skip_projs.append(SkipProjection(config.d_model))
         self.skip_projs = nn.ModuleList(skip_projs)
 
     def forward(self, x, cond, kv_cache = None):
@@ -195,10 +208,9 @@ class UViT(nn.Module):
 
             # Concatenate early and current features
             skip_idx = i - (mid_idx + 1)
-            x = torch.cat([x, early_feat], dim=-1)
-            x = self.skip_projs[skip_idx](x)
+            x = self.skip_projs[skip_idx](x, early_feat)
 
-            x = self.blocks[i](x, cond, kv_cache)
+            x = self.blocks[i](x, cond, block_mask, kv_cache)
 
         return x
 

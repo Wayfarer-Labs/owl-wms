@@ -12,7 +12,7 @@ from ..nn.embeddings import (
     ControlEmbedding,
     LearnedPosEnc
 )
-from ..nn.attn import DiT, FinalLayer
+from ..nn.attn import DiT, FinalLayer, UViT
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
@@ -24,6 +24,9 @@ class GameRFTAudioCore(nn.Module):
             backbone_cls = DiT
         elif config.backbone == 'mmdit':
             backbone_cls = MMDIT
+        elif config.backbone == 'uvit':
+            backbone_cls = UViT
+
         self.backbone = config.backbone
 
         self.transformer = backbone_cls(config)
@@ -63,7 +66,7 @@ class GameRFTAudioCore(nn.Module):
         x = self.proj_in(x) # b(nhw)d
         audio = self.audio_proj_in(audio) # bnd
 
-        if self.backbone == 'dit':
+        if self.backbone == 'dit' or self.backbone == 'uvit':
             audio = audio.unsqueeze(-2) # bn1d
             x = x.reshape(b, n, -1, x.shape[-1]) # bn(hw)d
             x = torch.cat([x, audio], dim = -2) # bn(hw+1)d
