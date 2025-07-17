@@ -1,15 +1,13 @@
 from torch import nn
 import torch.nn.functional as F
 
-from .quantized_linear import QLinear
-
 
 class MLPCustom(nn.Module):
     def __init__(self, dim_in, dim_middle, dim_out):
         super().__init__()
 
-        self.fc1 = QLinear(dim_in, dim_middle)
-        self.fc2 = QLinear(dim_middle, dim_out)
+        self.fc1 = nn.Linear(dim_in, dim_middle)
+        self.fc2 = nn.Linear(dim_middle, dim_out)
 
         nn.init.kaiming_normal_(self.fc1.weight)
         nn.init.kaiming_normal_(self.fc2.weight)
