@@ -89,6 +89,6 @@ train:
   audio_vae_ckpt_path: /mnt/data/checkpoints/cache_for_wm/sf_v0/cod_audio.pt
 
 wandb:
-  name: shahbuland
+  name: louiscastricato
   project: video_models
   run_name: av_v2_4x4
