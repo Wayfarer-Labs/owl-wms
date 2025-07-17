@@ -8,7 +8,8 @@
       "Bash(gcloud container clusters:*)",
       "Bash(gcloud auth:*)",
       "Bash(gcloud components install:*)",
-      "Bash(kubectl:*)"
+      "Bash(kubectl:*)",
+      "Bash(git pull:*)"
     ],
     "deny": []
   }

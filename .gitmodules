@@ -1,4 +1,4 @@
 [submodule "owl-vaes"]
 	path = owl-vaes
 	url = https://github.com/wayfarer-labs/owl-vaes
-	branch = newgan
+	branch = main

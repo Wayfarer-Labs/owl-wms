@@ -35,8 +35,8 @@ train:
     prefix: depth-and-raw/labelled
     file_share_max: 50
 
-  target_batch_size: 224
-  batch_size: 14
+  target_batch_size: 256
+  batch_size: 16
 
   epochs: 200
 
@@ -58,8 +58,8 @@ train:
   output_path: /mnt/data/shahbuland/checkpoints/av_v2_causvid_output
   resume_ckpt: null #checkpoints/av_v2/step_30000.pt
         
-  sample_interval: 50
-  save_interval: 500
+  sample_interval: 250
+  save_interval: 1000
 
   sampler_id: av_causal_one_step
   sampler_kwargs:
@@ -82,10 +82,10 @@ train:
   audio_vae_cfg_path: configs/owl_vaes/audio_ae_2.yml
   audio_vae_ckpt_path: /mnt/data/checkpoints/cache_for_wm/sf_v0/cod_audio.pt
 
-  teacher_ckpt: checkpoints/av_v6_8x8_causal/step_200000.pt
+  teacher_ckpt: checkpoints/av_v6_8x8_causal/step_230000.pt
   teacher_cfg: configs/av_v5_8x8_weak.yml
   
-  student_ckpt: checkpoints/av_v6_8x8_causal/step_200000.pt
+  student_ckpt: checkpoints/av_v6_8x8_causal/step_230000.pt
 
   min_rollout_frames: 16
   update_ratio: 5
