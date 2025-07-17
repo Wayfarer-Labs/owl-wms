@@ -61,7 +61,6 @@ class Attn(nn.Module):
         self.rope = FlatVideoRoPE(config)
         #self.rope = FrameRoPE(config)
 
-    @torch.compile
     def forward(self, x, block_mask, kv_cache=None):
         B, L, _ = x.shape
 
