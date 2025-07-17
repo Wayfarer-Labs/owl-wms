@@ -1,6 +1,6 @@
 model:
   model_id: dcae
-  sample_size: 360
+  sample_size: [360,640]
   channels: 4
   latent_size: 8
   latent_channels: 64
