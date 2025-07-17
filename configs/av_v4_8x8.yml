@@ -91,6 +91,6 @@ train:
   uncond: true
 
 wandb:
-  name: shahbuland
+  name: louiscastricato
   project: video_models
   run_name: av_v2_4x4
