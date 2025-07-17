@@ -3,10 +3,9 @@ Variants of RoPE were becoming heavy for embeddings so
 I made a unique script for all of them here
 """
 
-from ret import RotaryEmbedding, apply_rotary_emb
+from rotary_embedding_torch import RotaryEmbedding, apply_rotary_emb
 import torch
 from torch import nn
-
 
 class FlatVideoRoPE(nn.Module):
     """

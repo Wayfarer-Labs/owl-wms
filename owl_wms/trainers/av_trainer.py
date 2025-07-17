@@ -194,18 +194,18 @@ class AVRFTTrainer(BaseTrainer):
 
                                 vid_for_sample, aud_for_sample, mouse_for_sample, btn_for_sample = next(sample_loader)
                                 n_samples = self.train_cfg.n_samples
-                                samples, audio, sample_mouse, sample_button = sampler(
-                                    get_ema_core(),
-                                    vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
-                                    aud_for_sample.bfloat16().cuda() / self.train_cfg.audio_vae_scale,
-                                    mouse_for_sample.bfloat16().cuda(),
-                                    btn_for_sample.bfloat16().cuda(),
-                                    decode_fn,
-                                    audio_decode_fn,
-                                    self.train_cfg.vae_scale,
-                                    self.train_cfg.audio_vae_scale
-                                ) # -> [b,n,c,h,w]
                                 if self.rank == 0:
+                                    samples, audio, sample_mouse, sample_button = sampler(
+                                        get_ema_core(),
+                                        vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
+                                        aud_for_sample.bfloat16().cuda() / self.train_cfg.audio_vae_scale,
+                                        mouse_for_sample.bfloat16().cuda(),
+                                        btn_for_sample.bfloat16().cuda(),
+                                        decode_fn,
+                                        audio_decode_fn,
+                                        self.train_cfg.vae_scale,
+                                        self.train_cfg.audio_vae_scale
+                                    ) # -> [b,n,c,h,w]
                                     wandb_av_out = to_wandb_av(samples, audio, sample_mouse, sample_button)
                                     if len(wandb_av_out) == 3:  
                                         video, depth_gif, flow_gif = wandb_av_out

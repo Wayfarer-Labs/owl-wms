@@ -58,16 +58,16 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: checkpoints/av_v6_8x8_causal
-  output_path: /mnt/data/owl-wms/checkpoints/av_v6_8x8
-  resume_ckpt: checkpoints/av_v6_8x8_causal/step_135000.pt
+  checkpoint_dir: checkpoints/lightning_rope
+  output_path: checkpoints/lightning_rope_out
+  resume_ckpt: #checkpoints/av_v6_8x8_causal/step_135000.pt
         
   sample_interval: 1000
   save_interval: 5000
 
   sampler_id: av_causal
   sampler_kwargs:
-    n_steps: 4
+    n_steps: 10
     cfg_scale: 1.3
     window_length: 16
     num_frames: 104
