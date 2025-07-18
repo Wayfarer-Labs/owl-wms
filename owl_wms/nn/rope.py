@@ -7,6 +7,9 @@ from rotary_embedding_torch import RotaryEmbedding, apply_rotary_emb
 import torch
 from torch import nn
 
+import einops as eo
+from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
+allow_ops_in_compiled_graph()
 
 class FlatVideoRoPE(nn.Module):
     """
@@ -45,7 +48,7 @@ class FlatVideoRoPE(nn.Module):
         return torch.cat((y0, y1), dim=-1).type_as(x)
 
 
-class FrameRoPE(nn.Module):
+class AVRoPE(nn.Module):
     """
     RoPE variant that treats audio as R+1,C+1 part of a frame
     """
@@ -55,7 +58,7 @@ class FrameRoPE(nn.Module):
 
         dim_head = config.d_model // config.n_heads
         pos_emb = RotaryEmbedding(
-            dim = dim_head//6, # Using half dimension since we only need 1D rotation
+            dim = dim_head//4, # Using half dimension since we only need 1D rotation
             freqs_for='pixel',
             max_freq=256
         )
@@ -64,86 +67,47 @@ class FrameRoPE(nn.Module):
         self.p = config.sample_size
         self.p2 = self.p**2
 
-        self.register_buffer(
-            "freqs",
-            pos_emb.get_axial_freqs(config.n_frames, self.p+1, self.p+1),
-            persistent=False
+        freqs = pos_emb.get_axial_freqs(
+            config.n_frames, self.p+1, self.p+1
         )
+        cos,sin = freqs.cos()[..., ::2], freqs.sin()[..., ::2]
+        self.cos = nn.Buffer(cos.contiguous(), persistent=False)
+        self.sin = nn.Buffer(sin.contiguous(), persistent=False)
 
-    def forward(self, q, k, offset=0):
-        b,h,_,d = k.shape
+    def forward(self, x_video, x_audio, offset=0):
+        # x_video : [b,h,nhw,d] (q or k)
+        # x_audio : [b,h,n,d] (q or k)
 
-        # q|k is [b,h,n_frames*tokens_per_frame,d]
-        n = k.shape[2]//self.m  # Number of frames
-        n_q = q.shape[2]//self.m
-        m = self.m             # Tokens per frame
+        x_video = eo.rearrange(x_video, 'b h (n y x) d -> b h n y x d', y = self.p, x = self.p)
+        # No need to reshape audio
+        
+        # Pad with new row and column on both
+        pad_right = torch.zeros_like(x_video[...,-1:,:])
+        pad_bottom = torch.zeros_like(x_video[...,-1:,:,:])
 
-        # Reshape to [b,h,n,m,d]
-        q = q.view(q.shape[0], q.shape[1], n_q, m, q.shape[3])
-        k = k.view(k.shape[0], k.shape[1], n, m, k.shape[3])
+        x_video = torch.cat([x_video, pad_right], dim = -2)
+        x_video = torch.cat([x_video, pad_bottom], dim = -3)
 
-        # Split out the video and audio
-        # bhnmd-> bhn(16)d, bhnd
-        q_video = q[:,:,:,:self.p2]
-        q_video = q_video.view(
-            b,
-            h,
-            n_q, self.p, self.p,
-            d
-        ) # b h n_q p p d
-        k_video = k[:,:,:,:self.p2]
-        k_video = k_video.view(
-            b,
-            h,
-            n, self.p, self.p,
-            d
-        ) # b h n_q p p d
-        q_audio = q[:,:,:,-1]
-        k_audio = k[:,:,:,-1] # bhnd
+        x_video[:,:,:,-1,-1] = x_audio
 
-        # Right pad and bottom pad
-        with torch.no_grad():
-            right_pad = torch.zeros(b, h, n, self.p, 1, d, device=k.device, dtype=k.dtype)
-            bottom_pad = torch.zeros(b, h, n, 1, self.p+1, d, device=k.device, dtype=k.dtype)
+        # Do stuff with freqs
+        cos, sin = self.cos[..., offset:x_video.size(2) + offset, :], self.sin[..., offset:x_video.size(2) + offset, :]
+        x0, x1 = x_video.float().unfold(-1, 2, 2).unbind(-1)
+        y0 = x0 * cos - x1 * sin
+        y1 = x1 * cos + x0 * sin
+        x_video = torch.cat((y0, y1), dim=-1).type_as(x_video)
 
-        q_video = torch.cat([q_video, right_pad[:,:,:n_q]], dim = -2)
-        q_video = torch.cat([q_video, bottom_pad[:,:,:n_q]], dim = -3)
-        k_video = torch.cat([k_video, right_pad], dim = -2)
-        k_video = torch.cat([k_video, bottom_pad], dim = -3)
-        # all b h n|n_q (p+1) (p+1) d
+        x_audio = x_video[:,:,:,-1,-1].clone()
+        x_video = x_video[:,:,:,:-1,:-1]
 
-        q_video[:,:,:,-1,-1] = q_audio
-        k_video[:,:,:,-1,-1] = k_audio
+        x_video = eo.rearrange(x_video, 'b h n y x d -> b h (n y x) d')
+        
+        return x_video, x_audio
 
-        with torch.no_grad():
-            freqs = self.freqs[:n].detach()
-
-        q_video = apply_rotary_emb(freqs[-n_q:].detach(), q_video)
-        k_video = apply_rotary_emb(freqs.detach(), k_video)
-
-        q_audio = q_video[:,:,:,-1,-1]
-        k_audio = k_video[:,:,:,-1,-1]
-
-        q_video = q_video[:,:,:,:-1,:-1]
-        k_video = k_video[:,:,:,:-1,:-1]
-
-        q_video = q_video.reshape(
-            b,
-            h,
-            n_q, self.p2,
-            d
-        ) # bhn(16)d
-        q = torch.cat([q_video, q_audio.unsqueeze(-2)], dim = -2)
-
-        k_video = k_video.reshape(
-            b,
-            h,
-            n, self.p2,
-            d
-        )
-        k = torch.cat([k_video, k_audio.unsqueeze(-2)], dim = -2)
-
-        q = q.view(b,h,n_q*m,d)
-        k = k.view(b,h,n*m,d)
-
-        return q, k
+def visaulize_rope_freqs():
+    pos_emb = RotaryEmbedding(
+        dim = dim_head//6, # Using half dimension since we only need 1D rotation
+        freqs_for='pixel',
+        max_freq=256
+    )
+    freqs = pos_emb.get_axial_freqs(16, 5, 5)

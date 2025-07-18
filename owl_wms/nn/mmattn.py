@@ -8,7 +8,7 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import AdaLN, Gate
-from .rope import FlatVideoRoPE
+from .rope import AVRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 
@@ -20,24 +20,62 @@ This code makes the assumption that there are some
 tokens from another modality that must always be attended to
 """
 
-def create_block_causal_mask_with_mm(tokens, context_tokens, tokens_per_frame):
+def create_block_causal_mask_with_mm(tokens, tokens_per_frame, audio_tokens = 1):
+    """
+    Assumes 1 token per frame for audio
+    """
+    tokens_per_frame_video = tokens_per_frame - audio_tokens
+    tokens_per_frame_audio = audio_tokens
+
     frames = tokens // tokens_per_frame
-    
-    # Create base causal mask, nothing is masked
-    total_tokens = tokens + context_tokens
-    mask = torch.zeros(total_tokens, total_tokens)
-    
-    # Allow attention within each frame
+
+    mask_tl = torch.zeros(frames*tokens_per_frame_video, frames*tokens_per_frame_video)
+    mask_br = torch.zeros(frames*tokens_per_frame_audio, frames*tokens_per_frame_audio)
+
     for i in range(frames):
-        start = i * tokens_per_frame
-        end = (i + 1) * tokens_per_frame
-        mask[start:end, end:tokens] = True # Can't see future frames
+        start = i * tokens_per_frame_video
+        end = (i + 1) * tokens_per_frame_video
+        mask_tl[start:end, end:] = -float('inf')
+        if i == frames - 1:
+            mask_tl[start:end, :tokens_per_frame_video] = -float('inf')
+
+    for i in range(frames):
+        start = i * tokens_per_frame_audio
+        end = (i + 1) * tokens_per_frame_audio
+        mask_br[start:end, end:] = -float('inf')
+        if i == frames - 1:
+            mask_br[start:end, :tokens_per_frame_audio] = -float('inf')
+
+    mask_bl = torch.zeros(frames*tokens_per_frame_audio, frames*tokens_per_frame_video)
+    mask_tr = torch.zeros(frames*tokens_per_frame_video, frames*tokens_per_frame_audio)
     
-    # Context tokens can only attend to themselves
-    mask[tokens:, :tokens] = True # Mask out attention to regular tokens
+    for i in range(frames):
+        start = i * tokens_per_frame_audio
+        end = (i + 1) * tokens_per_frame_audio
+        start_video = i * tokens_per_frame_video
+        end_video = (i + 1) * tokens_per_frame_video
+
+        mask_bl[start:end, end_video:] = -float('inf')
+        if i == frames - 1:
+            mask_bl[start:end, :tokens_per_frame_video] = -float('inf')
     
-    # Regular tokens can still attend to all context tokens (no masking needed)
-    # The zeros in mask[:, tokens:] allow tokens to attend to all context
+    for i in range(frames):
+        start = i * tokens_per_frame_video
+        end = (i + 1) * tokens_per_frame_video
+        start_audio = i * tokens_per_frame_audio
+        end_audio = (i + 1) * tokens_per_frame_audio
+
+        mask_tr[start:end, end_audio:] = -float('inf')
+        if i == frames - 1:
+            mask_tr[start:end, :tokens_per_frame_audio] = -float('inf')
+
+    mask_top = torch.cat([mask_tl, mask_tr], dim=1)
+    mask_bottom = torch.cat([mask_bl, mask_br], dim=1)
+    mask = torch.cat([mask_top, mask_bottom], dim=0)
+
+    # mask is now [n_query, n_key]
+    # make it [b,h,n_query,n_key]
+    mask = mask[None,None,:,:]
     
     return mask
 
@@ -62,7 +100,7 @@ class MMAttn(nn.Module):
         self.config = config
         self.causal = config.causal
 
-        self.rope = FlatVideoRoPE(config)
+        self.rope = AVRoPE(config)
 
     def split(self, qkv):
         return eo.rearrange(qkv, 'b n (three h d) -> three b h n d', three = 3, h = self.n_heads)
@@ -70,7 +108,10 @@ class MMAttn(nn.Module):
     def merge(self, x):
         return eo.rearrange(x, 'b h n d -> b n (h d)')
 
-    def forward(self, x_1, x_2, kv_cache=None):
+    def forward(self, x_1, x_2, block_mask = None, kv_cache = None):
+        """
+        For MMDiT we assume kv_cache is a tuple of two caches
+        """
         n1 = x_1.shape[1]
 
         q1,k1,v1 = self.split(self.qkv_1(x_1))
@@ -79,44 +120,47 @@ class MMAttn(nn.Module):
         q1,k1 = self.qk_norm_1(q1,k1)
         q2,k2 = self.qk_norm_2(q2,k2)
 
-        if not self.causal or (kv_cache is not None and len(kv_cache) > 0):
+        if not self.causal or (kv_cache is not None and len(kv_cache[0]) > 0):
             mask = None
-        else:
-            mask = create_block_causal_mask_with_mm(x_1.shape[1], x_2.shape[1], self.config.tokens_per_frame)
-            mask = mask.to(device=x_1.device,dtype=x_1.dtype)
-            mask = mask.unsqueeze(0).repeat(x_1.shape[0],1,1)
-            mask = mask.unsqueeze(1) # head dim
 
         if kv_cache is not None:
-            if len(kv_cache) > 0:
-                old_k, old_v = kv_cache.get(self.layer_ind)
+            if len(kv_cache[0]) > 0:
+                old_k1, old_v1 = kv_cache[0].get(self.layer_ind)
+                old_k2, old_v2 = kv_cache[1].get(self.layer_ind)
                 
-                new_k = torch.cat([old_k, k1], dim=2).contiguous()
-                new_v = torch.cat([old_v, v1], dim=2).contiguous()
+                new_k1 = torch.cat([old_k1, k1], dim=2).contiguous()
+                new_v1 = torch.cat([old_v1, v1], dim=2).contiguous()
+                new_k2 = torch.cat([old_k2, k2], dim=2).contiguous()
+                new_v2 = torch.cat([old_v2, v2], dim=2).contiguous()
             else:
-                new_k = k1.contiguous()
-                new_v = v1.contiguous()
+                new_k1 = k1.contiguous()
+                new_v1 = v1.contiguous()
+                new_k2 = k2.contiguous()
+                new_v2 = v2.contiguous()
 
             if kv_cache.should_update:
-                kv_cache.update(new_k, new_v, self.layer_ind)
+                kv_cache[0].update(new_k1, new_v1, self.layer_ind)
+                kv_cache[1].update(new_k2, new_v2, self.layer_ind)
 
-            q1, new_k = self.rope(q1, new_k)
+            q1, q2 = self.rope(q1, q2)
+            new_k1, new_k2 = self.rope(new_k1, new_k2)
 
-            k = torch.cat([new_k, k2], dim=-2)
-            v = torch.cat([new_v, v2], dim=-2)
             q = torch.cat([q1, q2], dim=-2)
+            k = torch.cat([new_k1, new_k2], dim=-2)
+            v = torch.cat([new_v1, new_v2], dim=-2)
 
-            x = F.scaled_dot_product_attention(q, k, v, attn_mask = mask)
+            x = F.scaled_dot_product_attention(q, k, v, attn_mask = block_mask)
             x = x[:,:,-q.shape[2]:] # Only keep latest outputs
             x = self.merge(x)
         else:
-            q1, k1 = self.rope(q1,k1)
+            q1, q2 = self.rope(q1,q2)
+            k1, k2 = self.rope(k1,k2)
 
             q = torch.cat([q1,q2],dim=-2)
             k = torch.cat([k1,k2],dim=-2) 
             v = torch.cat([v1,v2],dim=-2)
 
-            x = F.scaled_dot_product_attention(q,k,v, attn_mask = mask)
+            x = F.scaled_dot_product_attention(q,k,v, attn_mask = block_mask)
             x = self.merge(x)
 
         x_1, x_2 = x[:,:n1], x[:,n1:]
@@ -146,7 +190,7 @@ class MMDiTBlock(nn.Module):
         self.ln1_2 = nn.LayerNorm(dim)
         self.ln2_2 = nn.LayerNorm(dim)
 
-    def forward(self, x, y, cond, kv_cache = None):
+    def forward(self, x, y, cond, block_mask = None, kv_cache = None):
         res1_x = x.clone()
         res1_y = y.clone()
         
@@ -154,7 +198,7 @@ class MMDiTBlock(nn.Module):
         x = self.adaln1_1(x, cond)
         y = self.ln1_2(y)
         
-        x, y = self.attn(x, y, kv_cache)
+        x, y = self.attn(x, y, block_mask, kv_cache)
         
         x = self.gate1_1(x, cond)
         
@@ -178,6 +222,27 @@ class MMDiTBlock(nn.Module):
 
         return x, y
 
+class MMDIT(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+        self.blocks = nn.ModuleList([MMDiTBlock(config) for _ in range(config.n_layers)])
+
+    def get_block_mask(self, x, y, kv_cache):
+        n_tokens = x.shape[1] + y.shape[1]
+        n_tokens_per_frame = self.config.tokens_per_frame
+        n_audio_tokens = self.config.tokens_per_frame - config.sample_size**2
+
+        return create_block_causal_mask_with_mm(n_tokens, n_tokens_per_frame, n_audio_tokens)
+
+
+    def forward(self, x, y, cond, kv_cache = None):
+        block_mask = self.get_block_mask(x, y, kv_cache)
+        for block in self.blocks:
+            x,y = block(x, y, cond, block_mask, kv_cache)
+        return x,y
+
 class MMUViT(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -196,7 +261,7 @@ class MMUViT(nn.Module):
             skip_projs.append(nn.Linear(config.d_model * 2, config.d_model))
         self.skip_projs = nn.ModuleList(skip_projs)
 
-    def forward(self, x, y, cond, kv_cache = None):
+    def forward(self, x, y, cond, block_mask = None, kv_cache = None):
         # Cache early block outputs for skip connections
         early_features = []
         n_blocks = len(self.blocks)
@@ -204,11 +269,11 @@ class MMUViT(nn.Module):
 
         # Early blocks
         for i in range(mid_idx):
-            x,y = self.blocks[i](x, y, cond, kv_cache)
+            x,y = self.blocks[i](x, y, cond, block_mask, kv_cache)
             early_features.append(x)
 
         # Middle block (if odd number of layers)
-        x,y = self.blocks[mid_idx](x, y, cond, kv_cache)
+        x,y = self.blocks[mid_idx](x, y, cond, block_mask, kv_cache)
 
         # Late blocks with skip connections
         for i in range(mid_idx + 1, n_blocks):
@@ -221,7 +286,7 @@ class MMUViT(nn.Module):
             x = torch.cat([x, early_feat], dim=-1)
             x = self.skip_projs[skip_idx](x)
             
-            x,y = self.blocks[i](x, y, cond, kv_cache)
+            x,y = self.blocks[i](x, y, cond, block_mask, kv_cache)
 
         return x
 
@@ -274,19 +339,38 @@ def test_mask():
     import matplotlib.pyplot as plt
 
     n_frames = 10
-    n_tok_per_frame = 16
-    n_context = 16
+    n_tok_per_frame = 17
+    n_audio_tokens = 1
+    total_tokens = n_frames * n_tok_per_frame
 
-    mask = create_block_causal_mask_with_mm(n_frames*n_tok_per_frame, n_context, n_tok_per_frame)
+    mask = create_block_causal_mask_with_mm(total_tokens, n_tok_per_frame, n_audio_tokens)
+    
+    # Convert to visualization format: 1 = allowed (white), 0 = blocked (black)
+    mask_vis = (mask != -float('inf')).float()
 
-    plt.figure(figsize=(10,10))
-    plt.imshow(mask.float().cpu().numpy(), cmap='gray')
-    plt.colorbar()
-    plt.title(f'Block Causal Mask with MM ({n_frames*n_tok_per_frame} tokens, {n_context} context, {n_tok_per_frame} per frame)')
+    plt.figure(figsize=(12, 10))
+    plt.imshow(mask_vis.cpu().numpy(), cmap='gray', interpolation='nearest')
+    plt.colorbar(label='Attention Allowed (1=Yes, 0=No)')
+    plt.title(f'Block Causal Mask with MM\n({total_tokens} total tokens, {n_tok_per_frame} per frame, {n_audio_tokens} audio per frame)')
     plt.xlabel('Key Position')
-    plt.ylabel('Query Position') 
-    plt.savefig('test_mm_mask.png')
+    plt.ylabel('Query Position')
+    
+    # Add grid lines to show frame boundaries
+    for i in range(1, n_frames):
+        video_boundary = i * (n_tok_per_frame - n_audio_tokens)
+        audio_boundary = n_frames * (n_tok_per_frame - n_audio_tokens) + i * n_audio_tokens
+        plt.axhline(y=video_boundary - 0.5, color='red', linestyle='--', alpha=0.5)
+        plt.axvline(x=video_boundary - 0.5, color='red', linestyle='--', alpha=0.5)
+        plt.axhline(y=audio_boundary - 0.5, color='blue', linestyle='--', alpha=0.5)
+        plt.axvline(x=audio_boundary - 0.5, color='blue', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig('test_mm_mask.png', dpi=150, bbox_inches='tight')
     plt.close()
+
+    print(f"Mask shape: {mask.shape}")
+    print(f"Number of blocked positions: {(mask == -float('inf')).sum().item()}")
+    print(f"Number of allowed positions: {(mask != -float('inf')).sum().item()}")
 
 
 if __name__ == "__main__":

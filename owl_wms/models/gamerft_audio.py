@@ -13,6 +13,7 @@ from ..nn.embeddings import (
     LearnedPosEnc
 )
 from ..nn.attn import DiT, FinalLayer, UViT
+from ..nn.mmattn import MMDIT
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
