@@ -61,7 +61,6 @@ class Attn(nn.Module):
         self.rope = FlatVideoRoPE(config)
         #self.rope = FrameRoPE(config)
 
-    @torch.compile
     def forward(self, x, block_mask, kv_cache=None):
         B, L, _ = x.shape
 
@@ -97,7 +96,7 @@ class DiTBlock(nn.Module):
         dim = config.d_model
 
         self.attn = Attn(config)
-        self.mlp = MLP(config)
+        self.mlp = MLP(config, quantize=True)
 
         self.adaln1 = AdaLN(dim)
         self.gate1 = Gate(dim)
@@ -144,6 +143,7 @@ class DiT(nn.Module):
             device=x.device
         )
 
+    @torch.compile
     def forward(self, x, cond, kv_cache = None):
         block_mask = self.get_block_mask(x, kv_cache)
         for block in self.blocks:

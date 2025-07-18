@@ -31,7 +31,7 @@ class GameRFTAudioCore(nn.Module):
 
         self.backbone = config.backbone
 
-        self.transformer = backbone_cls(config)
+        self.transformer = torch.compile(backbone_cls(config))
 
         if not config.uncond: self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
