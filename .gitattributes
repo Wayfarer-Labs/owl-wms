@@ -1,16 +1,7 @@
 # Ensure LF line endings for all text files
 * text=auto eol=lf
 
-# Specific file types
-*.py text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.json text eol=lf
-*.md text eol=lf
-*.txt text eol=lf
-*.sh text eol=lf
-
-# Binary files
+# Binary files (excluded from text file rules)
 *.png binary
 *.jpg binary
 *.jpeg binary
