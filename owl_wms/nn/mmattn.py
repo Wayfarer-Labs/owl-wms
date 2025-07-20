@@ -108,6 +108,7 @@ class MMAttn(nn.Module):
     def merge(self, x):
         return eo.rearrange(x, 'b h n d -> b n (h d)')
 
+    @torch.compile
     def forward(self, x_1, x_2, block_mask = None, kv_cache = None):
         """
         For MMDiT we assume kv_cache is a tuple of two caches
