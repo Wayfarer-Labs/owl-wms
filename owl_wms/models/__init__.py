@@ -9,7 +9,7 @@ def get_model_cls(model_id):
         """
         GameMFTAudio is Mean Flow Transformer for video + audio
         """
-        from .gamerft_audio_mean import GameMFTAudio
+        from .gamemft_audio import GameMFTAudio
         return GameMFTAudio
 
 

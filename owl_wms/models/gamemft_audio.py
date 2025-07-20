@@ -13,7 +13,7 @@ from ..nn.embeddings import (
     LearnedPosEnc
 )
 from ..nn.attn import DiT, FinalLayer, UViT
-from ..nn.mmattn import MMDIT
+from ..nn.mmattn_v2 import MMDIT2
 
 """
 Notes for future:
@@ -37,7 +37,7 @@ class GameMFTAudioCore(nn.Module):
         if config.backbone == 'dit':
             backbone_cls = DiT
         elif config.backbone == 'mmdit':
-            backbone_cls = MMDIT
+            backbone_cls = MMDIT2
         elif config.backbone == 'uvit':
             backbone_cls = UViT
         else:
@@ -118,7 +118,7 @@ class GameMFTAudio(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.core = GameRFTAudioCore(config)
+        self.core = GameMFTAudioCore(config)
 
         # Mean Flow has a lot of hyperparameters
 
@@ -226,7 +226,7 @@ class GameMFTAudio(nn.Module):
         with torch.no_grad():
             eq_mask = (r == t)
             if not eq_mask.any():
-                return
+                return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
             idx = torch.where(eq_mask)[0]
 
             # Get slices of everything that are relevant to this branch
@@ -237,6 +237,8 @@ class GameMFTAudio(nn.Module):
             v_vid = v_vid[idx]
             v_aud = v_aud[idx]
             has_controls = has_controls[idx]
+            mouse = mouse[idx]
+            btn = btn[idx]
 
         u_vid_out, u_aud_out = self.core(noisy_vid, noisy_aud, t, mouse, btn, has_controls = has_controls, r = r)
 
@@ -265,13 +267,13 @@ class GameMFTAudio(nn.Module):
             neq_mask = (r != t)
 
             if not neq_mask.any():
-                return
+                return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
             
             cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
             neq_cfg_mask = neq_mask & cfg_mask
             
             if not neq_cfg_mask.any():
-                return
+                return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
             idx = torch.where(neq_cfg_mask)[0]
             
@@ -287,6 +289,9 @@ class GameMFTAudio(nn.Module):
 
             full_cond = torch.ones_like(has_controls)
             null_cond = torch.zeros_like(has_controls)
+
+            ts_diff_exp_vid = (t - r)[:,:,None,None,None]
+            ts_diff_exp_aud = (t - r)[:,:,None]
 
             # Double inputs for CFG
             def double(x):
@@ -314,13 +319,13 @@ class GameMFTAudio(nn.Module):
             cfg_v_vid_tilde = (
                 self.cfg_scale * v_vid +
                 self.kappa * u_vid_out_cond +
-                (1. - self.cfg_scale - self.cfg_kappa) * u_vid_out_uncond
+                (1. - self.cfg_scale - self.kappa) * u_vid_out_uncond
             )
 
             cfg_v_aud_tilde = (
                 self.cfg_scale * v_aud +
                 self.kappa * u_aud_out_cond +
-                (1. - self.cfg_scale - self.cfg_kappa) * u_aud_out_uncond
+                (1. - self.cfg_scale - self.kappa) * u_aud_out_uncond
             )
         
         def fn_1(z_vid, z_aud, curr_r, curr_t):
@@ -330,7 +335,12 @@ class GameMFTAudio(nn.Module):
         tangents = (cfg_v_vid_tilde, cfg_v_aud_tilde, torch.zeros_like(r), torch.ones_like(t))
         (u_outs, dudt_outs) = torch.func.jvp(fn_1, primals, tangents)
 
-        # TODO
+        u_pred_vid[idx] = u_outs[0]
+        u_pred_aud[idx] = u_outs[1]
+        u_targ_vid[idx] = cfg_v_vid_tilde - dudt_outs[0] * ts_diff_exp_vid
+        u_targ_aud[idx] = cfg_v_aud_tilde - dudt_outs[1] * ts_diff_exp_aud
+
+        return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
     def handle_neq_and_no_cfg_branch(
         self,
@@ -345,13 +355,13 @@ class GameMFTAudio(nn.Module):
             neq_mask = (r != t)
 
             if not neq_mask.any():
-                return
+                return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
             cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
             neq_no_cfg_mask = neq_mask & ~cfg_mask
 
             if not neq_no_cfg_mask.any():
-                return
+                return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
             idx = torch.where(neq_no_cfg_mask)[0]
 
@@ -364,6 +374,9 @@ class GameMFTAudio(nn.Module):
             has_controls = has_controls[idx]
             mouse = mouse[idx]
             btn = btn[idx]
+    
+            ts_diff_exp_vid = (t - r)[:,:,None,None,None]
+            ts_diff_exp_aud = (t - r)[:,:,None]
 
         def fn_2(z_vid, z_aud, curr_r, curr_t):
             return self.core(z_vid, z_aud, curr_t, mouse, btn, has_controls = has_controls, r = curr_r)
@@ -372,7 +385,14 @@ class GameMFTAudio(nn.Module):
         tangents = (v_vid, v_aud, torch.zeros_like(r), torch.ones_like(t))
         (u_outs, dudt_outs) = torch.func.jvp(fn_2, primals, tangents)
         
-        # TODO
+
+
+        u_pred_vid[idx] = u_outs[0]
+        u_pred_aud[idx] = u_outs[1]
+        u_targ_vid[idx] = v_vid - dudt_outs[0] * ts_diff_exp_vid
+        u_targ_aud[idx] = v_aud - dudt_outs[1] * ts_diff_exp_aud
+
+        return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None, has_controls = None):
         # x is [b,n,c,h,w]
@@ -389,7 +409,7 @@ class GameMFTAudio(nn.Module):
         has_controls = self.handle_cfg(has_controls, cfg_prob)
 
         with torch.no_grad():
-            ts, rs = sample_timesteps(b, n, x.device, x.dtype)
+            ts, rs = self.sample_timesteps(b, n, x.device, x.dtype)
             
             # alpha_t = (1. - t)
             # sigma_t = (t)
@@ -399,52 +419,60 @@ class GameMFTAudio(nn.Module):
             z_video = torch.randn_like(x)
             z_audio = torch.randn_like(audio)
 
-            noisy_video = x * (1. - ts) + z_video * ts # need view
-            v_video_t = z_video - x
+            ts_exp_vid = ts[:,:,None,None,None]
+            ts_exp_aud = ts[:,:,None]
 
-            noisy_audio = audio * (1. - ts) + z_audio * ts # need view?
-            v_audio_t = z_audio - audio
+            noisy_vid = x * (1. - ts_exp_vid) + z_video * ts_exp_vid
+            v_vid = z_video - x
 
-            ts_diff = (t - r) # need view
-            eq_mask = (t == r)
-            neq_mask = ~eq_mask
+            noisy_aud = audio * (1. - ts_exp_aud) + z_audio * ts_exp_aud
+            v_aud = z_audio - audio
 
-            u_target_video = torch.zeros_like(v_video_t)
-            u_target_audio = torch.zeros_like(v_audio_t)
+            u_targ_vid = torch.zeros_like(v_vid)
+            u_targ_aud = torch.zeros_like(v_aud)
 
-            u_pred_video = torch.zeros_like(v_video_t)
-            u_pred_audio = torch.zeros_like(v_audio_t)
+            u_pred_vid = torch.zeros_like(v_vid)
+            u_pred_aud = torch.zeros_like(v_aud)
 
         # Handle all branches
         u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_reqt_branch(
             noisy_vid, noisy_aud,
-            r, t,
+            rs, ts,
             u_pred_vid, u_pred_aud,
             u_targ_vid, u_targ_aud,
             v_vid, v_aud,
+            has_controls, mouse, btn,
         )
         u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_neq_and_cfg_branch(
             noisy_vid, noisy_aud,
-            r, t,
+            rs, ts,
             u_pred_vid, u_pred_aud,
             u_targ_vid, u_targ_aud,
             v_vid, v_aud,
+            has_controls, mouse, btn,
         )
         u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_neq_and_no_cfg_branch(
             noisy_vid, noisy_aud,
-            r, t,
+            rs, ts,
             u_pred_vid, u_pred_aud,
             u_targ_vid, u_targ_aud,
             v_vid, v_aud,
+            has_controls, mouse, btn,
         )
         
-        u_target_video = u_target_video.detach()
-        u_target_audio = u_target_audio.detach()
+        u_targ_vid = u_targ_vid.detach()
+        u_targ_aud = u_targ_aud.detach()
 
-        error_video = u_pred_video - u_target_video
-        error_audio = u_pred_audio - u_target_audio
+        error_video = u_pred_video - u_targ_video
+        error_audio = u_pred_audio - u_targ_audio
 
-        error_norm = torch.norm(error.reshape(error.shape[0], -1), dim = 1)
-        loss = error_norm ** 2
+        # Option 1: Combined error
+        error = torch.cat([error_video.flatten(1), error_audio.flatten(1)], dim=1)
+        error_norm = torch.norm(error, dim=1)
+
+        # Option 2: Separate norms
+        error_video_norm = torch.norm(error_video.reshape(error_video.shape[0], -1), dim=1)
+        error_audio_norm = torch.norm(error_audio.reshape(error_audio.shape[0], -1), dim=1)
+        loss = error_video_norm ** 2 + error_audio_norm ** 2
 
         return loss
