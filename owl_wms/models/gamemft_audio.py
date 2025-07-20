@@ -15,6 +15,18 @@ from ..nn.embeddings import (
 from ..nn.attn import DiT, FinalLayer, UViT
 from ..nn.mmattn import MMDIT
 
+"""
+Notes for future:
+- r = timestep at start of step, t = timestep at end of step
+- r < t is enforced
+- there are 4 branches
+    - r == t (no JVP), target is just instant velocity
+    - r != t (JVP, standard case)
+    - r != t (JVP, CFG case)
+    - r != t (JVP, REQT case)
+
+"""
+
 # Mean Flow Transformer
 class GameMFTAudioCore(nn.Module):
     def __init__(self, config):
@@ -170,6 +182,198 @@ class GameMFTAudio(nn.Module):
             
         return has_controls
 
+    def handle_reqt_branch(
+        self,
+        noisy_vid, noisy_aud,
+        r, t,
+        u_pred_vid, u_pred_aud,
+        u_targ_vid, u_targ_aud,
+        v_vid, v_aud,
+        has_controls, mouse, btn,
+    ):
+        """
+        Refer to documentation on this function for some more details that will apply to all branches.
+
+        The r=t branch is basically just the standard flow objective, since it's instant velocity and v = u
+
+        # Basic inputs
+        :param noisy_vid: [b,n,c,h,w] x(t) for video
+        :param noisy_aud: [b,n,c] x(t) for audio
+        :param r: [b,n] smaller timestep
+        :param t: [b,n] larger timestep
+
+        # Stuff we generate for MSE later
+        :param u_pred_vid: [b,n,c,h,w] tensor where u predictions will be stored
+        :param u_pred_aud: [b,n,c] tensor where u predictions will be stored
+        :param u_targ_vid: [b,n,c,h,w] tensor where u targets will be stored
+        :param u_targ_aud: [b,n,c] tensor where u targets will be stored
+
+        # Ground truth about velocity
+        :param v_vid: [b,n,c,h,w] tensor where invelocity for video will be stored
+        :param v_aud: [b,n,c] tensor where v targets will be stored
+
+        # Additional inputs
+        :param has_controls: [b,n] boolean mask for which batch elements have controls
+        :param mouse: [b,n,2] mouse inputs
+        :param btn: [b,n,n_buttons] button inputs
+
+        # Returns:
+        :return: u_pred_vid [b,n,c,h,w] with u predictions updated in branch relevant idxs
+        :return: u_pred_aud [b,n,c] with u predictions updated in branch relevant idxs
+        :return: u_targ_vid [b,n,c,h,w] with u targets updated in branch relevant idxs
+        :return: u_targ_aud [b,n,c] with u targets updated in branch relevant idxs
+        """
+        with torch.no_grad():
+            eq_mask = (r == t)
+            if not eq_mask.any():
+                return
+            idx = torch.where(eq_mask)[0]
+
+            # Get slices of everything that are relevant to this branch
+            noisy_vid = noisy_vid[idx]
+            noisy_aud = noisy_aud[idx]
+            r = r[idx]
+            t = t[idx]
+            v_vid = v_vid[idx]
+            v_aud = v_aud[idx]
+            has_controls = has_controls[idx]
+
+        u_vid_out, u_aud_out = self.core(noisy_vid, noisy_aud, t, mouse, btn, has_controls = has_controls, r = r)
+
+        with torch.no_grad():
+            u_targ_vid[idx] = v_vid
+            u_targ_aud[idx] = v_aud
+
+        u_pred_vid[idx] = u_vid_out
+        u_pred_aud[idx] = u_aud_out
+
+        return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
+
+    def handle_neq_and_cfg_branch(
+        self,
+        noisy_vid, noisy_aud,
+        r, t,
+        u_pred_vid, u_pred_aud,
+        u_targ_vid, u_targ_aud,
+        v_vid, v_aud,
+        has_controls, mouse, btn,
+    ):
+        """
+        Branch where r != t and also doing cfg
+        """
+        with torch.no_grad():
+            neq_mask = (r != t)
+
+            if not neq_mask.any():
+                return
+            
+            cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
+            neq_cfg_mask = neq_mask & cfg_mask
+            
+            if not neq_cfg_mask.any():
+                return
+
+            idx = torch.where(neq_cfg_mask)[0]
+            
+            noisy_vid = noisy_vid[idx]
+            noisy_aud = noisy_aud[idx]
+            r = r[idx]
+            t = t[idx]
+            v_vid = v_vid[idx]
+            v_aud = v_aud[idx]
+            has_controls = has_controls[idx] # Note this is inherently all true now
+            mouse = mouse[idx]
+            btn = btn[idx]
+
+            full_cond = torch.ones_like(has_controls)
+            null_cond = torch.zeros_like(has_controls)
+
+            # Double inputs for CFG
+            def double(x):
+                return torch.cat([x, x], dim = 0)
+
+            noisy_vid_double = double(noisy_vid)
+            noisy_aud_double = double(noisy_aud)
+            t_double = double(t)
+            mouse_double = double(mouse)
+            btn_double = double(btn)
+            has_controls = torch.cat([full_cond, null_cond], dim = 0)
+
+            # For CFG, t = r to get instant v with cfg applied
+
+            u_vid_out, u_aud_out = self.core(
+                noisy_vid_double, noisy_aud_double,
+                t_double, mouse_double, btn_double,
+                has_controls = has_controls,
+                r = t_double,
+            )
+
+            u_vid_out_cond, u_vid_out_uncond = u_vid_out.chunk(2)
+            u_aud_out_cond, u_aud_out_uncond = u_aud_out.chunk(2)
+
+            cfg_v_vid_tilde = (
+                self.cfg_scale * v_vid +
+                self.kappa * u_vid_out_cond +
+                (1. - self.cfg_scale - self.cfg_kappa) * u_vid_out_uncond
+            )
+
+            cfg_v_aud_tilde = (
+                self.cfg_scale * v_aud +
+                self.kappa * u_aud_out_cond +
+                (1. - self.cfg_scale - self.cfg_kappa) * u_aud_out_uncond
+            )
+        
+        def fn_1(z_vid, z_aud, curr_r, curr_t):
+            return self.core(z_vid, z_aud, curr_t, mouse, btn, has_controls = has_controls, r = curr_r)
+        
+        primals = (noisy_vid, noisy_aud, r, t)
+        tangents = (cfg_v_vid_tilde, cfg_v_aud_tilde, torch.zeros_like(r), torch.ones_like(t))
+        (u_outs, dudt_outs) = torch.func.jvp(fn_1, primals, tangents)
+
+        # TODO
+
+    def handle_neq_and_no_cfg_branch(
+        self,
+        noisy_vid, noisy_aud,
+        r, t,
+        u_pred_vid, u_pred_aud,
+        u_targ_vid, u_targ_aud,
+        v_vid, v_aud,
+        has_controls, mouse, btn,
+    ):
+        with torch.no_grad():
+            neq_mask = (r != t)
+
+            if not neq_mask.any():
+                return
+
+            cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
+            neq_no_cfg_mask = neq_mask & ~cfg_mask
+
+            if not neq_no_cfg_mask.any():
+                return
+
+            idx = torch.where(neq_no_cfg_mask)[0]
+
+            noisy_vid = noisy_vid[idx]
+            noisy_aud = noisy_aud[idx]
+            r = r[idx]
+            t = t[idx]
+            v_vid = v_vid[idx]
+            v_aud = v_aud[idx]
+            has_controls = has_controls[idx]
+            mouse = mouse[idx]
+            btn = btn[idx]
+
+        def fn_2(z_vid, z_aud, curr_r, curr_t):
+            return self.core(z_vid, z_aud, curr_t, mouse, btn, has_controls = has_controls, r = curr_r)
+        
+        primals = (noisy_vid, noisy_aud, r, t)
+        tangents = (v_vid, v_aud, torch.zeros_like(r), torch.ones_like(t))
+        (u_outs, dudt_outs) = torch.func.jvp(fn_2, primals, tangents)
+        
+        # TODO
+
     def forward(self, x, audio, mouse, btn, return_dict = False, cfg_prob = None, has_controls = None):
         # x is [b,n,c,h,w]
         # audio is [b,n,c]
@@ -211,146 +415,28 @@ class GameMFTAudio(nn.Module):
             u_pred_video = torch.zeros_like(v_video_t)
             u_pred_audio = torch.zeros_like(v_audio_t)
 
-        # 1) r == t (no JVP), target is just instant velocity
-        # r == t case doesnt worry about cfg
-        if eq_mask.any():
-            eq_idx = torch.where(eq_mask)[0]
-            noisy_video_eq = noisy_video[eq_idx]
-            noisy_audio_eq = noisy_audio[eq_idx]
-            
-            r_eq = r[eq_idx]
-            t_eq = t[eq_idx]
-            v_video_t_eq = v_video_t[eq_idx]
-            v_audio_t_eq = v_audio_t[eq_idx]
-
-            u_eq_video, u_eq_audio = self.core(noisy_video_eq, noisy_audio_eq, t_eq, mouse[eq_idx], btn[eq_idx], has_controls = has_controls[eq_idx], r = r_eq)
-            
-            u_pred_video[eq_idx] = u_eq_video
-            u_pred_audio[eq_idx] = u_eq_audio
-
-            u_target_video[eq_idx] = v_video_t_eq
-            u_target_audio[eq_idx] = v_audio_t_eq
-        
-        # 2) r != t (JVP, standard case)
-        if neg_mask.any():
-            neq_idx = torch.where(neq_mask)[0]
-            noisy_video_neq = noisy_video[neq_idx]
-            noisy_audio_neq = noisy_audio[neq_idx]
-            
-            r_neq = r[neq_idx]
-            t_neq = t[neq_idx]
-            v_video_t_neq = v_video_t[neq_idx]
-            v_audio_t_neq = v_audio_t[neq_idx]
-            ts_diff_neq = ts_diff[neq_idx]
-
-            mouse_neq = mouse[neq_idx]
-            btn_neq = btn[neq_idx]
-
-            has_controls_neq = has_controls[neq_idx]
-
-            def fn_current_neq(z_vid, z_aud, curr_r, curr_t):
-                return self.core(z_vid, z_aud, curr_t, mouse_neq, btn_neq, has_controls = has_controls_neq, r = curr_r)
-        
-            # Some samples get cfg signal
-            cfg_ts_mask = (t_neq >= self.cfg_in[0]) & (t_neq <= self.cfg_in[1]) & (has_controls_neq)
-
-            if cfg_ts_mask.any():
-                # Further subdivide into cfg and non-cfg
-                cfg_idx_local = torch.where(cfg_ts_mask)[0]
-                non_cfg_idx_local = torch.where(~cfg_ts_mask)[0]
-
-                # cfg branch
-                if len(cfg_idx_local) > 0:
-                    # Select subsets of the neq batch for cfg branch
-                    noisy_video_neq_cfg = noisy_video_neq[cfg_idx_local]
-                    noisy_audio_neq_cfg = noisy_audio_neq[cfg_idx_local]
-                    r_neq_cfg = r_neq[cfg_idx_local]
-                    t_neq_cfg = t_neq[cfg_idx_local]
-                    v_video_t_neq_cfg = v_video_t_neq[cfg_idx_local]
-                    v_audio_t_neq_cfg = v_audio_t_neq[cfg_idx_local]
-                    ts_diff_neq_cfg = ts_diff_neq[cfg_idx_local]
-
-                    # Controls
-                    mouse_neq_cfg = mouse_neq[cfg_idx_local]
-                    btn_neq_cfg = btn_neq[cfg_idx_local]
-
-                    # Since CFG = no conditioning, we need to drop the controls
-                    null_mouse = torch.zeros_like(mouse_neq_cfg)
-                    null_btn = torch.zeros_like(btn_neq_cfg)
-                    has_controls_neq_cfg = has_controls_neq[cfg_idx_local] # Should be all True
-
-                    # And double the inputs so this is all batched
-                    noisy_video_neq_cfg_double = torch.cat([noisy_video_neq_cfg, noisy_video_neq_cfg], dim = 0)
-                    noisy_audio_neq_cfg_double = torch.cat([noisy_audio_neq_cfg, noisy_audio_neq_cfg], dim = 0)
-                    
-                    mouse_neq_cfg_double = torch.cat([mouse_neq_cfg, null_mouse], dim = 0)
-                    btn_neq_cfg_double = torch.cat([btn_neq_cfg, null_btn], dim = 0)
-
-                    # TODO: Is this rly right? Do we want r instead?
-                    # Future note: Yes, it is, cause you want CFG for instant velocity
-                    t_neq_cfg_double = torch.cat([t_neq_cfg, t_neq_cfg], dim = 0)
-                    t_end_neq_cfg_double = torch.cat([t_neq_cfg, t_neq_cfg], dim = 0)
-
-                    with torch.no_grad():
-                        u_neq_video_cfg_double, u_neq_audio_cfg_double = self.core(
-                            noisy_video_neq_cfg_double, noisy_audio_neq_cfg_double,
-                            t_end_neq_cfg_double, 
-                            mouse_neq_cfg_double, btn_neq_cfg_double,
-                            has_controls = has_controls_neq_cfg, r = t_neq_cfg_double
-                        )
-
-                        u_neq_video_cond, u_neq_video_uncond = u_neq_video_cfg_double.chunk(2)
-                        u_neq_audio_cond, u_neq_audio_uncond = u_neq_audio_cfg_double.chunk(2)
-
-                        cfg_v_video_tilde = (
-                            self.cfg_scale * v_video_t_neq_cfg +
-                            self.kappa * u_neq_video_cond + 
-                            (1. - self.cfg_scale - self.cfg_kappa) * u_neq_video_uncond
-                        )
-                        cfg_v_audio_tilde = (
-                            self.cfg_scale * v_audio_t_neq_cfg +
-                            self.kappa * u_neq_audio_cond + 
-                            (1. - self.cfg_scale - self.cfg_kappa) * u_neq_audio_uncond
-                        )
-
-                    def fn_current_cfg(z_vid, z_aud, curr_r, curr_t):
-                        return self.core(z_vid, z_aud, curr_t, mouse_neq_cfg, btn_neq_cfg, has_controls = has_controls_neq_cfg, r = curr_r)
-                    
-                    primals = (noisy_video_neq_cfg, noisy_audio_neq_cfg, r_neq_cfg, t_neq_cfg)
-                    tangents = (cfg_v_video_tilde, cfg_v_audio_tilde, torch.zeros_like(r_neq_cfg), torch.ones_like(t_neq_cfg))
-
-                    cfg_u_video_theta, # TODO How tf do you split two outputs from JVP?
-
-                    # Get target, set global idx's
-                if len(non_cfg_idx_local) > 0:
-                    noisy_video_neq_non_cfg = noisy_video_neq[non_cfg_idx_local]
-                    noisy_audio_neq_non_cfg = noisy_audio_neq[non_cfg_idx_local]
-                    r_neq_non_cfg = r_neq[non_cfg_idx_local]
-                    t_neq_non_cfg = t_neq[non_cfg_idx_local]
-                    v_video_t_neq_non_cfg = v_video_t_neq[non_cfg_idx_local]
-                    v_audio_t_neq_non_cfg = v_audio_t_neq[non_cfg_idx_local]
-                    ts_diff_neq_non_cfg = ts_diff_neq[non_cfg_idx_local]
-
-                    mouse_neq_non_cfg = mouse_neq[non_cfg_idx_local]
-                    btn_neq_non_cfg = btn_neq[non_cfg_idx_local]
-
-                    has_controls_neq_non_cfg = has_controls_neq[non_cfg_idx_local]
-
-                    def fn_current_non_cfg(z_vid, z_aud, curr_r, curr_t):
-                        return self.core(z_vid, z_aud, curr_t, mouse_neq_non_cfg, btn_neq_non_cfg, has_controls = has_controls_neq_non_cfg, r = curr_r)
-
-                    primals = (noisy_video_neq_non_cfg, noisy_audio_neq_non_cfg, r_neq_non_cfg, t_neq_non_cfg)
-                    tangents = (v_video_t_neq_non_cfg, v_audio_t_neq_non_cfg, torch.zeros_like(r_neq_non_cfg), torch.ones_like(t_neq_non_cfg))
-
-                    # TODO JVP STUFF AGAIN
-
-                    # Set targets
-            else:
-                # No cfg stuff, just normal JVP
-                primals = (noisy_video_neq, noisy_audio_neq, r_neq, t_neq)
-                tangents = (v_video_t_neq, v_audio_t_neq, torch.zeros_like(r_neq), torch.ones_like(t_neq))
-
-                # TODO JVP STUFF AGAIN
+        # Handle all branches
+        u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_reqt_branch(
+            noisy_vid, noisy_aud,
+            r, t,
+            u_pred_vid, u_pred_aud,
+            u_targ_vid, u_targ_aud,
+            v_vid, v_aud,
+        )
+        u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_neq_and_cfg_branch(
+            noisy_vid, noisy_aud,
+            r, t,
+            u_pred_vid, u_pred_aud,
+            u_targ_vid, u_targ_aud,
+            v_vid, v_aud,
+        )
+        u_pred_video, u_pred_audio, u_targ_video, u_targ_audio = self.handle_neq_and_no_cfg_branch(
+            noisy_vid, noisy_aud,
+            r, t,
+            u_pred_vid, u_pred_aud,
+            u_targ_vid, u_targ_aud,
+            v_vid, v_aud,
+        )
         
         u_target_video = u_target_video.detach()
         u_target_audio = u_target_audio.detach()
