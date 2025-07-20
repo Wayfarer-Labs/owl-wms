@@ -14,6 +14,7 @@ from ..nn.embeddings import (
 )
 from ..nn.attn import DiT, FinalLayer, UViT
 from ..nn.mmattn import MMDIT
+from ..nn.mmattn_v2 import MMDIT2
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
@@ -25,6 +26,9 @@ class GameRFTAudioCore(nn.Module):
             backbone_cls = DiT
         elif config.backbone == 'mmdit':
             backbone_cls = MMDIT
+        elif config.backbone == 'mmdit_2':
+            backbone_cls = MMDIT2
+            config.backbone = 'mmdit'
         elif config.backbone == 'uvit':
             backbone_cls = UViT
         else:
@@ -75,15 +79,16 @@ class GameRFTAudioCore(nn.Module):
             x = torch.cat([x, audio], dim = -2) # bn(hw+1)d
             x = x.reshape(b, n * x.shape[2], x.shape[-1]) # b(n(hw+1))d
             x = self.transformer(x, cond, kv_cache)
-        elif self.backbone == 'mmdit':
-            x = self.transformer(x, audio, cond, kv_cache)
 
-        # Split into video and audio tokens
-        x = x.view(b, n, -1, x.shape[-1]) # bn(hw+1)d
-        video, audio = x[...,:-1,:], x[...,-1:,:] # bn(hw)d | bn1d
+            # Split into video and audio tokens
+            x = x.view(b, n, -1, x.shape[-1]) # bn(hw+1)d
+            video, audio = x[...,:-1,:], x[...,-1:,:] # bn(hw)d | bn1d
+            video = video.reshape(b, n * video.shape[2], video.shape[-1]) # b(nhw)d
+
+        elif self.backbone == 'mmdit':
+            video, audio = self.transformer(x, audio, cond, kv_cache)
 
         # Project video tokens
-        video = video.reshape(b, n * video.shape[2], video.shape[-1]) # b(nhw)d
         video = self.proj_out(video, cond) 
         video = video.reshape(b, n, h, w, c).permute(0, 1, 4, 2, 3) # bnchw
 

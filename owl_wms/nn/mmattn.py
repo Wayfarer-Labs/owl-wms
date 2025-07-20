@@ -108,7 +108,6 @@ class MMAttn(nn.Module):
     def merge(self, x):
         return eo.rearrange(x, 'b h n d -> b n (h d)')
 
-    @torch.compile
     def forward(self, x_1, x_2, block_mask = None, kv_cache = None):
         """
         For MMDiT we assume kv_cache is a tuple of two caches
@@ -191,6 +190,7 @@ class MMDiTBlock(nn.Module):
         self.ln1_2 = nn.LayerNorm(dim)
         self.ln2_2 = nn.LayerNorm(dim)
 
+    @torch.compile
     def forward(self, x, y, cond, block_mask = None, kv_cache = None):
         res1_x = x.clone()
         res1_y = y.clone()
@@ -233,9 +233,9 @@ class MMDIT(nn.Module):
     def get_block_mask(self, x, y, kv_cache):
         n_tokens = x.shape[1] + y.shape[1]
         n_tokens_per_frame = self.config.tokens_per_frame
-        n_audio_tokens = self.config.tokens_per_frame - config.sample_size**2
+        n_audio_tokens = self.config.tokens_per_frame - self.config.sample_size**2
 
-        return create_block_causal_mask_with_mm(n_tokens, n_tokens_per_frame, n_audio_tokens)
+        return create_block_causal_mask_with_mm(n_tokens, n_tokens_per_frame, n_audio_tokens).to(x.device,x.dtype)
 
 
     def forward(self, x, y, cond, kv_cache = None):
@@ -243,54 +243,6 @@ class MMDIT(nn.Module):
         for block in self.blocks:
             x,y = block(x, y, cond, block_mask, kv_cache)
         return x,y
-
-class MMUViT(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-
-        blocks = []
-        for i in range(config.n_layers):
-            blocks.append(MMDiTBlock(config))
-            blocks[-1].attn.layer_ind = i
-
-        self.blocks = nn.ModuleList(blocks)
-
-        # For odd number of layers, need linear projections for skip connections
-        n_skip_connections = config.n_layers // 2
-        skip_projs = []
-        for _ in range(n_skip_connections):
-            skip_projs.append(nn.Linear(config.d_model * 2, config.d_model))
-        self.skip_projs = nn.ModuleList(skip_projs)
-
-    def forward(self, x, y, cond, block_mask = None, kv_cache = None):
-        # Cache early block outputs for skip connections
-        early_features = []
-        n_blocks = len(self.blocks)
-        mid_idx = n_blocks // 2
-
-        # Early blocks
-        for i in range(mid_idx):
-            x,y = self.blocks[i](x, y, cond, block_mask, kv_cache)
-            early_features.append(x)
-
-        # Middle block (if odd number of layers)
-        x,y = self.blocks[mid_idx](x, y, cond, block_mask, kv_cache)
-
-        # Late blocks with skip connections
-        for i in range(mid_idx + 1, n_blocks):
-            # Get corresponding early block output
-            early_idx = n_blocks - 1 - i
-            early_feat = early_features[early_idx]
-            
-            # Concatenate early and current features
-            skip_idx = i - (mid_idx + 1)
-            x = torch.cat([x, early_feat], dim=-1)
-            x = self.skip_projs[skip_idx](x)
-            
-            x,y = self.blocks[i](x, y, cond, block_mask, kv_cache)
-
-        return x
-
 
 def test_fwd_with_cache():
     from ..configs import TransformerConfig

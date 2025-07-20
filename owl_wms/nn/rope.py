@@ -70,9 +70,11 @@ class AVRoPE(nn.Module):
         freqs = pos_emb.get_axial_freqs(
             config.n_frames, self.p+1, self.p+1
         )
-        cos,sin = freqs.cos()[..., ::2], freqs.sin()[..., ::2]
-        self.cos = nn.Buffer(cos.contiguous(), persistent=False)
-        self.sin = nn.Buffer(sin.contiguous(), persistent=False)
+        self.freqs = nn.Buffer(freqs.contiguous(), persistent=False)
+
+        #cos,sin = freqs.cos()[..., ::2], freqs.sin()[..., ::2]
+        #self.cos = nn.Buffer(cos.contiguous(), persistent=False)
+        #self.sin = nn.Buffer(sin.contiguous(), persistent=False)
 
     def forward(self, x_video, x_audio, offset=0):
         # x_video : [b,h,nhw,d] (q or k)
@@ -82,20 +84,22 @@ class AVRoPE(nn.Module):
         # No need to reshape audio
         
         # Pad with new row and column on both
-        pad_right = torch.zeros_like(x_video[...,-1:,:])
-        pad_bottom = torch.zeros_like(x_video[...,-1:,:,:])
+        with torch.no_grad():
+            pad_right = torch.zeros_like(x_video[...,-1:,:])
+            pad_bottom = torch.zeros_like(x_video[...,-1:,:,:])
+            pad_bottom = torch.cat([pad_bottom, x_audio[:,:,:,None,None,:]], dim = -2)
 
         x_video = torch.cat([x_video, pad_right], dim = -2)
         x_video = torch.cat([x_video, pad_bottom], dim = -3)
 
-        x_video[:,:,:,-1,-1] = x_audio
-
         # Do stuff with freqs
-        cos, sin = self.cos[..., offset:x_video.size(2) + offset, :], self.sin[..., offset:x_video.size(2) + offset, :]
-        x0, x1 = x_video.float().unfold(-1, 2, 2).unbind(-1)
-        y0 = x0 * cos - x1 * sin
-        y1 = x1 * cos + x0 * sin
-        x_video = torch.cat((y0, y1), dim=-1).type_as(x_video)
+        x_video = apply_rotary_emb(self.freqs.detach(), x_video)
+
+        #cos, sin = self.cos[..., offset:x_video.size(2) + offset, :], self.sin[..., offset:x_video.size(2) + offset, :]
+        #x0, x1 = x_video.float().unfold(-1, 2, 2).unbind(-1)
+        #y0 = x0 * cos - x1 * sin
+        #y1 = x1 * cos + x0 * sin
+        #x_video = torch.cat((y0, y1), dim=-1).type_as(x_video)
 
         x_audio = x_video[:,:,:,-1,-1].clone()
         x_video = x_video[:,:,:,:-1,:-1]
