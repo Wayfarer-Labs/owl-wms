@@ -12,10 +12,9 @@ from .modulation import AdaLN, Gate
 from .rope import FlatVideoRoPE, FrameRoPE
 
 
-from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask
-
-create_block_mask = torch.compile(create_block_mask, dynamic=True)
-flex_attention = torch.compile(flex_attention, dynamic=True)
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+create_block_mask = torch.compile(create_block_mask)
+flex_attention = torch.compile(flex_attention)
 
 
 def checkpoint(function, *args, **kwargs):
@@ -61,7 +60,6 @@ class Attn(nn.Module):
         self.rope = FlatVideoRoPE(config)
         #self.rope = FrameRoPE(config)
 
-    @torch.compile
     def forward(self, x, block_mask, kv_cache=None):
         B, L, _ = x.shape
 
