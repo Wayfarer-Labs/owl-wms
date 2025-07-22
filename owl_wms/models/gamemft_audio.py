@@ -133,6 +133,7 @@ class GameMFTAudio(nn.Module):
         self.kappa = 1.0 - self.cfg_scale_2 / self.cfg_scale # \kappa
         self.cfg_prob = 0.1 
         self.cfg_in = [0.3,0.8] # trigger CFG in this t range
+        self.cfg_in_proportion = 0.25 # for [b,n] video, how many frames on n have to be in cfg_in range to trigger CFG
 
     @torch.no_grad()
     def sample_timesteps(self, b, n, device, dtype):
@@ -264,13 +265,18 @@ class GameMFTAudio(nn.Module):
         Branch where r != t and also doing cfg
         """
         with torch.no_grad():
+            print(f"r: {r.shape}, t: {t.shape}, has_controls: {has_controls.shape}")
+            exit()
             neq_mask = (r != t)
 
             if not neq_mask.any():
                 return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
             
-            cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
-            neq_cfg_mask = neq_mask & cfg_mask
+            in_window = (t >= self.cfg_in[0]) & (t <= self.cfg_in[1]) # [b,n]
+            in_window_mask = in_window.float().mean(dim = 1) >= self.cfg_in_proportion # [b]
+            cfg_mask = has_controls & in_window_mask
+            # At baseline this has prob 0.6353
+            neq_cfg_mask = neq_mask & cfg_mask & in_window_mask
             
             if not neq_cfg_mask.any():
                 return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
@@ -302,14 +308,14 @@ class GameMFTAudio(nn.Module):
             t_double = double(t)
             mouse_double = double(mouse)
             btn_double = double(btn)
-            has_controls = torch.cat([full_cond, null_cond], dim = 0)
+            has_controls_double = torch.cat([full_cond, null_cond], dim = 0)
 
             # For CFG, t = r to get instant v with cfg applied
 
             u_vid_out, u_aud_out = self.core(
                 noisy_vid_double, noisy_aud_double,
                 t_double, mouse_double, btn_double,
-                has_controls = has_controls,
+                has_controls = has_controls_double,
                 r = t_double,
             )
 
@@ -331,14 +337,14 @@ class GameMFTAudio(nn.Module):
         def fn_1(z_vid, z_aud, curr_r, curr_t):
             return self.core(z_vid, z_aud, curr_t, mouse, btn, has_controls = has_controls, r = curr_r)
         
-        primals = (noisy_vid, noisy_aud, r, t)
-        tangents = (cfg_v_vid_tilde, cfg_v_aud_tilde, torch.zeros_like(r), torch.ones_like(t))
+        primals = (noisy_vid.detach(), noisy_aud.detach(), r, t)
+        tangents = (cfg_v_vid_tilde.detach(), cfg_v_aud_tilde.detach(), torch.zeros_like(r), torch.ones_like(t))
         (u_outs, dudt_outs) = torch.func.jvp(fn_1, primals, tangents)
 
         u_pred_vid[idx] = u_outs[0]
         u_pred_aud[idx] = u_outs[1]
-        u_targ_vid[idx] = cfg_v_vid_tilde - dudt_outs[0] * ts_diff_exp_vid
-        u_targ_aud[idx] = cfg_v_aud_tilde - dudt_outs[1] * ts_diff_exp_aud
+        u_targ_vid[idx] = (cfg_v_vid_tilde - dudt_outs[0] * ts_diff_exp_vid).detach()
+        u_targ_aud[idx] = (cfg_v_aud_tilde - dudt_outs[1] * ts_diff_exp_aud).detach()
 
         return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
@@ -357,7 +363,9 @@ class GameMFTAudio(nn.Module):
             if not neq_mask.any():
                 return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
-            cfg_mask = has_controls & (t >= self.cfg_in[0]) & (t <= self.cfg_in[1])
+            in_window = (t >= self.cfg_in[0]) & (t <= self.cfg_in[1]) # [b,n]
+            in_window_mask = in_window.float().mean(dim = 1) >= self.cfg_in_proportion # [b]
+            cfg_mask = has_controls & in_window_mask
             neq_no_cfg_mask = neq_mask & ~cfg_mask
 
             if not neq_no_cfg_mask.any():
@@ -381,16 +389,16 @@ class GameMFTAudio(nn.Module):
         def fn_2(z_vid, z_aud, curr_r, curr_t):
             return self.core(z_vid, z_aud, curr_t, mouse, btn, has_controls = has_controls, r = curr_r)
         
-        primals = (noisy_vid, noisy_aud, r, t)
-        tangents = (v_vid, v_aud, torch.zeros_like(r), torch.ones_like(t))
+        primals = (noisy_vid.detach(), noisy_aud.detach(), r, t)
+        tangents = (v_vid.detach(), v_aud.detach(), torch.zeros_like(r), torch.ones_like(t))
         (u_outs, dudt_outs) = torch.func.jvp(fn_2, primals, tangents)
         
 
 
         u_pred_vid[idx] = u_outs[0]
         u_pred_aud[idx] = u_outs[1]
-        u_targ_vid[idx] = v_vid - dudt_outs[0] * ts_diff_exp_vid
-        u_targ_aud[idx] = v_aud - dudt_outs[1] * ts_diff_exp_aud
+        u_targ_vid[idx] = (v_vid - dudt_outs[0] * ts_diff_exp_vid).detach()
+        u_targ_aud[idx] = (v_aud - dudt_outs[1] * ts_diff_exp_aud).detach()
 
         return u_pred_vid, u_pred_aud, u_targ_vid, u_targ_aud
 
@@ -460,9 +468,6 @@ class GameMFTAudio(nn.Module):
             has_controls, mouse, btn,
         )
         
-        u_targ_vid = u_targ_vid.detach()
-        u_targ_aud = u_targ_aud.detach()
-
         error_video = u_pred_video - u_targ_video
         error_audio = u_pred_audio - u_targ_audio
 

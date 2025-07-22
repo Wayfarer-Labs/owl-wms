@@ -11,6 +11,7 @@ def draw_frame(frame, mouse, button):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
+    frame = frame[:3] # Only ever take 3 channels
     
     #frame = F.interpolate(frame.unsqueeze(0),(512,512))
     frame = frame.squeeze(0)

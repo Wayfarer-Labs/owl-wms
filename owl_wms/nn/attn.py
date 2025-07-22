@@ -9,7 +9,7 @@ from .mlp import MLP
 
 
 from .modulation import AdaLN, Gate
-from .rope import FlatVideoRoPE, FrameRoPE
+from .rope import FlatVideoRoPE
 
 torch.backends.cuda.enable_flash_sdp(enabled = True)
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask
