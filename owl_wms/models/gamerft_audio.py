@@ -14,7 +14,6 @@ from ..nn.embeddings import (
 )
 from ..nn.attn import DiT, FinalLayer, UViT
 from ..nn.mmattn import MMDIT
-from ..nn.mmattn_v2 import MMDIT2
 
 class GameRFTAudioCore(nn.Module):
     def __init__(self, config):
@@ -26,9 +25,6 @@ class GameRFTAudioCore(nn.Module):
             backbone_cls = DiT
         elif config.backbone == 'mmdit':
             backbone_cls = MMDIT
-        elif config.backbone == 'mmdit_2':
-            backbone_cls = MMDIT2
-            config.backbone = 'mmdit'
         elif config.backbone == 'uvit':
             backbone_cls = UViT
         else:

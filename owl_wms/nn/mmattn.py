@@ -186,9 +186,11 @@ class MMDiTBlock(nn.Module):
         self.adaln2_1 = AdaLN(dim)
         self.gate2_1 = Gate(dim)
 
-        # Stream 2 - Standard LayerNorm
-        self.ln1_2 = nn.LayerNorm(dim)
-        self.ln2_2 = nn.LayerNorm(dim)
+        # Stream 2 - AdaLN and gating (was LayerNorm)
+        self.adaln1_2 = AdaLN(dim)
+        self.gate1_2 = Gate(dim)
+        self.adaln2_2 = AdaLN(dim)
+        self.gate2_2 = Gate(dim)
 
     @torch.compile
     def forward(self, x, y, cond, block_mask = None, kv_cache = None):
@@ -197,11 +199,12 @@ class MMDiTBlock(nn.Module):
         
         # First attention block
         x = self.adaln1_1(x, cond)
-        y = self.ln1_2(y)
+        y = self.adaln1_2(y, cond)
         
         x, y = self.attn(x, y, block_mask, kv_cache)
         
         x = self.gate1_1(x, cond)
+        y = self.gate1_2(y, cond)
         
         x = res1_x + x
         y = res1_y + y
@@ -211,12 +214,13 @@ class MMDiTBlock(nn.Module):
         res2_y = y.clone()
         
         x = self.adaln2_1(x, cond)
-        y = self.ln2_2(y)
+        y = self.adaln2_2(y, cond)
         
         x = self.mlp_1(x)
         y = self.mlp_2(y)
         
         x = self.gate2_1(x, cond)
+        y = self.gate2_2(y, cond)
         
         x = res2_x + x
         y = res2_y + y
@@ -228,7 +232,10 @@ class MMDIT(nn.Module):
         super().__init__()
 
         self.config = config
-        self.blocks = nn.ModuleList([MMDiTBlock(config) for _ in range(config.n_layers)])
+        self.blocks = nn.ModuleList([MMDiTBlock2(config) for _ in range(config.n_layers)])
+
+        for i in range(config.n_layers):
+            self.blocks[i].attn.layer_ind = i
 
     def get_block_mask(self, x, y, kv_cache):
         n_tokens = x.shape[1] + y.shape[1]
@@ -236,7 +243,6 @@ class MMDIT(nn.Module):
         n_audio_tokens = self.config.tokens_per_frame - self.config.sample_size**2
 
         return create_block_causal_mask_with_mm(n_tokens, n_tokens_per_frame, n_audio_tokens).to(x.device,x.dtype)
-
 
     def forward(self, x, y, cond, kv_cache = None):
         block_mask = self.get_block_mask(x, y, kv_cache)

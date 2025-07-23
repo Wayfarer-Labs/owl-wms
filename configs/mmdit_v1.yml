@@ -17,7 +17,7 @@ model:
 
   causal: true
   uncond: false
-  backbone: mmdit_2
+  backbone: mmdit
 
 train:
   trainer_id: av
@@ -60,14 +60,14 @@ train:
 
   checkpoint_dir: checkpoints/av_mmdit_v1
   output_path: /mnt/data/owl-wms/checkpoints/av_mmdit_v1
-  resume_ckpt: null #checkpoints/av_mmdit/step_70000.pt
+  resume_ckpt: checkpoints/av_mmdit_v1/step_235000.pt
         
   sample_interval: 1000
   save_interval: 5000
 
-  sampler_id: av_window
+  sampler_id: av_causal
   sampler_kwargs:
-    n_steps: 16
+    n_steps: 4
     cfg_scale: 1.3
     window_length: 16
     num_frames: 104
