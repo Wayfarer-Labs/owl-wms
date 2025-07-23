@@ -42,7 +42,10 @@ class RolloutManager:
         with torch.no_grad():
             # Select half of frames from each video
             # Mask is true = we are generating that frame with student
-            mask = torch.stack([torch.rand(video_bnchw.shape[1]) < 0.5 for _ in range(video_bnchw.shape[0])])
+            n_frames = video_bnchw.shape[1]
+            half = n_frames // 2
+            mask = torch.zeros((video_bnchw.shape[0], n_frames), dtype=torch.bool)
+            mask[:, :half] = True
             mask = mask.to(device = video_bnchw.device, dtype = torch.bool)
 
             mask_video = mask[:,:,None,None,None]

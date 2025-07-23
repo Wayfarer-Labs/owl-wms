@@ -3,7 +3,7 @@ def get_trainer_cls(trainer_id):
         """
         CausvidTrainer does DMD to create few-step causal student
         """
-        from .causvid import CausVidTrainer
+        from .causvid_v2 import CausVidTrainer
         return CausVidTrainer
     if trainer_id == "av":
         """
@@ -21,7 +21,7 @@ def get_trainer_cls(trainer_id):
         """
         Self force trainer does clean context + DMD to enable few step with KV caching (broken rn)
         """
-        from .sf_trainer import SelfForceTrainer
+        from .sf_trainer_v2 import SelfForceTrainer
         return SelfForceTrainer
     if trainer_id == "ode_distill":
         """

@@ -124,7 +124,7 @@ class MMAttn(nn.Module):
             mask = None
 
         if kv_cache is not None:
-            if len(kv_cache[0]) > 0:
+            if len(kv_cache) > 0: # TODO Fix this later
                 old_k1, old_v1 = kv_cache[0].get(self.layer_ind)
                 old_k2, old_v2 = kv_cache[1].get(self.layer_ind)
                 

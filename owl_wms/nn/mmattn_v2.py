@@ -145,6 +145,9 @@ class MMDIT2(nn.Module):
         self.config = config
         self.blocks = nn.ModuleList([MMDiTBlock2(config) for _ in range(config.n_layers)])
 
+        for i in range(config.n_layers):
+            self.blocks[i].attn.layer_ind = i
+
     def get_block_mask(self, x, y, kv_cache):
         n_tokens = x.shape[1] + y.shape[1]
         n_tokens_per_frame = self.config.tokens_per_frame
