@@ -119,7 +119,7 @@ class MMDIT(nn.Module):
         self.config = config
 
         # layer attention pattern is [global, local, local, local, global, ...]
-        self.local_layers = [~(layer_idx % 4 == 0) for layer_idx in range(config.n_layers)]
+        self.local_layers = [(layer_idx % 4 != 0) for layer_idx in range(config.n_layers)]
         self.local_window = nn.Buffer(torch.tensor(self.config.local_window, dtype=torch.int32), persistent=False)
         self.global_window = nn.Buffer(torch.tensor(self.config.global_window, dtype=torch.int32), persistent=False)
 
