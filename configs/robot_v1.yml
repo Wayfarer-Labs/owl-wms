@@ -20,13 +20,13 @@ model:
   has_audio: false
 
   local_window: 16
-  global_window: 256
+  global_window: 128
 
 train:
   trainer_id: rft
   data_id: cod
   data_kwargs:
-    window_length: 1000
+    window_length: 256
     dataset_path: /mnt/data/lapp0/1x_latents/train_npy/
 
   sample_data_id: cod
