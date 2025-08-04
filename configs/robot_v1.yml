@@ -80,8 +80,8 @@ train:
   vae_batch_size: 4
   vae_scale: 0.63
 
-  vae_cfg_path: configs/owl_vaes/cod_128x_feats.yml
-  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_128x_feats/cod_128x_feats_160k_ema.pt
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/no_depth.yml
+  vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/1x_rgb_no_depth/step_200000.pt
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
