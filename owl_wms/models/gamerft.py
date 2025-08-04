@@ -20,7 +20,7 @@ class GameRFTCore(nn.Module):
         self.transformer = DiT(config)
 
         if not config.uncond:
-            self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
+            self.control_embed = ControlEmbedding(config.n_buttons, config.n_mouse_axes, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
 
         self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
