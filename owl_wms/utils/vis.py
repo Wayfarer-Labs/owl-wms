@@ -21,6 +21,7 @@ def draw_frame(frame, mouse, button):
     frame = frame.astype(np.uint8)
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
+    """
     # Draw compass circle and mouse position in top left
     circle_center = (50, 50)  # Center of compass
     circle_radius = 40
@@ -59,6 +60,7 @@ def draw_frame(frame, mouse, button):
 
     # Convert back to RGB for display
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    """
     frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
     return frame
 
