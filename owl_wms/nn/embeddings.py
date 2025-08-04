@@ -173,8 +173,8 @@ class ControlEmbedding(nn.Module):
     def __init__(self, n_buttons, n_mouse_axes, dim_out, dim = 512):
         super().__init__()
 
-        #self.mouse = MouseEmbedding(n_mouse_axes, dim_out, dim)
-        self.button = ButtonEmbeddding(n_buttons + n_mouse_axes, dim_out, dim)
+        self.mouse = ButtonEmbeddding(n_mouse_axes, dim_out, dim)  # TODO: use better mouse embedding!
+        self.button = ButtonEmbeddding(n_buttons, dim_out, dim)
 
     def forward(self, mouse, button, has_controls=None):
         # mouse : [b,n,2]
@@ -183,4 +183,4 @@ class ControlEmbedding(nn.Module):
 
         # out is [b,n,d]
 
-        return self.button(torch.cat((mouse, button), dim=1))  # self.mouse(mouse) + self.button(button)
+        return self.mouse(mouse) + self.button(button)
