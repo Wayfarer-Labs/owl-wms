@@ -78,7 +78,7 @@ train:
 
   vae_id: dcae
   vae_batch_size: 4
-  vae_scale: 0.63
+  vae_scale: 0.53
 
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/no_depth.yml
   vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/1x_rgb_no_depth/step_200000.pt
