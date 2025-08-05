@@ -48,7 +48,7 @@ def create_causal_block_mask(
         if doc_id is None:
             same_doc_mask = True
         else:
-            same_doc_mask = doc_id[frame_q] == doc_id[frame_kv]
+            same_doc_mask = doc_id[b, frame_q] == doc_id[b, frame_kv]
 
         return is_causal & window_mask & same_doc_mask
 
