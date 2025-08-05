@@ -261,7 +261,7 @@ class RFTTrainer(BaseTrainer):
         ]
 
         if self.rank == 0:
-            wandb_av_out = to_wandb(video_out, None, mouse, button)
+            wandb_av_out = to_wandb(video_out, mouse, button)  # to_wandb_av(video_out, None, mouse, button)
             if len(wandb_av_out) == 3:
                 video, depth_gif, flow_gif = wandb_av_out
                 eval_wandb_dict = dict(samples=video, depth_gif=depth_gif, flow_gif=flow_gif)
