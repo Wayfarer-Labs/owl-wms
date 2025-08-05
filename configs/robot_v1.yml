@@ -69,11 +69,11 @@ train:
   sampler_id: av_caching
   sampler_kwargs:
     n_steps: 16
-    #window_length: 16
+    # window_length: 16  # only for av_window
     cfg_scale: 1.0
     num_frames: 900
     noise_prev: 0.2
-    only_return_generated: false
+    only_return_generated: true
 
   n_samples: 4
   eval_sample_dir: null
