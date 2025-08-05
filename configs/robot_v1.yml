@@ -24,7 +24,7 @@ model:
 
 train:
   trainer_id: rft
-  data_id: cod
+  data_id: sequence_packing
   data_kwargs:
     window_length: 256
     dataset_path: /mnt/data/lapp0/1x_latents/train_npy/
@@ -34,8 +34,8 @@ train:
     window_length: 16  # size of single ground truth start tokens
     dataset_path: /mnt/data/lapp0/1x_latents/train_npy/
 
-  target_batch_size: 16
-  batch_size: 2
+  target_batch_size: 8
+  batch_size: 1
 
   epochs: 10000
 
