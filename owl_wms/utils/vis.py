@@ -7,7 +7,7 @@ import numpy as np
 KEYBINDS = ["W","A","S","D","LSHIFT","SPACE","R","F","E", "LMB", "RMB"]
 
 
-def draw_frame(frame, vec_3d):
+def draw_frame(frame, vec_3ds):
     """
     frame         : torch.Tensor [3,H,W], values in [-1…1]
     vec_3d        : list of (label: str, vec: sequence of 3 floats)
@@ -26,7 +26,7 @@ def draw_frame(frame, vec_3d):
     font = cv2.FONT_HERSHEY_SIMPLEX
     fs = size / 200.0
 
-    for i, (label, vec) in enumerate(vecs):
+    for i, (label, vec) in enumerate(vec_3ds):
         icon = render_vec_3d(vec, size=size)
         x0, y0 = i * size, H - size
         img[y0:, x0:x0+size] = icon
