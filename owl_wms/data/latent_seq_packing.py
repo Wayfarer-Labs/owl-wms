@@ -46,7 +46,7 @@ class WindowedViewDataset(Dataset):
         else:
             self.array_columns = array_columns
 
-        seq_len, miss, trunc = self.table[["seq_len", "missing", "truncated"]]
+        seq_len, miss, trunc = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated"]]]
         mask = np.ones_like(seq_len, bool)
         if not include_missing_features:
             mask &= ~miss
