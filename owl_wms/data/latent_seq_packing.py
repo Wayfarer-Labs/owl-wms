@@ -150,7 +150,7 @@ def get_loader(batch_size, dataset_path, window_length, include_audio=True):
     return DataLoader(
         ds,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, array_columns),
+        collate_fn=partial(collate_fn, columns=array_columns),
         num_workers=2,
         drop_last=True,
         pin_memory=True,
