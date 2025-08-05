@@ -177,12 +177,10 @@ def draw_frames(frames, mouse_inputs, button_inputs):
             button = button_inputs[i, j]
 
             ###
-            vec_3d = [("HIP": mouse[[0,1,2]]), ("LSH", mouse[[6, 7, 8]])]
+            vec_3d = [("HIP", mouse[[0,1,2]]), ("LSH", mouse[[6, 7, 8]])]
             ###
 
-            drawn = draw_frame(frame, mouse, button)
-
-
+            drawn = draw_frame(frame, vec_3d)
 
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
