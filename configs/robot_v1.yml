@@ -12,7 +12,7 @@ model:
   n_mouse_axes: 18
 
   cfg_prob: 0.1
-  n_frames: 1000
+  n_frames: 1024
 
   causal: true
   uncond: false
