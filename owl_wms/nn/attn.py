@@ -41,10 +41,14 @@ def create_causal_block_mask(
     def mask_mod(b, h, q, kv):
         abs_q = q + n_cached_tokens
         is_causal = frame_id[kv] <= frame_id[abs_q]
-        is_wrap = (frame_id[abs_q] == n_frames - 1) & (frame_id[kv] == 0)
         window_mask = abs_q - kv < (window_len * tokens_per_frame)
-        same_doc_mask = doc_id[q] == doc_id[kv]
-        return is_causal & ~is_wrap & window_mask & same_doc_mask
+
+        if doc_id is None:
+            same_doc_mask = True
+        else:
+            same_doc_mask = doc_id[q] == doc_id[kv]
+
+        return is_causal & window_mask & same_doc_mask
 
     return create_block_mask(
         mask_mod,
@@ -148,9 +152,6 @@ class DiT(nn.Module):
         )
 
     def forward(self, x, cond, doc_id=None, kv_cache=None):
-        if doc_id is None:
-            doc_id = torch.ones(x.size(1), device=x.device)
-
         local_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.local_window)
         global_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.global_window)
 
