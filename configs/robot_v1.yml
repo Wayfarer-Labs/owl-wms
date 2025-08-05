@@ -76,7 +76,7 @@ train:
   n_samples: 4
   eval_sample_dir: null
 
-  vae_id: null
+  vae_id: dcae
   vae_batch_size: 4
   vae_scale: 0.53
 
