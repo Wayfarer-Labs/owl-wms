@@ -76,12 +76,12 @@ train:
   n_samples: 4
   eval_sample_dir: null
 
-  vae_id: dcae
+  vae_id: null
   vae_batch_size: 4
   vae_scale: 0.53
 
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/no_depth.yml
-  vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/1x_rgb_no_depth/step_200000.pt
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/1x_rgb_no_depth/1x_128x_200k_ema.pt
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
