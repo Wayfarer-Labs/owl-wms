@@ -15,7 +15,7 @@ from ..schedulers import get_scheduler_cls
 from ..models import get_model_cls
 from ..sampling import get_sampler_cls
 from ..data import get_loader
-from ..utils.logging import LogHelper, to_wandb_av
+from ..utils.logging import LogHelper, to_wandb_av, to_wandb
 from ..utils import batch_permute_to_length
 from ..muon import init_muon
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
@@ -261,7 +261,7 @@ class RFTTrainer(BaseTrainer):
         ]
 
         if self.rank == 0:
-            wandb_av_out = to_wandb_av(video_out, None, mouse, button)
+            wandb_av_out = to_wandb(video_out, None, mouse, button)
             if len(wandb_av_out) == 3:
                 video, depth_gif, flow_gif = wandb_av_out
                 eval_wandb_dict = dict(samples=video, depth_gif=depth_gif, flow_gif=flow_gif)
