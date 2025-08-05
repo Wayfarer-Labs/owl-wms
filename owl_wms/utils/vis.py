@@ -23,17 +23,29 @@ def draw_frame(frame, vec_3ds):
 
     H, W = img.shape[:2]
     size = W // 5
+    canvas = np.full((H + size, W, 3), 255, np.uint8)
+    canvas[:H] = img
+
     font = cv2.FONT_HERSHEY_SIMPLEX
-    fs = size / 200.0
+    scale = size / 200.0
 
     for i, (label, vec) in enumerate(vec_3ds):
+        x = i * size
         icon = render_vec_3d(vec, size=size)
-        x0, y0 = i * size, H - size
-        img[y0:, x0:x0+size] = icon
-        cv2.putText(img, label, (x0+2, y0-2), font, fs, (0,0,0), 1, cv2.LINE_AA)
+        canvas[H : H + size, x : x + size] = icon
+        cv2.putText(
+            canvas,
+            label,
+            (x + 2, H + size - 3),
+            font,
+            scale,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
 
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return img.transpose(2, 0, 1)
+    out = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    return out.transpose(2, 0, 1)
 
 
 def nothing(frame):
@@ -122,7 +134,10 @@ def render_vec_3d(vec, size=500, azim=100, elev=20):
     }
 
     img = np.full((size, size, 3), 255, dtype=np.uint8)
-    cv2.circle(img, pts["O"], 6, (0, 0, 0), -1)
+    for ax in ("X", "Y", "Z"):
+        cv2.line(img, pts["O"], pts[ax], (200, 200, 200), 1)
+
+    cv2.circle(img, pts["O"], 3, (128, 128, 128), -1)
     cv2.arrowedLine(
         img,
         pts["O"],
