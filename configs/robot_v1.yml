@@ -12,7 +12,9 @@ model:
   n_mouse_axes: 18
 
   cfg_prob: 0.1
-  n_frames: 512
+
+  # TODO: change n_frames to 512 once we have non-cached rope for inference
+  n_frames: 1024
 
   causal: true
   uncond: false
