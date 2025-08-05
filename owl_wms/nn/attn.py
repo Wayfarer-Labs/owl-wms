@@ -22,7 +22,12 @@ def checkpoint(function, *args, **kwargs):
 
 
 def create_causal_block_mask(
-        n_tokens: int, tokens_per_frame: int, window_len: int | None, n_cached_tokens: int = 0, device="cpu"
+    n_tokens: int,
+    tokens_per_frame: int,
+    window_len: int | None,
+    doc_id: torch.Tensor,
+    n_cached_tokens: int = 0,
+    device="cpu"
 ):
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
     assert 0 <= n_cached_tokens < n_tokens, "kv cache cannot exceed total tokens"
@@ -38,7 +43,8 @@ def create_causal_block_mask(
         is_causal = frame_id[kv] <= frame_id[abs_q]
         is_wrap = (frame_id[abs_q] == n_frames - 1) & (frame_id[kv] == 0)
         window_mask = abs_q - kv < (window_len * tokens_per_frame)
-        return is_causal & ~is_wrap & window_mask
+        same_doc_mask = doc_id[q] == doc_id[kv]
+        return is_causal & ~is_wrap & window_mask & same_doc_mask
 
     return create_block_mask(
         mask_mod,
@@ -127,7 +133,7 @@ class DiT(nn.Module):
         self.local_layers = [(layer_idx % 4 != 0) for layer_idx in range(config.n_layers)]
         self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
 
-    def get_block_mask(self, x, kv_cache, window_len):
+    def get_block_mask(self, x, doc_id, kv_cache, window_len):
         if not self.config.causal:
             return None
         seq_len = x.size(1)
@@ -135,14 +141,18 @@ class DiT(nn.Module):
         return create_causal_block_mask(
             n_tokens=seq_len + offset,
             tokens_per_frame=self.config.tokens_per_frame,
-            n_cached_tokens=offset,
             window_len=window_len,
+            doc_id=doc_id,
+            n_cached_tokens=offset,
             device=x.device
         )
 
-    def forward(self, x, cond, kv_cache=None):
-        local_block_mask = self.get_block_mask(x, kv_cache, self.config.local_window)
-        global_block_mask = self.get_block_mask(x, kv_cache, self.config.global_window)
+    def forward(self, x, cond, doc_id=None, kv_cache=None):
+        if doc_id is None:
+            doc_id = torch.ones(x.size(1), device=x.device)
+
+        local_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.local_window)
+        global_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.global_window)
 
         for layer_idx, block in enumerate(self.blocks):
             block_mask = local_block_mask if self.local_layers[layer_idx] else global_block_mask
@@ -163,6 +173,7 @@ class SkipConnection(nn.Module):
         x = self.proj(x)
 
         return x
+
 
 class UViT(nn.Module):
     get_block_mask = DiT.get_block_mask
