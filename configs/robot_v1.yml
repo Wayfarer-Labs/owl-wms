@@ -3,9 +3,9 @@ model:
   sample_size: 8
   channels: 128
 
-  n_layers: 16
-  n_heads: 24
-  d_model: 1536
+  n_layers: 28
+  n_heads: 16
+  d_model: 2048
 
   tokens_per_frame: 64
   n_buttons: 7
@@ -26,7 +26,7 @@ train:
   trainer_id: rft
   data_id: sequence_packing
   data_kwargs:
-    window_length: 512
+    window_length: 1024
     dataset_path: /mnt/data/lapp0/1x_latents/train_npy/
 
   sample_data_id: cod
