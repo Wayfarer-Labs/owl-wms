@@ -96,12 +96,12 @@ class GameRFT(nn.Module):
 
     def forward(self, x, mouse=None, btn=None, doc_id=None, return_dict=False, cfg_prob=None, has_controls=None):
         B, S = x.size(0), x.size(1)
+
+        # Apply classifier-free guidance dropout
         if has_controls is None:
             has_controls = torch.ones(B, device=x.device, dtype=torch.bool)
         if mouse is None or btn is None:
             has_controls = torch.zeros_like(has_controls)
-
-        # Apply classifier-free guidance dropout
         has_controls = self.handle_cfg(has_controls, cfg_prob)
         with torch.no_grad():
             ts = torch.randn(B, S, device=x.device, dtype=x.dtype).sigmoid()
