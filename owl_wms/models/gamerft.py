@@ -97,10 +97,6 @@ class GameRFT(nn.Module):
     def forward(self, x, mouse=None, btn=None, doc_id=None, return_dict=False, cfg_prob=None, has_controls=None):
         B, S = x.size(0), x.size(1)
 
-        # Sequence packing (B=1, S=B*S)
-        if doc_id is not None:
-            assert B == 1, "custom doc_id only supported for batch size 1"
-
         # Apply classifier-free guidance dropout
         if has_controls is None:
             has_controls = torch.ones(B, device=x.device, dtype=torch.bool)
