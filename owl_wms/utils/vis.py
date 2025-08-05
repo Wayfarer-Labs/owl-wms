@@ -57,10 +57,11 @@ def draw_frame(frame, mouse, button):
         text_x = x + (box_width - text_size[0]) // 2
         text_y = y_pos - 5  # 5px above box
         cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+    """
 
     # Convert back to RGB for display
+
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    """
     frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
     return frame
 
