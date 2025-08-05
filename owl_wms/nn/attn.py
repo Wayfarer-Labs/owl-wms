@@ -27,6 +27,7 @@ def create_causal_block_mask(
     window_len: int | None,
     doc_id: torch.Tensor,
     n_cached_tokens: int = 0,
+    causal: bool = True,
     device="cpu"
 ):
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
@@ -42,8 +43,8 @@ def create_causal_block_mask(
         abs_q = q + n_cached_tokens  # for kv caching
         frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
 
-        is_causal = frame_kv <= frame_q
-        window_mask = frame_q - frame_kv < window_len
+        is_causal = frame_kv <= frame_q if causal else True
+        window_mask = torch.abs(frame_q - frame_kv) < window_len
 
         if doc_id is None:
             same_doc_mask = True
@@ -140,8 +141,6 @@ class DiT(nn.Module):
         self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
 
     def get_block_mask(self, x, doc_id, kv_cache, window_len):
-        if not self.config.causal:
-            return None
         seq_len = x.size(1)
         offset = kv_cache.length_at(0) if kv_cache is not None else 0
         return create_causal_block_mask(
@@ -150,6 +149,7 @@ class DiT(nn.Module):
             window_len=window_len,
             doc_id=doc_id,
             n_cached_tokens=offset,
+            causal=self.config.causal,
             device=x.device
         )
 

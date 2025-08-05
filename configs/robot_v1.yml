@@ -28,7 +28,7 @@ train:
   trainer_id: rft
   data_id: sequence_packing
   data_kwargs:
-    window_length: 512
+    window_length: 512  # sequence length
     dataset_path: /mnt/data/lapp0/1x_latents/train_npy/
 
   sample_data_id: cod
