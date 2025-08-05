@@ -29,7 +29,6 @@ def create_causal_block_mask(
     n_cached_tokens: int = 0,
     device="cpu"
 ):
-    print("doc_id.shape, n_tokens, tokens_per_frame, window_len", doc_id.shape, n_tokens, tokens_per_frame, window_len)
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
     assert 0 <= n_cached_tokens < n_tokens, "kv cache cannot exceed total tokens"
 
@@ -40,7 +39,7 @@ def create_causal_block_mask(
         window_len = n_frames
 
     def mask_mod(b, h, q, kv):
-        abs_q = q + n_cached_tokens
+        abs_q = q + n_cached_tokens  # for kv caching
         frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
 
         is_causal = frame_kv <= frame_q
