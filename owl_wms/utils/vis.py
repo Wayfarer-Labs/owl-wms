@@ -22,7 +22,7 @@ def draw_frame(frame, vec_3ds):
     img = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
     H, W = img.shape[:2]
-    size = W // 10
+    size = W // 5
     font = cv2.FONT_HERSHEY_SIMPLEX
     fs = size / 200.0
 
