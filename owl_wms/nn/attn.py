@@ -30,7 +30,6 @@ def get_block_mask(
     is_causal: bool = True,
     device="cpu"
 ):
-    # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
     assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
     if not is_causal:
         assert q_offset == 0, "kv caching not supported with bidirectional"
