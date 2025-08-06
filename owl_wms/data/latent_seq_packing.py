@@ -126,28 +126,23 @@ class WindowedViewDataset(Dataset):
         return [list(map(tuple, blk)) for blk in blocks]
 
 
-def collate_fn(batch, columns: list):
+def collate_fn(batch, batch_columns: list):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
     stacked = {
         k: t.bfloat16() if t.dtype == torch.float32 else t
         for k, t in stacked.items()
     }
-    columns = columns + ["doc_id"]
+    columns = batch_columns + ["doc_id"]
     return [stacked[col] for col in columns]
 
 
-def get_loader(batch_size, dataset_path, window_length, include_audio=True):
+def get_loader(batch_size, dataset_path, window_length, batch_columns):
     assert batch_size == 1
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    if include_audio:
-        array_columns = ["video", "audio", "mouse", "buttons"]
-    else:
-        array_columns = ["video", "mouse", "buttons"]
-
-    ds = WindowedViewDataset(dataset_path, window_length, array_columns=array_columns)
+    ds = WindowedViewDataset(dataset_path, window_length, array_columns=batch_columns)
 
     if world_size > 1:
         sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -158,7 +153,7 @@ def get_loader(batch_size, dataset_path, window_length, include_audio=True):
     return DataLoader(
         ds,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, columns=array_columns),
+        collate_fn=partial(collate_fn, batch_columns=batch_columns),
         num_workers=2,
         drop_last=True,
         pin_memory=True,
