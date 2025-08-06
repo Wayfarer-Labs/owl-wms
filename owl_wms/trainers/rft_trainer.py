@@ -268,4 +268,6 @@ class RFTTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, button) if self.rank == 0 else None
         dist.barrier()
 
+        ema_model.train()  # unnecessary? ema model isn't trained?
+
         return eval_wandb_dict
