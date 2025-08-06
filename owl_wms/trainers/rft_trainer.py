@@ -214,7 +214,7 @@ class RFTTrainer(BaseTrainer):
 
         mouse, button = mouse_for_sample.bfloat16().cuda(), btn_for_sample.bfloat16().cuda()
         mouse, button = batch_permute_to_length(mouse, button, sampler.num_frames + vid_for_sample.size(1))
-        vid = vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
+        vid = vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale
 
         latent_vid = sampler(ema_model, vid, mouse, button)
 
