@@ -50,7 +50,7 @@ def get_block_mask(
             causal_mask = frame_kv <= frame_q
         elif bidirectional_ar:
             # Last token causal, all others bidirectional
-            causal_mask = (frame_id < (n_frames - 1)) | frame_kv <= frame_q
+            causal_mask = (frame_kv < (n_frames - 1)) | frame_kv == frame_q
         else:
             causal_mask = True
 
@@ -64,7 +64,7 @@ def get_block_mask(
         return causal_mask & window_mask & same_doc_mask
 
     q_len = n_tokens - q_offset
-    return create_block_mask(mask_mod, None, None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
+    return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
 
 
 class Attn(nn.Module):
