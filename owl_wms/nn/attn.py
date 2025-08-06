@@ -21,17 +21,20 @@ def checkpoint(function, *args, **kwargs):
     return torch_checkpoint(function, *args, **kwargs)
 
 
-def create_causal_block_mask(
+def create_block_mask(
     n_tokens: int,
     tokens_per_frame: int,
-    window_len: int | None,
-    doc_id: torch.Tensor,
-    n_cached_tokens: int = 0,
+    window_len: int | None = None,
+    doc_id: torch.Tensor | None = None,
+    q_offset: int = 0,
     is_causal: bool = True,
+    bidirectional_ar: bool = False,
     device="cpu"
 ):
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
-    assert 0 <= n_cached_tokens < n_tokens, "kv cache cannot exceed total tokens"
+    assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
+    if not is_causal:
+        assert q_offset, "kv caching not supported with bidirectional"
 
     frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
     n_frames = n_tokens // tokens_per_frame
@@ -40,11 +43,14 @@ def create_causal_block_mask(
         window_len = n_frames
 
     def mask_mod(b, h, q, kv):
-        abs_q = q + n_cached_tokens  # for kv caching
+        abs_q = q + q_offset  # offset for kv caching
         frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
 
         if is_causal:
             causal_mask = frame_kv <= frame_q
+        elif bidirectional_ar:
+            # Last token causal, all others bidirectional
+            causal_mask = (frame_id < (n_frames - 1)) | frame_kv <= frame_q
         else:
             causal_mask = True
 
@@ -57,14 +63,8 @@ def create_causal_block_mask(
 
         return causal_mask & window_mask & same_doc_mask
 
-    return create_block_mask(
-        mask_mod,
-        B=None,
-        H=None,
-        Q_LEN=n_tokens - n_cached_tokens,
-        KV_LEN=n_tokens,
-        device=device,
-    )
+    q_len = n_tokens - q_offset
+    return create_block_mask(mask_mod, None, None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
 
 
 class Attn(nn.Module):
@@ -144,22 +144,27 @@ class DiT(nn.Module):
         self.local_layers = [(layer_idx % 4 != 0) for layer_idx in range(config.n_layers)]
         self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
 
-    def get_block_mask(self, x, doc_id, kv_cache, window_len):
-        seq_len = x.size(1)
-        offset = kv_cache.length_at(0) if kv_cache is not None else 0
-        return create_causal_block_mask(
-            n_tokens=seq_len + offset,
+    def get_block_mask(self, seq_len, doc_id, window_len, q_offset, device):
+        n_tokens = seq_len + q_offset
+        bidirectional_ar = (not self.config.causal) and (not self.training)  # last token causal during eval
+
+        return create_block_mask(
+            n_tokens=n_tokens,
             tokens_per_frame=self.config.tokens_per_frame,
             window_len=window_len,
             doc_id=doc_id,
-            n_cached_tokens=offset,
+            q_offset=q_offset,
             is_causal=self.config.causal,
-            device=x.device
+            bidirectional_ar=bidirectional_ar,
+            device=device
         )
 
     def forward(self, x, cond, doc_id=None, kv_cache=None):
-        local_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.local_window)
-        global_block_mask = self.get_block_mask(x, doc_id, kv_cache, self.config.global_window)
+        seq_len, device = x.size(1), x.device
+        q_offset = kv_cache.length_at(0) if kv_cache is not None else 0
+
+        local_block_mask = self.get_block_mask(seq_len, doc_id, self.config.local_window, q_offset, device)
+        global_block_mask = self.get_block_mask(seq_len, doc_id, self.config.global_window, q_offset, device)
 
         for layer_idx, block in enumerate(self.blocks):
             block_mask = local_block_mask if self.local_layers[layer_idx] else global_block_mask
@@ -257,7 +262,7 @@ def test_attn_mask():
     tokens_per_frame = 8
     device = "cpu"
 
-    block_mask = create_causal_block_mask(total_tokens, tokens_per_frame, device=device)
+    block_mask = create_block_mask(total_tokens, tokens_per_frame, device=device)
 
     # Convert to dense grid
     idx = torch.arange(total_tokens, device=device, dtype=torch.int32)
