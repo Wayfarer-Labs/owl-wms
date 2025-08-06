@@ -66,10 +66,10 @@ train:
   sample_interval: 5000
   save_interval: 10000
 
-  sampler_id: av_window
+  sampler_id: video_window
   sampler_kwargs:
     n_steps: 16
-    # window_length: 16  # only for av_window
+    window_length: 16  # only for video_window
     cfg_scale: 1.0
     num_frames: 900
     noise_prev: 0.2
