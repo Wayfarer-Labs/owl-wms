@@ -53,6 +53,10 @@ class WindowedViewDataset(Dataset):
         if not include_truncated:
             mask &= ~trunc
 
+        # HACK
+        mask &= seq_len > 128
+        ######
+
         self._docs = np.nonzero(mask)[0]
         self._lens = seq_len[mask].astype(np.int64)
 
