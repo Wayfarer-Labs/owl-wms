@@ -93,7 +93,7 @@ def get_loader(batch_size, dataset_path, window_length, batch_columns):
     return DataLoader(
         ds,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, batch_columns),
+        collate_fn=partial(collate_fn, batch_columns=batch_columns),
         num_workers=2,
         drop_last=True,
         pin_memory=True,
