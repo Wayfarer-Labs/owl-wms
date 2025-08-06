@@ -146,7 +146,10 @@ class DiT(nn.Module):
 
     def get_block_mask(self, seq_len, doc_id, window_len, q_offset, device):
         n_tokens = seq_len + q_offset
-        bidirectional_ar = (not self.config.causal) and (not self.training)  # last token causal during eval
+
+        # Hack: make cleaner
+        # last token causal during eval, all others bidirectional
+        bidirectional_ar = (not self.config.causal) and (not self.training)
 
         return create_block_mask(
             n_tokens=n_tokens,

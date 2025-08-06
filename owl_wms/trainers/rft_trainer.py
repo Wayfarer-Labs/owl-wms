@@ -210,18 +210,17 @@ class RFTTrainer(BaseTrainer):
                     self.barrier()
 
     def eval_step(self, sample_loader, sampler, decode_fn=None):
+        ema_model = self.get_module(ema=True).core
+        ema_model.eval()
+
         # ---- Generation Run ----
         vid_for_sample, mouse_for_sample, btn_for_sample = next(sample_loader)
 
         mouse, button = mouse_for_sample.bfloat16().cuda(), btn_for_sample.bfloat16().cuda()
         mouse, button = batch_permute_to_length(mouse, button, sampler.num_frames + vid_for_sample.size(1))
+        vid = vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
 
-        latent_vid = sampler(
-            self.get_module(ema=True).core,
-            vid_for_sample.bfloat16().cuda() / self.train_cfg.vae_scale,
-            mouse,
-            button
-        )  # -> [b,n,c,h,w]
+        latent_vid = sampler(ema_model, vid, mouse, button)
 
         if self.sampler_only_return_generated:
             latent_vid = latent_vid[:, vid_for_sample.size(1):]
@@ -271,5 +270,7 @@ class RFTTrainer(BaseTrainer):
         else:
             eval_wandb_dict = None
         dist.barrier()
+
+        ema_model.train()  # unnecessary? ema model isn't trained?
 
         return eval_wandb_dict
