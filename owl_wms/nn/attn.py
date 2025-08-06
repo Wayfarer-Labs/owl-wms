@@ -21,7 +21,7 @@ def checkpoint(function, *args, **kwargs):
     return torch_checkpoint(function, *args, **kwargs)
 
 
-def create_block_mask(
+def get_block_mask(
     n_tokens: int,
     tokens_per_frame: int,
     window_len: int | None = None,
@@ -151,7 +151,7 @@ class DiT(nn.Module):
         # last token causal during eval, all others bidirectional
         bidirectional_ar = (not self.config.causal) and (not self.training)
 
-        return create_block_mask(
+        return get_block_mask(
             n_tokens=n_tokens,
             tokens_per_frame=self.config.tokens_per_frame,
             window_len=window_len,
@@ -265,7 +265,7 @@ def test_attn_mask():
     tokens_per_frame = 8
     device = "cpu"
 
-    block_mask = create_block_mask(total_tokens, tokens_per_frame, device=device)
+    block_mask = get_block_mask(total_tokens, tokens_per_frame, device=device)
 
     # Convert to dense grid
     idx = torch.arange(total_tokens, device=device, dtype=torch.int32)
