@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from tqdm import tqdm
 
-from ..utils import batch_permute_to_length
 from ..nn.kv_cache import KVCache
 from .schedulers import get_sd3_euler
 
@@ -22,15 +21,13 @@ class VideoWindowSampler:
     :param window_length: Number of frames to use for each frame generation step
     :param num_frames: Number of new frames to sample
     :param noise_prev: Noise previous frame
-    :param only_return_generated: Whether to only return the generated frames
     """
-    def __init__(self, n_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2, only_return_generated = False):
+    def __init__(self, n_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2):
         self.n_steps = n_steps
         self.cfg_scale = cfg_scale
         self.window_length = window_length
         self.num_frames = num_frames
         self.noise_prev = noise_prev
-        self.only_return_generated = only_return_generated
 
     @torch.no_grad()
     def __call__(self, model, dummy_batch, mouse, btn, decode_fn=None, image_scale=1):
@@ -47,8 +44,6 @@ class VideoWindowSampler:
 
         clean_history = dummy_batch.clone()
 
-        extended_mouse, extended_btn = batch_permute_to_length(mouse, btn, num_frames + self.window_length)
-
         def step_history():
             # Video history
             new_history = clean_history.clone()[:,-self.window_length:]
@@ -63,8 +58,8 @@ class VideoWindowSampler:
             ts_history = torch.ones(local_history.shape[0], local_history.shape[1], device=local_history.device,dtype=local_history.dtype)
             ts_history[:,:-1] = self.noise_prev
 
-            mouse = extended_mouse[:,frame_idx:frame_idx+self.window_length]
-            btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
+            mouse_step = mouse[:,frame_idx:frame_idx+self.window_length]
+            btn_step = btn[:,frame_idx:frame_idx+self.window_length]
 
             # Create masks for conditional and unconditional branches
             b = local_history.shape[0]
@@ -76,10 +71,10 @@ class VideoWindowSampler:
                 ts = ts_history.clone()
 
                 # Get unconditional predictions
-                pred_video_uncond = model(x, ts, mouse, btn, has_controls=uncond_mask)
+                pred_video_uncond = model(x, ts, mouse_step, btn_step, has_controls=uncond_mask)
 
                 # Get conditional predictions
-                pred_video_cond = model(x, ts, mouse, btn, has_controls=cond_mask)
+                pred_video_cond = model(x, ts, mouse_step, btn_step, has_controls=cond_mask)
 
                 # Apply CFG
                 pred_video = pred_video_uncond + self.cfg_scale * (pred_video_cond - pred_video_uncond)
@@ -94,17 +89,7 @@ class VideoWindowSampler:
             new_frame = local_history[:,-1:]
             clean_history = torch.cat([clean_history, new_frame], dim=1)
 
-        x = clean_history
-        if self.only_return_generated:
-            x = x[:,-num_frames:]
-            extended_mouse = extended_mouse[:,-num_frames:]
-            extended_btn = extended_btn[:,-num_frames:]
-
-        video_out = None
-        if decode_fn is not None:
-            video_out = decode_fn(x * image_scale)
-
-        return video_out, x, extended_mouse, extended_btn
+        return clean_history
 
 class CausalAVWindowSampler:
     """
@@ -116,15 +101,13 @@ class CausalAVWindowSampler:
     :param window_length: Number of frames to use for each frame generation step
     :param num_frames: Number of new frames to sample
     :param noise_prev: Noise previous frame
-    :param only_return_generated: Whether to only return the generated frames
     """
-    def __init__(self, n_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2, only_return_generated = False):
+    def __init__(self, n_steps = 20, cfg_scale = 1.3, window_length = 60, num_frames = 60, noise_prev = 0.2):
         self.n_steps = n_steps
         self.cfg_scale = cfg_scale
         self.window_length = window_length
         self.num_frames = num_frames
         self.noise_prev = noise_prev
-        self.only_return_generated = only_return_generated
 
     @torch.no_grad()
     def __call__(self, model, dummy_batch, mouse, btn, decode_fn=None, image_scale=1):
@@ -144,8 +127,6 @@ class CausalAVWindowSampler:
 
         clean_history = dummy_batch.clone()
 
-        extended_mouse, extended_btn = batch_permute_to_length(mouse, btn, num_frames + self.window_length)
-
         def step_history():
             # Video history
             new_history = clean_history.clone()[:,-self.window_length:]
@@ -160,8 +141,8 @@ class CausalAVWindowSampler:
             ts_history = torch.ones(local_history.shape[0], local_history.shape[1], device=local_history.device,dtype=local_history.dtype)
             ts_history[:,:-1] = self.noise_prev
 
-            mouse = extended_mouse[:,frame_idx:frame_idx+self.window_length]
-            btn = extended_btn[:,frame_idx:frame_idx+self.window_length]
+            mouse_step = mouse[:,frame_idx:frame_idx+self.window_length]
+            btn_step = btn[:,frame_idx:frame_idx+self.window_length]
 
             # Create masks for conditional and unconditional branches
             b = local_history.shape[0]
@@ -183,11 +164,11 @@ class CausalAVWindowSampler:
                     ts = ts[:,-1:]
 
                 # Get unconditional predictions
-                pred_video_uncond = model(x, ts, mouse, btn, has_controls=uncond_mask, kv_cache=cache_uncond)
+                pred_video_uncond = model(x, ts, mouse_step, btn_step, has_controls=uncond_mask, kv_cache=cache_uncond)
 
                 if self.cfg_scale > 0:
                     # Get conditional predictions
-                    pred_video_cond = model(x, ts, mouse, btn, has_controls=cond_mask, kv_cache=cache_cond)
+                    pred_video_cond = model(x, ts, mouse_step, btn_step, has_controls=cond_mask, kv_cache=cache_cond)
                     # Apply CFG
                     pred_video = pred_video_uncond + self.cfg_scale * (pred_video_cond - pred_video_uncond)
                 else:
@@ -214,14 +195,4 @@ class CausalAVWindowSampler:
             new_frame = local_history[:,-1:]
             clean_history = torch.cat([clean_history, new_frame], dim=1)
 
-        x = clean_history
-        if self.only_return_generated:
-            x = x[:,-num_frames:]
-            extended_mouse = extended_mouse[:,-num_frames:]
-            extended_btn = extended_btn[:,-num_frames:]
-
-        if decode_fn is not None:
-            x = x * image_scale
-            x = decode_fn(x)
-
-        return x, extended_mouse, extended_btn
+        return clean_history
