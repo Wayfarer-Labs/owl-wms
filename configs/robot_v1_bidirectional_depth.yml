@@ -85,7 +85,7 @@ train:
   vae_scale: 0.53
 
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/base.yml
-  vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/1x_rgb_depth/step_105000.pt
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/1x_depth/1x_128x_105k_ema_decoder.pt
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
