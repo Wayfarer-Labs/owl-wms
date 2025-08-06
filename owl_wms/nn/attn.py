@@ -28,7 +28,6 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    bidirectional_ar: bool = False,
     device="cpu"
 ):
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
@@ -48,9 +47,6 @@ def get_block_mask(
 
         if is_causal:
             causal_mask = frame_kv <= frame_q
-        elif bidirectional_ar:
-            # Last token causal, all others bidirectional
-            causal_mask = (frame_kv < (n_frames - 1)) | frame_kv == frame_q
         else:
             causal_mask = True
 
@@ -146,11 +142,6 @@ class DiT(nn.Module):
 
     def get_block_mask(self, seq_len, doc_id, window_len, q_offset, device):
         n_tokens = seq_len + q_offset
-
-        # Hack: make cleaner
-        # last token causal during eval, all others bidirectional
-        bidirectional_ar = (not self.config.causal) and (not self.training)
-
         return get_block_mask(
             n_tokens=n_tokens,
             tokens_per_frame=self.config.tokens_per_frame,
@@ -158,7 +149,6 @@ class DiT(nn.Module):
             doc_id=doc_id,
             q_offset=q_offset,
             is_causal=self.config.causal,
-            bidirectional_ar=bidirectional_ar,
             device=device
         )
 
