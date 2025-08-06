@@ -259,6 +259,9 @@ class RFTTrainer(BaseTrainer):
             if len(wandb_av_out) == 3:
                 video, depth_gif, flow_gif = wandb_av_out
                 eval_wandb_dict = dict(samples=video, depth_gif=depth_gif, flow_gif=flow_gif)
+            elif len(wandb_av_out) == 2:
+                video, depth_gif = wandb_av_out
+                eval_wandb_dict = dict(samples=video, depth_gif=depth_gif)
             else:
                 eval_wandb_dict = dict(samples=wandb_av_out)
         else:
