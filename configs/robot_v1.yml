@@ -22,7 +22,7 @@ model:
   has_audio: false
 
   local_window: 16
-  global_window: 128
+  global_window: 512
 
 train:
   trainer_id: rft
