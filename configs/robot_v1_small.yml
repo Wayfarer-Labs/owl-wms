@@ -22,7 +22,7 @@ model:
   has_audio: false
 
   local_window: 16
-  global_window: 128
+  global_window: 512
 
 train:
   trainer_id: rft
@@ -71,7 +71,7 @@ train:
     n_steps: 16
     # window_length: 16  # only for av_window
     cfg_scale: 1.0
-    num_frames: 512
+    num_frames: 900
     noise_prev: 0.2
     only_return_generated: true
 
