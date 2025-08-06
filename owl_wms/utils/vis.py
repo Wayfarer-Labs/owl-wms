@@ -1,6 +1,4 @@
 import cv2
-
-import torch.nn.functional as F
 import numpy as np
 
 
@@ -21,31 +19,10 @@ def draw_frame(frame, vec_3ds):
     frame = frame.clamp(0, 255).byte().cpu().numpy()
     img = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-    H, W = img.shape[:2]
-    size = W // 5
-    canvas = np.full((H + size, W, 3), 255, np.uint8)
-    canvas[:H] = img
+    # TODO
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = size / 200.0
-
-    for i, (label, vec) in enumerate(vec_3ds):
-        x = i * size
-        icon = render_vec_3d(vec, size=size)
-        canvas[H : H + size, x : x + size] = icon
-        cv2.putText(
-            canvas,
-            label,
-            (x + 2, H + size - 3),
-            font,
-            scale,
-            (0, 0, 0),
-            1,
-            cv2.LINE_AA,
-        )
-
-    out = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-    return out.transpose(2, 0, 1)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img.transpose(2, 0, 1)
 
 
 def nothing(frame):
