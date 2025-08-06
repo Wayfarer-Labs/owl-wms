@@ -155,11 +155,7 @@ class RFTTrainer(BaseTrainer):
         local_step = 0
         for epoch in range(self.train_cfg.epochs):
             for batch in tqdm.tqdm(loader, total=len(loader), disable=self.rank != 0, desc=f"Epoch: {epoch}"):
-
-                vid, mouse, btn, doc_id = batch
-                doc_id = doc_id.cuda()
-                vid, mouse, btn = [t.cuda().bfloat16() for t in [vid, mouse, btn]]
-
+                vid, mouse, btn, doc_id = [t.cuda() for t in batch]
                 vid = vid / self.train_cfg.vae_scale
 
                 with ctx:

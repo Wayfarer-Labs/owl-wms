@@ -66,6 +66,10 @@ class WindowedViewDataset(Dataset):
 
 def collate_fn(batch, include_audio):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
+    stacked = {
+        k: t.bfloat16() if t.dtype == torch.float32 else t
+        for k, t in stacked.items()
+    }
     if include_audio:
         return [stacked[k] for k in ("video", "audio", "mouse", "buttons")]
     else:

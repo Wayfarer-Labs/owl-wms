@@ -34,7 +34,7 @@ def get_block_mask(
     # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
     assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
     if not is_causal:
-        assert q_offset, "kv caching not supported with bidirectional"
+        assert q_offset == 0, "kv caching not supported with bidirectional"
 
     frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
     n_frames = n_tokens // tokens_per_frame

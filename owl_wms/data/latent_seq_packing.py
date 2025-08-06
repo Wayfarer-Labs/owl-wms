@@ -128,6 +128,10 @@ class WindowedViewDataset(Dataset):
 
 def collate_fn(batch, columns: list):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
+    stacked = {
+        k: t.bfloat16() if t.dtype == torch.float32 else t
+        for k, t in stacked.items()
+    }
     columns = columns + ["doc_id"]
     return [stacked[col] for col in columns]
 
