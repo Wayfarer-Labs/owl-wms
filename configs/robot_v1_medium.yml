@@ -8,6 +8,11 @@ model:
   d_model: 1024
 
   tokens_per_frame: 64
+
+  n_buttons: 7
+  n_mouse_axes: 18
+
+
   cfg_prob: 0.1
 
   # TODO: change n_frames to 512 once we have non-cached rope for inference
