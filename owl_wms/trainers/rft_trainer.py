@@ -78,7 +78,7 @@ class RFTTrainer(BaseTrainer):
         if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
             save_dict = super().load(self.train_cfg.resume_ckpt)
             save_dict['model'] = {
-                k.removeprefix('module.').removeprefix('_orig_mod.'): v
+                k.removeprefix('_orig_mod.').removeprefix('module.'): v
                 for k, v in save_dict['model'].items()
             }
             self.model.load_state_dict(save_dict['model'])
