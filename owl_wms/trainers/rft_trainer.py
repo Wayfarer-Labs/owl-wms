@@ -67,21 +67,27 @@ class RFTTrainer(BaseTrainer):
             save_dict['scheduler'] = self.scheduler.state_dict()
         super().save(save_dict)
 
+    def load(self):
+        if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
+            save_dict = super().load(self.train_cfg.resume_ckpt)
+            has_ckpt = True
+        else:
+            print("Failed to load checkpoint")
+            return
+
+        self.model.load_state_dict(save_dict['model'])
+        self.ema.load_state_dict(save_dict['ema'])
+        self.opt.load_state_dict(save_dict['opt'])
+        if self.scheduler is not None and 'scheduler' in save_dict:
+            self.scheduler.load_state_dict(save_dict['scheduler'])
+        self.total_step_counter = save_dict['steps']
+
     def train(self):
         torch.cuda.set_device(self.local_rank)
         print(f"Device used: rank={self.rank}")
 
         # Prepare model and ema
         self.model = self.model.cuda().train()
-
-        save_dict = None
-        if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
-            save_dict = super().load(self.train_cfg.resume_ckpt)
-            save_dict['model'] = {
-                k.removeprefix('_orig_mod.').removeprefix('module.'): v
-                for k, v in save_dict['model'].items()
-            }
-            self.model.load_state_dict(save_dict['model'])
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
@@ -112,13 +118,7 @@ class RFTTrainer(BaseTrainer):
         accum_steps = max(1, accum_steps)
         ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        if save_dict:
-            self.ema.load_state_dict(save_dict['ema'])
-            self.opt.load_state_dict(save_dict['opt'])
-            if self.scheduler is not None and 'scheduler' in save_dict:
-                self.scheduler.load_state_dict(save_dict['scheduler'])
-            self.total_step_counter = save_dict['steps']
-            del save_dict
+        self.load()
 
         # Timer reset
         timer = Timer()
@@ -153,15 +153,15 @@ class RFTTrainer(BaseTrainer):
         local_step = 0
         for epoch in range(self.train_cfg.epochs):
             for batch in tqdm.tqdm(loader, total=len(loader), disable=self.rank != 0, desc=f"Epoch: {epoch}"):
-                batch = [t.cuda() for t in batch]
-                batch[0] = batch[0] / self.train_cfg.vae_scale  # vid
+                vid, mouse, btn, doc_id = [t.cuda() for t in batch]
+                vid = vid / self.train_cfg.vae_scale
 
                 with ctx:
-                    loss = self.model(*batch) / accum_steps
+                    loss = self.model(vid, mouse, btn, doc_id)
+                    loss = loss / accum_steps
                     loss.backward()
 
                 metrics.log('diffusion_loss', loss)
-                del loss, batch
 
                 local_step += 1
                 if local_step % accum_steps == 0:

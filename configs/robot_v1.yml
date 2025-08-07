@@ -22,13 +22,13 @@ model:
   has_audio: false
 
   local_window: 16
-  global_window: 512
+  global_window: 256
 
 train:
   trainer_id: rft
   data_id: sequence_packing
   data_kwargs:
-    window_length: 256  # sequence length
+    window_length: 512  # sequence length
     dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
     batch_columns: ["rgb_latent", "mouse", "buttons"]
 
