@@ -145,7 +145,13 @@ class RFTTrainer(BaseTrainer):
         accum_steps = max(1, accum_steps)
         ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        self.load()
+        if save_dict:
+            self.ema.load_state_dict(save_dict['ema'])
+            self.opt.load_state_dict(save_dict['opt'])
+            if self.scheduler is not None and 'scheduler' in save_dict:
+                self.scheduler.load_state_dict(save_dict['scheduler'])
+            self.total_step_counter = save_dict['steps']
+            del save_dict
 
         # Timer reset
         timer = Timer()
