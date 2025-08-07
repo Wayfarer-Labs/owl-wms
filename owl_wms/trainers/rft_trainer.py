@@ -152,8 +152,8 @@ class RFTTrainer(BaseTrainer):
         timer.reset()
         metrics = LogHelper()
 
-        if self.rank == 0:
-            wandb.watch(self.get_module(), log='all')
+        # if self.rank == 0:
+        #     wandb.watch(self.get_module(), log='all')
 
         # Dataset setup
         loader = get_loader(
