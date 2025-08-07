@@ -119,6 +119,11 @@ class WindowedViewDataset(Dataset):
         # `win_id` is already non-decreasing → just split where it changes
         cuts = np.flatnonzero(np.diff(win_id)) + 1
         blocks = np.split(np.column_stack([doc, s_idx, e_idx]), cuts)
+
+        # remove last sequence if its truncated
+        if blocks and (blocks[-1][:, 2] - blocks[-1][:, 1]).sum() < self.window_length:
+            blocks = blocks[:-1]
+
         return [list(map(tuple, blk)) for blk in blocks]
 
 
