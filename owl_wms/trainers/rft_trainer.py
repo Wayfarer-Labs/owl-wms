@@ -162,6 +162,7 @@ class RFTTrainer(BaseTrainer):
                     loss.backward()
 
                 metrics.log('diffusion_loss', loss)
+                del loss
 
                 local_step += 1
                 if local_step % accum_steps == 0:
@@ -175,8 +176,6 @@ class RFTTrainer(BaseTrainer):
                     if self.scheduler is not None:
                         self.scheduler.step()
                     self.ema.update()
-
-                    del loss
 
                     # Do logging
                     with torch.no_grad():
