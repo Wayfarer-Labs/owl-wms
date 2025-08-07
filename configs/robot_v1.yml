@@ -14,7 +14,7 @@ model:
   cfg_prob: 0.1
 
   # TODO: change n_frames to 512 once we have non-cached rope for inference
-  n_frames: 1024
+  n_frames: 512
 
   causal: true
   uncond: false
@@ -73,7 +73,7 @@ train:
     n_steps: 16
     # window_length: 16  # only for av_window
     cfg_scale: 1.0
-    num_frames: 900
+    num_frames: 390
     noise_prev: 0.2
     only_return_generated: true
 
