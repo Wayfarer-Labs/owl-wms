@@ -201,9 +201,6 @@ class RFTTrainer(BaseTrainer):
 
                     self.barrier()
 
-                    gc.collect()
-                    torch.cuda.empty_cache()
-
     def eval_step(self, sample_loader, sampler, decode_fn=None):
         ema_model = self.get_module(ema=True).core
         ema_model.eval()
