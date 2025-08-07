@@ -67,27 +67,17 @@ class RFTTrainer(BaseTrainer):
             save_dict['scheduler'] = self.scheduler.state_dict()
         super().save(save_dict)
 
-    def load(self):
-        if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
-            save_dict = super().load(self.train_cfg.resume_ckpt)
-            has_ckpt = True
-        else:
-            print("Failed to load checkpoint")
-            return
-
-        self.model.load_state_dict(save_dict['model'])
-        self.ema.load_state_dict(save_dict['ema'])
-        self.opt.load_state_dict(save_dict['opt'])
-        if self.scheduler is not None and 'scheduler' in save_dict:
-            self.scheduler.load_state_dict(save_dict['scheduler'])
-        self.total_step_counter = save_dict['steps']
-
     def train(self):
         torch.cuda.set_device(self.local_rank)
         print(f"Device used: rank={self.rank}")
 
         # Prepare model and ema
         self.model = self.model.cuda().train()
+
+        save_dict = None
+        if hasattr(self.train_cfg, 'resume_ckpt') and self.train_cfg.resume_ckpt is not None:
+            save_dict = super().load(self.train_cfg.resume_ckpt)
+            self.model.load_state_dict(save_dict['model'])
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
@@ -118,7 +108,13 @@ class RFTTrainer(BaseTrainer):
         accum_steps = max(1, accum_steps)
         ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        self.load()
+        if save_dict:
+            self.ema.load_state_dict(save_dict['ema'])
+            self.opt.load_state_dict(save_dict['opt'])
+            if self.scheduler is not None and 'scheduler' in save_dict:
+                self.scheduler.load_state_dict(save_dict['scheduler'])
+            self.total_step_counter = save_dict['steps']
+            del save_dict
 
         # Timer reset
         timer = Timer()
