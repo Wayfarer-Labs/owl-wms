@@ -186,16 +186,15 @@ class RFTTrainer(BaseTrainer):
         local_step = 0
         for epoch in range(self.train_cfg.epochs):
             for batch in tqdm.tqdm(loader, total=len(loader), disable=self.rank != 0, desc=f"Epoch: {epoch}"):
-                vid, mouse, btn, doc_id = [t.cuda() for t in batch]
-                vid = vid / self.train_cfg.vae_scale
+                batch = [t.cuda() for t in batch]
+                batch[0] = batch[0] / self.train_cfg.vae_scale  # vid
 
                 with ctx:
-                    loss = self.model(vid, mouse, btn, doc_id)
-                    loss = loss / accum_steps
+                    loss = self.model(*batch) / accum_steps
                     loss.backward()
 
                 metrics.log('diffusion_loss', loss)
-                del loss
+                del loss, batch
 
                 local_step += 1
                 if local_step % accum_steps == 0:
