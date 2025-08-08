@@ -1,26 +1,32 @@
 import cv2
-import torch
-
-import torch.nn.functional as F
-
-KEYBINDS = ["W","A","S","D","LSHIFT","SPACE","R","F","E", "LMB", "RMB"]
-import os
 import numpy as np
 
-def draw_frame(frame, mouse, button):
+
+KEYBINDS = ["W","A","S","D","LSHIFT","SPACE","R","F","E", "LMB", "RMB"]
+
+
+def draw_frame(frame, vec_3ds):
+    """
+    frame         : torch.Tensor [3,H,W], values in [-1…1]
+    vec_3d        : list of (label: str, vec: sequence of 3 floats)
+    returns       : np.uint8 array [3,H,W] in RGB
+    """
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
-    frame = frame[:3]  # Only ever take 3 channels
+    frame = frame[:3].squeeze(0)
+    frame = (frame.permute(1, 2, 0) + 1) * 127.5  # [H,W,3] float
+    frame = frame.clamp(0, 255).byte().cpu().numpy()
+    img = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-    #frame = F.interpolate(frame.unsqueeze(0),(512,512))
-    frame = frame.squeeze(0)
-    frame = frame.permute(1,2,0)
-    frame = (frame + 1)*127.5
-    frame = frame.float().cpu().numpy()
-    frame = frame.astype(np.uint8)
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    # TODO
 
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img.transpose(2, 0, 1)
+
+
+def nothing(frame):
+    """
     # Draw compass circle and mouse position in top left
     circle_center = (50, 50)  # Center of compass
     circle_radius = 40
@@ -56,11 +62,98 @@ def draw_frame(frame, mouse, button):
         text_x = x + (box_width - text_size[0]) // 2
         text_y = y_pos - 5  # 5px above box
         cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+    """
 
     # Convert back to RGB for display
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
     return frame
+
+
+def render_vec_3d(vec, size=500, azim=100, elev=20):
+    alpha, beta = np.deg2rad([azim, elev])
+    center = size // 2
+    scale = size / 3.0
+    dash = 10
+    gap = 5
+    step = dash + gap
+
+    def proj(x, y, z):
+        u = np.cos(alpha) * x + np.sin(alpha) * y
+        v = (
+            -np.sin(alpha) * np.sin(beta) * x +
+            np.cos(alpha) * np.sin(beta) * y +
+            np.cos(beta) * z
+        )
+        return int(center + scale * u), int(center - scale * v)
+
+    def cmap(v):
+        t = (v + 1) * 0.5
+        if t <= 0.5:
+            g = int(255 * (t / 0.5))
+            return (255, g, g)
+        g = int(255 * ((1 - t) / 0.5))
+        return (g, g, 255)
+
+    x, y, z = vec
+    pts = {
+        name: proj(*coords)
+        for name, coords in {
+            "O": (0, 0, 0),
+            "X": (x, 0, 0),
+            "Y": (0, y, 0),
+            "Z": (0, 0, z),
+            "XY": (x, y, 0),
+            "XZ": (x, 0, z),
+            "YZ": (0, y, z),
+            "XYZ": (x, y, z),
+        }.items()
+    }
+
+    img = np.full((size, size, 3), 255, dtype=np.uint8)
+    for ax in ("X", "Y", "Z"):
+        cv2.line(img, pts["O"], pts[ax], (200, 200, 200), 1)
+
+    cv2.circle(img, pts["O"], 3, (128, 128, 128), -1)
+    cv2.arrowedLine(
+        img,
+        pts["O"],
+        pts["XYZ"],
+        (0, 0, 0),
+        2,
+        tipLength=0.1,
+    )
+
+    cols = (cmap(x), cmap(y), cmap(z))
+    edges = [
+        ("O", "X", cols[0]),
+        ("O", "Y", cols[1]),
+        ("O", "Z", cols[2]),
+        ("X", "XZ", cols[2]),
+        ("Y", "YZ", cols[2]),
+        ("XY", "XYZ", cols[2]),
+        ("X", "XY", cols[1]),
+        ("Y", "XY", cols[0]),
+    ]
+
+    for start, end, color in edges:
+        x1, y1 = pts[start]
+        x2, y2 = pts[end]
+        dist = int(np.hypot(x2 - x1, y2 - y1))
+        if dist == 0:
+            continue
+        vx = (x2 - x1) / dist
+        vy = (y2 - y1) / dist
+        for i in range(0, dist, step):
+            j = min(dist, i + dash)
+            sx = int(x1 + vx * i)
+            sy = int(y1 + vy * i)
+            ex = int(x1 + vx * j)
+            ey = int(y1 + vy * j)
+            cv2.line(img, (sx, sy), (ex, ey), color, 1)
+
+    return img
+
 
 def draw_frames(frames, mouse_inputs, button_inputs):
     # frames is [b,n,c,h,w] tensor
@@ -71,10 +164,16 @@ def draw_frames(frames, mouse_inputs, button_inputs):
     for i in range(b):
         batch_frames = []
         for j in range(n):
-            frame = frames[i,j]
-            mouse = mouse_inputs[i,j]
-            button = button_inputs[i,j]
-            drawn = draw_frame(frame, mouse, button)
+            frame = frames[i, j]
+            mouse = mouse_inputs[i, j]
+            button = button_inputs[i, j]
+
+            ###
+            vec_3d = [("HIP", mouse[[0,1,2]]), ("LSH", mouse[[6, 7, 8]])]
+            ###
+
+            drawn = draw_frame(frame, vec_3d)
+
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)

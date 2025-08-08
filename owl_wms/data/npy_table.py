@@ -6,16 +6,36 @@ from typing import List, Any
 
 class NpyTable:
     # required fields per row
-    columns = [
+    default_columns = [
         "video", "audio", "mouse", "buttons",
         "tarball", "pt_idx", "missing", "truncated", "seq_len"
     ]
     # ndarray blobs
-    array_columns = {"video", "audio", "mouse", "buttons"}
+    default_array_columns = {"video", "audio", "mouse", "buttons"}
 
-    def __init__(self, directory: str):
+    def __init__(self, directory: str, columns: List[str] | None = None, array_columns: set[str] | None = None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+
+        # set schema / ensure consistent with existing schema
+        self.schema_path = self.directory / "schema.json"
+        if self.schema_path.exists():
+            schema = json.loads(self.schema_path.read_text())
+            assert columns is None or columns == schema["columns"], "columns mismatch"
+            assert (
+                array_columns is None or set(array_columns) == set(schema["array_columns"])
+            ), "array_columns mismatch"
+            columns = schema["columns"]
+            array_columns = schema["array_columns"]
+        else:
+            columns = columns or self.default_columns
+            array_columns = array_columns or list(self.default_array_columns)
+            self.schema_path.write_text(
+                json.dumps({"columns": columns, "array_columns": array_columns})
+            )
+        self.columns = columns
+        self.array_columns = set(array_columns)
+
         self.manifest_path = self.directory / "manifest.json"
         if self.manifest_path.exists():
             self.manifest = json.loads(self.manifest_path.read_text())

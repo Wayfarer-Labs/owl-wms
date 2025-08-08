@@ -1,0 +1,95 @@
+model:
+  model_id: game_rft
+  sample_size: 8
+  channels: 128
+
+  n_layers: 24
+  n_heads: 8
+  d_model: 1024
+
+  tokens_per_frame: 64
+
+  n_buttons: 7
+  n_mouse_axes: 18
+
+
+  cfg_prob: 0.1
+
+  # TODO: change n_frames to 512 once we have non-cached rope for inference
+  n_frames: 1024
+
+  causal: true
+  uncond: false
+  backbone: dit
+  has_audio: false
+
+  local_window: 16
+  global_window: null  # full window
+
+train:
+  trainer_id: rft
+  data_id: sequence_packing
+  data_kwargs:
+    window_length: 1024  # sequence length
+    dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
+    batch_columns: ["depth_latent", "mouse", "buttons"]
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    window_length: 120  # size of single ground truth start tokens
+    dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
+    batch_columns: ["depth_latent", "mouse", "buttons"]
+
+  target_batch_size: 8
+  batch_size: 1
+
+  epochs: 10000
+
+ # opt: AdamW
+ # opt_kwargs:
+ #   lr: 1.0e-4
+ #   weight_decay: 1.0e-4
+ #   eps: 1.0e-15
+ #   betas: [0.9, 0.95]
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [core.proj_in, core.proj_out.proj, core.t_embed, core.control_embed, gate, adaln]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/video_dit_v2
+  output_path: /mnt/data/owl-wms/checkpoints/video_dit_v2
+  resume_ckpt: null
+
+  sample_interval: 5000
+  save_interval: 10000
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    # window_length: 16  # only for av_window
+    cfg_scale: 1.0
+    num_frames: 900
+    noise_prev: 0.2
+    only_return_generated: false
+
+  n_samples: 4
+  eval_sample_dir: null
+
+  vae_id: null
+  vae_batch_size: 4
+  vae_scale: 0.54
+
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/base.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/1x_depth/1x_128x_105k_ema_decoder.pt
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: video_models  # owl
+  run_name: video_dit_v2

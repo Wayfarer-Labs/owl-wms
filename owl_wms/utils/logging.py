@@ -97,13 +97,13 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
     x = x.clamp(-1, 1)
     x = x[:max_samples].cpu().float()
 
-    if False: #x.shape[2] > 3:
+    if x.shape[2] > 3:
         depth = x[:,:,3:4]
-        flow = x[:,:,4:7]
+        # flow = x[:,:,4:7]
         x = x[:,:,:3]
 
         depth_gif = to_wandb_gif(depth)
-        flow_gif = to_wandb_gif(flow)
+        # flow_gif = to_wandb_gif(flow)
 
         feat = True
     else:
@@ -135,7 +135,7 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
         write_video_with_audio(path, x[i], audio[i] if audio is not None else None)
 
     if feat:
-        return [wandb.Video(path, format='mp4') for path in paths], depth_gif, flow_gif
+        return [wandb.Video(path, format='mp4') for path in paths], depth_gif  # , flow_gif
     else:
         return [wandb.Video(path, format='mp4') for path in paths]
 
