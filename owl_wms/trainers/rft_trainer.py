@@ -104,6 +104,7 @@ class RFTTrainer(BaseTrainer):
             self.model = self.model
 
         self.model = torch.compile(self.model)
+        self.ema = torch.compile(self.ema)
 
         self.decoder = self.decoder.cuda().eval().bfloat16()
         self.decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
