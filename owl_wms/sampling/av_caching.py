@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 from tqdm import tqdm
 
 from ..nn.kv_cache import KVCache
@@ -21,6 +22,10 @@ class AVCachingSampler:
         self.n_steps = n_steps
         self.num_frames = num_frames
         self.noise_prev = noise_prev
+        try:
+            self.rank = dist.get_rank()
+        except Exception:
+            self.rank = 0
 
     @torch.no_grad()
     def __call__(self, model, x, mouse: torch.Tensor, btn: torch.Tensor):
