@@ -91,17 +91,13 @@ class RFTTrainer(BaseTrainer):
 
             self.model.load_state_dict(state["model"], strict=True)
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
-
-        if ckpt:
-            self.ema.load_state_dict(state["ema"])
-            self.total_step_counter = state.get("steps", 0)
-
         self.model = self.model.cuda()
-        self.ema = self.ema.cuda()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
+
+        self.ema = EMA(self.get_raw_model(self.model), beta=0.999, update_after_step=0, update_every=1)
+        self.ema = self.ema.cuda()
 
         self.model = torch.compile(self.model)
 
@@ -119,6 +115,8 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
+            self.ema.load_state_dict(state["ema"])
+            self.total_step_counter = state.get("steps", 0)
             # self.opt.load_state_dict(state["opt"])  # TODO: REVERT FOR PR
             if self.scheduler and "scheduler" in state:
                 self.scheduler.load_state_dict(state["scheduler"])
