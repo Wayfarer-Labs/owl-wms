@@ -124,55 +124,6 @@ class RFTTrainer(BaseTrainer):
 
         del state
 
-
-        # --- device sanity checks (place at the very bottom of load()) ---
-
-        device = torch.device(f"cuda:{self.local_rank}")
-
-        def _assert_module_params_on_device(mod: torch.nn.Module, dev: torch.device, tag: str):
-            for n, p in mod.named_parameters(recurse=True):
-                assert p.is_cuda and p.device.index == dev.index, (
-                    f"{tag} param '{n}' is on {p.device}, expected {dev}"
-                )
-            # Buffers that participate in compute should also be on-device. Skip non-floating buffers.
-            for n, b in mod.named_buffers(recurse=True):
-                if torch.is_tensor(b) and (torch.is_floating_point(b) or torch.is_complex(b)):
-                    assert b.device == dev, f"{tag} buffer '{n}' is on {b.device}, expected {dev}"
-
-        # Online model (handle DDP/compiled wrappers)
-        online = self.get_raw_model(self.model)
-        _assert_module_params_on_device(online, device, "online_model")
-
-        # EMA model (the one used for eval/sampling)
-        assert hasattr(self.ema, "ema_model") and isinstance(self.ema.ema_model, torch.nn.Module), "EMA model missing"
-        _assert_module_params_on_device(self.ema.ema_model, device, "ema_model")
-
-        # Decoder / VAE
-        _assert_module_params_on_device(self.decoder, device, "decoder")
-
-        # Optimizer param groups + state tensors
-        for gi, group in enumerate(self.opt.param_groups):
-            for p in group.get("params", []):
-                assert p.is_cuda and p.device.index == device.index, (
-                    f"optimizer param group {gi}: param on {p.device}, expected {device}"
-                )
-
-        for pid, state in self.opt.state.items():
-            for k, v in state.items():
-                if torch.is_tensor(v):
-                    assert v.is_cuda and v.device.index == device.index, (
-                        f"optimizer state for param id {pid} key '{k}' on {v.device}, expected {device}"
-                    )
-
-        # (Optional) If using DDP, ensure this rank is tied to the right device
-        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-            assert self.model.device_ids == [self.local_rank], (
-                f"DDP device_ids={self.model.device_ids}, expected [{self.local_rank}]"
-            )
-
-        print(f"[rank {self.rank}] All parameters and optimizer states are on {device}.")
-
-
     @torch.inference_mode()
     def update_buffer(self, name: str, value: torch.Tensor, value_ema: torch.Tensor | None = None):
         """Set the buffer `name` (e.g. 'core.transformer.foo') across ranks and EMA."""
