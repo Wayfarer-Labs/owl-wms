@@ -77,6 +77,9 @@ class RFTTrainer(BaseTrainer):
 
     def load(self) -> None:
         """Build runtime objects and optionally restore a checkpoint."""
+
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+
         # ----- model & helpers -----
         ckpt = getattr(self.train_cfg, "resume_ckpt", None)
         state = None
@@ -89,10 +92,11 @@ class RFTTrainer(BaseTrainer):
             state["ema"] = {re.sub(pat, r'\1', k): v for k, v in state["ema"].items()}
 
             self.model.load_state_dict(state["model"], strict=True)
+            self.ema.load_state_dict(state["ema"])
             self.total_step_counter = state.get("steps", 0)
 
         self.model = self.model.cuda()
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+        self.ema = self.ema.cuda()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
@@ -115,7 +119,6 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
-            self.ema.load_state_dict(state["ema"])
             self.opt.load_state_dict(state["opt"])
             if self.scheduler and "scheduler" in state:
                 self.scheduler.load_state_dict(state["scheduler"])
