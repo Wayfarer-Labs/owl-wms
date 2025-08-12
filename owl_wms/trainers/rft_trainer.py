@@ -92,12 +92,10 @@ class RFTTrainer(BaseTrainer):
             self.model.load_state_dict(state["model"], strict=True)
 
         self.model = self.model.cuda()
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1).cuda()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
-
-        self.ema = EMA(self.get_raw_model(self.model), beta=0.999, update_after_step=0, update_every=1)
-        self.ema = self.ema.cuda()
 
         self.model = torch.compile(self.model)
 

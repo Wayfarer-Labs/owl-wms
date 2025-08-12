@@ -62,6 +62,7 @@ class AVCachingSampler:
         z = torch.randn_like(x)
         return x * (1. - alpha) + z * alpha
 
+    @torch.compile
     def denoise_frame(
         self,
         model,

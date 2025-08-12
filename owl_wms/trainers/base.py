@@ -54,7 +54,7 @@ class BaseTrainer:
                 return self.model
         else:
             if ema:
-                return self.ema.ema_model.module
+                return self.ema.ema_model
             else:
                 return self.model.module
 
