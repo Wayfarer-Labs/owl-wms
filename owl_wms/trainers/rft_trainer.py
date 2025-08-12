@@ -82,7 +82,7 @@ class RFTTrainer(BaseTrainer):
         ckpt = getattr(self.train_cfg, "resume_ckpt", None)
         state = None
         if ckpt:
-            state = super().load(ckpt)
+            state = torch.load(ckpt, map_location="cpu", weights_only=False)
 
             # Allow legacy checkpoints: strip module and _orig_mod
             pat = r'^(?:(?:_orig_mod\.|module\.)+)?([^.]+\.)?(?:(?:_orig_mod\.|module\.)+)?'
@@ -119,7 +119,7 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
-            self.opt.load_state_dict(state["opt"])
+            # self.opt.load_state_dict(state["opt"])  # TODO: REVERT FOR PR
             if self.scheduler and "scheduler" in state:
                 self.scheduler.load_state_dict(state["scheduler"])
 
