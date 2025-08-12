@@ -88,6 +88,10 @@ class RFTTrainer(BaseTrainer):
             state["model"] = {re.sub(pat, r'\1', k): v for k, v in state["model"].items()}
             state["ema"] = {re.sub(pat, r'\1', k): v for k, v in state["ema"].items()}
 
+            self.model.load_state_dict(state["model"], strict=True)
+            self.total_step_counter = state.get("steps", 0)
+
+        self.model = self.model.cuda()
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
         else:
@@ -148,8 +152,8 @@ class RFTTrainer(BaseTrainer):
         timer.reset()
         metrics = LogHelper()
 
-        # if self.rank == 0:
-        #     wandb.watch(self.get_module(), log='all')
+        if self.rank == 0:
+            wandb.watch(self.get_module(), log='all')
 
         # Dataset setup
         loader = get_loader(
