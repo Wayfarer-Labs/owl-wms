@@ -96,13 +96,13 @@ class RFTTrainer(BaseTrainer):
             self.model = DDP(self.model, device_ids=[self.local_rank])
         else:
             self.model = self.model
+
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+
         self.model = torch.compile(self.model)
 
         self.decoder = self.decoder.cuda().eval().bfloat16()
         self.decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
-
-        # ----- EMA, optimiser, scheduler -----
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
 
         if self.train_cfg.opt.lower() == "muon":
             self.opt = init_muon(self.model, rank=self.rank, world_size=self.world_size, **self.train_cfg.opt_kwargs)
