@@ -94,7 +94,7 @@ def to_wandb_gif(x, max_samples = 4):
     return wandb.Video(x, format='gif', fps=60)
 
 @torch.no_grad()
-def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 4):
+def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 32):
     # x is [b,n,c,h,w]
     # audio is [b,n,2]
     x = x.clamp(-1, 1)
