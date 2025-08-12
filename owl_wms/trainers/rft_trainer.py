@@ -90,17 +90,19 @@ class RFTTrainer(BaseTrainer):
             state["ema"] = {re.sub(pat, r'\1', k): v for k, v in state["ema"].items()}
 
             self.model.load_state_dict(state["model"], strict=True)
+
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+
+        if ckpt:
             self.ema.load_state_dict(state["ema"])
             self.total_step_counter = state.get("steps", 0)
 
         self.model = self.model.cuda()
+        self.ema = self.ema.cuda().bfloat16().eval()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
-        else:
-            self.model = self.model
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1).bfloat16().eval()
         self.model = torch.compile(self.model)
 
         self.decoder = self.decoder.cuda().eval().bfloat16()
