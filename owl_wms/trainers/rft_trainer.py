@@ -98,7 +98,7 @@ class RFTTrainer(BaseTrainer):
             self.total_step_counter = state.get("steps", 0)
 
         self.model = self.model.cuda()
-        self.ema = self.ema.cuda().eval()
+        self.ema = self.ema.cuda()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
