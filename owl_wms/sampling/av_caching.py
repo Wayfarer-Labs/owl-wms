@@ -38,7 +38,7 @@ class AVCachingSampler:
         prev_x = x
         prev_mouse, prev_btn = mouse[:, :init_len], btn[:, :init_len]
 
-        for idx in tqdm(range(self.num_frames), desc="Sampling frames"):
+        for idx in tqdm(range(self.num_frames), disable=self.rank != 0, desc="Sampling frames"):
             start = min(init_len + idx, mouse.size(1) - 1)
             curr_mouse, curr_btn = mouse[:, start: start + 1], btn[:, start: start + 1]
 

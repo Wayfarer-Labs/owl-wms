@@ -68,6 +68,7 @@ class RFTTrainer(BaseTrainer):
         save_dict = {
             'model': self.get_raw_model(self.model).state_dict(),
             'ema': self.get_raw_model(self.ema).state_dict(),
+            'ema_model': self.get_raw_model(self.ema).ema_model.state_dict(),
             'opt': self.opt.state_dict(),
             'steps': self.total_step_counter
         }
@@ -113,10 +114,14 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
-            import copy
-            _ema = copy.deepcopy(self.ema)
-            _ema.load_state_dict(state["ema"])
-            self.ema.ema_model = _ema.ema_model
+            if "ema_model" in state:
+                self.ema.ema_model.load_state_dict(state["ema_model"])
+            else:
+                import copy
+                _ema = copy.deepcopy(self.ema)
+                _ema.load_state_dict(state["ema"])
+                self.ema.ema_model = _ema.ema_model
+
             self.total_step_counter = state.get("steps", 0)
             # self.opt.load_state_dict(state["opt"])  # TODO: REVERT FOR PR
             if self.scheduler and "scheduler" in state:
