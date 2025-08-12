@@ -34,7 +34,7 @@ train:
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 16  # size of single ground truth start tokens
+    window_length: 512  # 16  # size of single ground truth start tokens  # TODO: revert for PR
     dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
     batch_columns: ["rgb_latent", "mouse", "buttons"]
 

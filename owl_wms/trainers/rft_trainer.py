@@ -252,13 +252,16 @@ class RFTTrainer(BaseTrainer):
 
         # ---- Generate Samples ----
         vid, mouse, btn = [x.cuda() for x in next(sample_loader)]
-        mouse, button = batch_permute_to_length(mouse, btn, sampler.num_frames + vid.size(1))
         vid = vid / self.train_cfg.vae_scale
 
-        latent_vid = sampler(ema_model, vid, mouse, button)
+        # TODO: Remove for PR:
+        # mouse, button = batch_permute_to_length(mouse, btn, sampler.num_frames + vid.size(1))
+        vid = vid[:, :16]
+
+        latent_vid = sampler(ema_model, vid, mouse, btn)
 
         if self.sampler_only_return_generated:
-            latent_vid, mouse, button = (x[:, vid.size(1):] for x in (latent_vid, mouse, button))
+            latent_vid, mouse, btn = (x[:, vid.size(1):] for x in (latent_vid, mouse, btn))
 
         video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale) if self.decode_fn is not None else None
 
@@ -271,7 +274,7 @@ class RFTTrainer(BaseTrainer):
                 torch.save(latent_vid, eval_dir / f"vid.{self.total_step_counter}.pt")
 
         # ---- Generate Media Artifacts ----
-        video_out, mouse, button = map(self._gather_concat_cpu, (video_out, mouse, button))
+        video_out, mouse, button = map(self._gather_concat_cpu, (video_out, mouse, btn))
         eval_wandb_dict = to_wandb_samples(video_out, mouse, button) if self.rank == 0 else None
         dist.barrier()
 
