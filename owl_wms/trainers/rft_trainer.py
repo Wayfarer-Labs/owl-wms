@@ -182,17 +182,19 @@ class RFTTrainer(BaseTrainer):
             for batch in tqdm.tqdm(loader, total=len(loader), disable=self.rank != 0, desc=f"Epoch: {epoch}"):
                 vid, mouse, btn, doc_id = [t.cuda() for t in batch]
                 vid = vid / self.train_cfg.vae_scale
-
+                """
                 with ctx:
                     loss = self.model(vid, mouse, btn, doc_id)
                     loss = loss / accum_steps
                     loss.backward()
 
                 metrics.log('diffusion_loss', loss)
+                """
 
                 local_step += 1
                 if local_step % accum_steps == 0:
 
+                    """
                     # Optimizer updates
                     if self.train_cfg.opt.lower() != "muon":
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
@@ -202,6 +204,7 @@ class RFTTrainer(BaseTrainer):
                     if self.scheduler is not None:
                         self.scheduler.step()
                     self.ema.update()
+                    """
 
                     # Do logging
                     with torch.no_grad():
