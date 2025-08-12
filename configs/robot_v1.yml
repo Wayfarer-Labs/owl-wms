@@ -72,7 +72,7 @@ train:
   sampler_kwargs:
     n_steps: 16
     cfg_scale: 1.0
-    num_frames: 390
+    num_frames: 490
     noise_prev: 0.2
     only_return_generated: true
 
