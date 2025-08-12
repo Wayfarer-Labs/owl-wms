@@ -78,8 +78,6 @@ class RFTTrainer(BaseTrainer):
     def load(self) -> None:
         """Build runtime objects and optionally restore a checkpoint."""
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
-
         # ----- model & helpers -----
         ckpt = getattr(self.train_cfg, "resume_ckpt", None)
         state = None
@@ -96,15 +94,14 @@ class RFTTrainer(BaseTrainer):
             self.total_step_counter = state.get("steps", 0)
 
         self.model = self.model.cuda()
-        self.ema = self.ema.cuda()
 
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank])
         else:
             self.model = self.model
 
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1).bfloat16().eval()
         self.model = torch.compile(self.model)
-        self.ema = torch.compile(self.ema)
 
         self.decoder = self.decoder.cuda().eval().bfloat16()
         self.decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
@@ -126,7 +123,7 @@ class RFTTrainer(BaseTrainer):
 
         del state
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def update_buffer(self, name: str, value: torch.Tensor, value_ema: torch.Tensor | None = None):
         """Set the buffer `name` (e.g. 'core.transformer.foo') across ranks and EMA."""
         online = self.model.module if isinstance(self.model, DDP) else self.model
@@ -186,19 +183,16 @@ class RFTTrainer(BaseTrainer):
             for batch in tqdm.tqdm(loader, total=len(loader), disable=self.rank != 0, desc=f"Epoch: {epoch}"):
                 vid, mouse, btn, doc_id = [t.cuda() for t in batch]
                 vid = vid / self.train_cfg.vae_scale
-                """
                 with ctx:
                     loss = self.model(vid, mouse, btn, doc_id)
                     loss = loss / accum_steps
                     loss.backward()
 
                 metrics.log('diffusion_loss', loss)
-                """
 
                 local_step += 1
                 if local_step % accum_steps == 0:
 
-                    """
                     # Optimizer updates
                     if self.train_cfg.opt.lower() != "muon":
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
@@ -208,10 +202,9 @@ class RFTTrainer(BaseTrainer):
                     if self.scheduler is not None:
                         self.scheduler.step()
                     self.ema.update()
-                    """
 
                     # Do logging
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         wandb_dict = metrics.pop()
                         wandb_dict['time'] = timer.hit()
                         timer.reset()
@@ -247,6 +240,7 @@ class RFTTrainer(BaseTrainer):
             return torch.cat(parts, dim=dim)
         dist.send(t, dst=0)
 
+    @torch.inference_mode()
     def eval_step(self, sample_loader, sampler):
         ema_model = self.get_module(ema=True).core
 
