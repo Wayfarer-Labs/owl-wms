@@ -113,7 +113,10 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
-            self.ema.ema_model.load_state_dict(state["ema"])
+            import copy
+            _ema = copy.deepcopy(self.ema)
+            _ema.load_state_dict(state["ema"])
+            self.ema.ema_model = _ema.ema_model
             self.total_step_counter = state.get("steps", 0)
             # self.opt.load_state_dict(state["opt"])  # TODO: REVERT FOR PR
             if self.scheduler and "scheduler" in state:
