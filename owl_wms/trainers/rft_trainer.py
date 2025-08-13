@@ -277,6 +277,8 @@ class RFTTrainer(BaseTrainer):
         video_out, mouse, btn = map(self._gather_concat_cpu, (video_out, mouse, btn))
         if self.rank == 0:
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn) if self.rank == 0 else None
+        else:
+            eval_wandb_dict = None
         dist.barrier()
 
         return eval_wandb_dict
