@@ -35,7 +35,7 @@ train:
   sample_data_id: cod
   sample_data_kwargs:
     window_length: 512  # 16  # size of single ground truth start tokens  # TODO: revert for PR
-    dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
+    dataset_path: /mnt/data/lapp0/1x_depth_latents/val_npy
     batch_columns: ["rgb_latent", "mouse", "buttons"]
 
   target_batch_size: 8
@@ -61,9 +61,9 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: checkpoints/video_dit_v2
-  output_path: /mnt/data/owl-wms/checkpoints/video_dit_v2
-  resume_ckpt: /mnt/data/lapp0/checkpoints/4d610d2/checkpoints/step_310000.pt
+  checkpoint_dir: checkpoints/video_dit_robot_v1
+  output_path: /mnt/data/owl-wms/checkpoints/video_dit_robot_v1
+  resume_ckpt: /mnt/data/lapp0/checkpoints/ae7d162/checkpoints/step_320000.pt
 
   sample_interval: 5000
   save_interval: 10000
@@ -76,7 +76,7 @@ train:
     noise_prev: 0.2
     only_return_generated: true
 
-  n_samples: 8
+  n_samples: 64
   eval_sample_dir: null
 
   vae_id: null
@@ -89,4 +89,4 @@ train:
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
   project: video_models  # owl
-  run_name: video_dit_v2
+  run_name: video_dit_robot_v1
