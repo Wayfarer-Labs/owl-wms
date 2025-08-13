@@ -275,8 +275,8 @@ class RFTTrainer(BaseTrainer):
 
         # ---- Generate Media Artifacts ----
         video_out, mouse, btn = map(self._gather_concat_cpu, (video_out, mouse, btn))
-        print("video_out.shape, mouse.shape, btn.shape", video_out.shape, mouse.shape, btn.shape)
-        eval_wandb_dict = to_wandb_samples(video_out, mouse, btn) if self.rank == 0 else None
+        if self.rank == 0:
+            eval_wandb_dict = to_wandb_samples(video_out, mouse, btn) if self.rank == 0 else None
         dist.barrier()
 
         return eval_wandb_dict
