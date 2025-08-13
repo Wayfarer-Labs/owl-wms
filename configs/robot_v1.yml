@@ -76,7 +76,7 @@ train:
     noise_prev: 0.2
     only_return_generated: true
 
-  n_samples: 64
+  n_samples: 56
   eval_sample_dir: null
 
   vae_id: null
