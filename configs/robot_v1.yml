@@ -34,7 +34,7 @@ train:
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 400  # 16  # size of single ground truth start tokens  # TODO: revert for PR
+    window_length: 360  # 16  # size of single ground truth start tokens  # TODO: revert for PR
     dataset_path: /mnt/data/lapp0/1x_latents/val_npy
     batch_columns: ["video", "mouse", "buttons"]
 
@@ -76,7 +76,7 @@ train:
     noise_prev: 0.2
     only_return_generated: true
 
-  n_samples: 56
+  n_samples: 32
   eval_sample_dir: null
 
   vae_id: null
