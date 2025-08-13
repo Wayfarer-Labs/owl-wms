@@ -114,7 +114,7 @@ class RFTTrainer(BaseTrainer):
 
         # ----- optional checkpoint restore -----
         if ckpt:
-            if "ema_model" in state:
+            if False and "ema_model" in state:
                 self.ema.ema_model.load_state_dict(state["ema_model"])
             else:
                 import copy
