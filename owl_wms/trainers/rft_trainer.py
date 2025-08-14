@@ -255,8 +255,8 @@ class RFTTrainer(BaseTrainer):
         vid = vid / self.train_cfg.vae_scale
 
         # TODO: Remove for PR:
-        # mouse, button = batch_permute_to_length(mouse, btn, sampler.num_frames + vid.size(1))
-        vid = vid[:, :16]
+        mouse, btn = batch_permute_to_length(mouse, btn, sampler.num_frames + vid.size(1))
+        # vid = vid[:, :16]
 
         latent_vid = sampler(ema_model, vid, mouse, btn)
 
