@@ -34,7 +34,7 @@ train:
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 320  # 16  # size of single ground truth start tokens  # TODO: revert for PR
+    window_length: 340  # 16  # size of single ground truth start tokens  # TODO: revert for PR
     dataset_path: /mnt/data/lapp0/1x_depth_latents/val_npy
     batch_columns: ["rgb_latent", "mouse", "buttons"]
 
@@ -63,7 +63,7 @@ train:
 
   checkpoint_dir: checkpoints/video_dit_robot_v1
   output_path: /mnt/data/owl-wms/checkpoints/video_dit_robot_v1
-  resume_ckpt: /mnt/data/lapp0/checkpoints/ae7d162/checkpoints/step_370000.pt
+  resume_ckpt: /mnt/data/lapp0/checkpoints/4d610d2/checkpoints/step_310000.pt
 
   sample_interval: 5000
   save_interval: 10000
@@ -72,7 +72,7 @@ train:
   sampler_kwargs:
     n_steps: 16
     cfg_scale: 1.0
-    num_frames: 380
+    num_frames: 320
     noise_prev: 0.2
     only_return_generated: false
 
