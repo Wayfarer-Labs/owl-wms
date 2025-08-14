@@ -1,0 +1,92 @@
+model:
+  model_id: game_rft
+  sample_size: 8
+  channels: 128
+
+  n_layers: 28
+  n_heads: 32
+  d_model: 2048
+
+  tokens_per_frame: 64
+  n_buttons: 7
+  n_mouse_axes: 18
+
+  cfg_prob: 0.1
+
+  # TODO: change n_frames to 512 once we have non-cached rope for inference
+  n_frames: 512
+
+  causal: true
+  uncond: false
+  backbone: dit
+  has_audio: false
+
+  local_window: 16
+  global_window: 512
+
+train:
+  trainer_id: rft
+  data_id: sequence_packing
+  data_kwargs:
+    window_length: 512  # sequence length
+    dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
+    batch_columns: ["rgb_latent", "mouse", "buttons"]
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    window_length: 128  # 16  # size of single ground truth start tokens  # TODO: revert for PR
+    dataset_path: /mnt/data/lapp0/1x_depth_latents/train_npy
+    batch_columns: ["rgb_latent", "mouse", "buttons"]
+
+  target_batch_size: 8
+  batch_size: 1
+
+  epochs: 10000
+
+ # opt: AdamW
+ # opt_kwargs:
+ #   lr: 1.0e-4
+ #   weight_decay: 1.0e-4
+ #   eps: 1.0e-15
+ #   betas: [0.9, 0.95]
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [core.proj_in, core.proj_out.proj, core.t_embed, core.control_embed, gate, adaln]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/video_dit_robot_v1
+  output_path: /mnt/data/owl-wms/checkpoints/video_dit_robot_v1
+  resume_ckpt: /mnt/data/lapp0/checkpoints/4d610d2/checkpoints/step_310000.pt
+
+  sample_interval: 5000
+  save_interval: 10000
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    num_frames: 100
+    noise_prev: 0.2
+    only_return_generated: false
+
+  n_samples: 8
+  eval_sample_dir: null
+
+  vae_id: null
+  vae_batch_size: 4
+  vae_scale: 0.53
+
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/1x/no_depth.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/1x_rgb_no_depth/1x_128x_200k_ema.pt
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: video_models  # owl
+  run_name: video_dit_robot_v1

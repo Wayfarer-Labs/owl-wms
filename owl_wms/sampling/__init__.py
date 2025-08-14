@@ -5,6 +5,12 @@ def get_sampler_cls(sampler_id):
         """
         from .av_window import AVWindowSampler
         return AVWindowSampler
+    if sampler_id == "video_window":
+        """
+        Most basic Audio+Video sampler with CFG
+        """
+        from .video_window import VideoWindowSampler
+        return VideoWindowSampler
     elif sampler_id == "av_caching":
         """
         Audio+Video sampler with KV caching.

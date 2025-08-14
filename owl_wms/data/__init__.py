@@ -1,4 +1,7 @@
 def get_loader(data_id, batch_size, **data_kwargs):
+    if data_id == "sequence_packing":
+        from . import latent_seq_packing
+        return latent_seq_packing.get_loader(batch_size, **data_kwargs)
     if data_id == "cod":
         from . import cod_latent
         return cod_latent.get_loader(batch_size, **data_kwargs)

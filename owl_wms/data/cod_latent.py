@@ -33,12 +33,17 @@ class WindowedViewDataset(Dataset):
         include_missing_features: bool = False,
         include_truncated: bool = True,
         meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len"),
+        array_columns: set | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
 
+        if array_columns is None:
+            self.array_columns = [c for c in self.table.columns if c not in meta_cols]
+        else:
+            self.array_columns = array_columns
+
         seq_len, missing, truncated = self.table[["seq_len", "missing", "truncated"]]
-        self.columns = [c for c in self.table.columns if c not in meta_cols]
 
         self._index = []
         for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
@@ -57,22 +62,24 @@ class WindowedViewDataset(Dataset):
 
     def __getitem__(self, idx):
         row, start = self._index[idx]
-        column_arrays = self.table.get(self.columns, rows=[row])
+        column_arrays = self.table.get(self.array_columns, rows=[row])
         return {
             col: torch.from_numpy(arr_list[0][start: start + self.window_length])
-            for col, arr_list in zip(self.columns, column_arrays)
+            for col, arr_list in zip(self.array_columns, column_arrays)
         }
 
 
-def collate_fn(batch, include_audio):
+def collate_fn(batch, batch_columns: list):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
-    if include_audio:
-        return [stacked[k] for k in ("video", "audio", "mouse", "buttons")]
-    else:
-        return [stacked[k] for k in ("video", "mouse", "buttons")]
+    # TODO: fix hack, buttons should be preprocessed as float
+    stacked = {
+        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") else t
+        for k, t in stacked.items()
+    }
+    return [stacked[col] for col in batch_columns]
 
 
-def get_loader(batch_size, dataset_path, window_length, include_audio=True):
+def get_loader(batch_size, dataset_path, window_length, batch_columns):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
@@ -87,7 +94,7 @@ def get_loader(batch_size, dataset_path, window_length, include_audio=True):
     return DataLoader(
         ds,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, include_audio=include_audio),
+        collate_fn=partial(collate_fn, batch_columns=batch_columns),
         num_workers=2,
         drop_last=True,
         pin_memory=True,

@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 from tqdm import tqdm
 
 from ..nn.kv_cache import KVCache
@@ -21,6 +22,10 @@ class AVCachingSampler:
         self.n_steps = n_steps
         self.num_frames = num_frames
         self.noise_prev = noise_prev
+        try:
+            self.rank = dist.get_rank()
+        except Exception:
+            self.rank = 0
 
     @torch.no_grad()
     def __call__(self, model, x, mouse: torch.Tensor, btn: torch.Tensor):
@@ -38,7 +43,7 @@ class AVCachingSampler:
         prev_x = x
         prev_mouse, prev_btn = mouse[:, :init_len], btn[:, :init_len]
 
-        for idx in tqdm(range(self.num_frames), desc="Sampling frames"):
+        for idx in tqdm(range(self.num_frames), disable=self.rank != 0, desc="Sampling frames"):
             start = min(init_len + idx, mouse.size(1) - 1)
             curr_mouse, curr_btn = mouse[:, start: start + 1], btn[:, start: start + 1]
 
@@ -62,6 +67,7 @@ class AVCachingSampler:
         z = torch.randn_like(x)
         return x * (1. - alpha) + z * alpha
 
+    @torch.compile
     def denoise_frame(
         self,
         model,

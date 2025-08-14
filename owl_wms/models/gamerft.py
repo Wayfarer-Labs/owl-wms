@@ -3,7 +3,6 @@ from torch import nn
 import torch.nn.functional as F
 
 from ..nn.embeddings import TimestepEmbedding, ControlEmbedding
-from ..nn.normalization import rms_norm
 from ..nn.attn import DiT, FinalLayer
 
 import einops as eo
@@ -21,7 +20,7 @@ class GameRFTCore(nn.Module):
         self.transformer = DiT(config)
 
         if not config.uncond:
-            self.control_embed = ControlEmbedding(config.n_buttons, config.d_model)
+            self.control_embed = ControlEmbedding(config.n_buttons, config.n_mouse_axes, config.d_model)
         self.t_embed = TimestepEmbedding(config.d_model)
 
         self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
@@ -31,7 +30,7 @@ class GameRFTCore(nn.Module):
 
         self.uncond = config.uncond
 
-    def forward(self, x, t, mouse, btn, has_controls=None, kv_cache=None):
+    def forward(self, x, t, mouse, btn, doc_id=None, has_controls=None, kv_cache=None):
         """
         x: [b,n,c,h,w]
         t: [b,n]
@@ -53,7 +52,7 @@ class GameRFTCore(nn.Module):
         x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
 
         x = self.proj_in(x)
-        x = self.transformer(x, cond, kv_cache)
+        x = self.transformer(x, cond, doc_id, kv_cache)
         x = self.proj_out(x, cond)
 
         x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=h, w=w)
@@ -95,20 +94,20 @@ class GameRFT(nn.Module):
         lerp = tensor * (1 - ts) + z * ts
         return lerp, z - tensor, z
 
-    def forward(self, x, mouse=None, btn=None, return_dict=False, cfg_prob=None, has_controls=None):
+    def forward(self, x, mouse=None, btn=None, doc_id=None, return_dict=False, cfg_prob=None, has_controls=None):
         B, S = x.size(0), x.size(1)
+
+        # Apply classifier-free guidance dropout
         if has_controls is None:
             has_controls = torch.ones(B, device=x.device, dtype=torch.bool)
         if mouse is None or btn is None:
             has_controls = torch.zeros_like(has_controls)
-
-        # Apply classifier-free guidance dropout
         has_controls = self.handle_cfg(has_controls, cfg_prob)
         with torch.no_grad():
             ts = torch.randn(B, S, device=x.device, dtype=x.dtype).sigmoid()
             lerpd_video, target_video, z_video = self.noise(x, ts[:, :, None, None, None])
 
-        pred_video = self.core(lerpd_video, ts, mouse, btn, has_controls)
+        pred_video = self.core(lerpd_video, ts, mouse, btn, doc_id, has_controls)
         loss = F.mse_loss(pred_video, target_video)
 
         if not return_dict:

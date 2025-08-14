@@ -8,7 +8,7 @@ def layer_norm(x: torch.Tensor) -> torch.Tensor:
 
 
 def rms_norm(x: torch.Tensor) -> torch.Tensor:
-    return F.rms_norm(x.float(), (x.size(-1),)).type_as(x)
+    return F.rms_norm(x, (x.size(-1),))
 
 
 class RMSNorm(nn.Module):

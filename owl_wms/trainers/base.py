@@ -46,7 +46,7 @@ class BaseTrainer:
         if self.world_size > 1:
             dist.barrier()
 
-    def get_module(self, ema = False):
+    def get_module(self, ema=False):
         if self.world_size == 1:
             if ema:
                 return self.ema.ema_model
@@ -54,7 +54,7 @@ class BaseTrainer:
                 return self.model
         else:
             if ema:
-                return self.ema.ema_model.module
+                return self.ema.ema_model
             else:
                 return self.model.module
 
@@ -72,4 +72,4 @@ class BaseTrainer:
             torch.save(out_d, os.path.join(self.train_cfg.output_path, f"step_{self.total_step_counter}.pt"))
 
     def load(self, path):
-        return torch.load(path, map_location=f'cuda:{self.local_rank}',weights_only=False)
+        return torch.load(path, map_location=f'cuda:{self.local_rank}', weights_only=False)

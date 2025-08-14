@@ -21,11 +21,18 @@ def checkpoint(function, *args, **kwargs):
     return torch_checkpoint(function, *args, **kwargs)
 
 
-def create_causal_block_mask(
-        n_tokens: int, tokens_per_frame: int, window_len: int | None, n_cached_tokens: int = 0, device="cpu"
+def get_block_mask(
+    n_tokens: int,
+    tokens_per_frame: int,
+    window_len: int | None = None,
+    doc_id: torch.Tensor | None = None,
+    q_offset: int = 0,
+    is_causal: bool = True,
+    device="cpu"
 ):
-    # Build n_tokens X n_tokens BlockMask which is causal and disallows wrapping
-    assert 0 <= n_cached_tokens < n_tokens, "kv cache cannot exceed total tokens"
+    assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
+    if not is_causal:
+        assert q_offset == 0, "kv caching not supported with bidirectional"
 
     frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
     n_frames = n_tokens // tokens_per_frame
@@ -34,20 +41,25 @@ def create_causal_block_mask(
         window_len = n_frames
 
     def mask_mod(b, h, q, kv):
-        abs_q = q + n_cached_tokens
-        is_causal = frame_id[kv] <= frame_id[abs_q]
-        is_wrap = (frame_id[abs_q] == n_frames - 1) & (frame_id[kv] == 0)
-        window_mask = abs_q - kv < (window_len * tokens_per_frame)
-        return is_causal & ~is_wrap & window_mask
+        abs_q = q + q_offset  # offset for kv caching
+        frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
 
-    return create_block_mask(
-        mask_mod,
-        B=None,
-        H=None,
-        Q_LEN=n_tokens - n_cached_tokens,
-        KV_LEN=n_tokens,
-        device=device,
-    )
+        if is_causal:
+            causal_mask = frame_kv <= frame_q
+        else:
+            causal_mask = True
+
+        if doc_id is not None:
+            same_doc_mask = doc_id[b, frame_q] == doc_id[b, frame_kv]
+        else:
+            same_doc_mask = True
+
+        window_mask = torch.abs(frame_q - frame_kv) < window_len
+
+        return causal_mask & window_mask & same_doc_mask
+
+    q_len = n_tokens - q_offset
+    return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
 
 
 class Attn(nn.Module):
@@ -59,7 +71,6 @@ class Attn(nn.Module):
 
         self.qkv = nn.Linear(config.d_model, 3 * config.d_model)
         self.out = nn.Linear(config.d_model, config.d_model)
-
         self.rope = get_rope_cls(getattr(config, "rope_impl", "ortho"))(config)
 
     def forward(self, x, block_mask, kv_cache=None):
@@ -128,26 +139,32 @@ class DiT(nn.Module):
         self.local_layers = [(layer_idx % 4 != 0) for layer_idx in range(config.n_layers)]
         self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
 
-    def get_block_mask(self, x, kv_cache, window_len):
-        if not self.config.causal:
-            return None
-        seq_len = x.size(1)
-        offset = kv_cache.length_at(0) if kv_cache is not None else 0
-        return create_causal_block_mask(
-            n_tokens=seq_len + offset,
+    def get_block_mask(self, seq_len, doc_id, window_len, q_offset, device):
+        n_tokens = seq_len + q_offset
+        return get_block_mask(
+            n_tokens=n_tokens,
             tokens_per_frame=self.config.tokens_per_frame,
-            n_cached_tokens=offset,
             window_len=window_len,
-            device=x.device
+            doc_id=doc_id,
+            q_offset=q_offset,
+            is_causal=self.config.causal,
+            device=device
         )
 
-    def forward(self, x, cond, kv_cache=None):
-        local_block_mask = self.get_block_mask(x, kv_cache, self.config.local_window)
-        global_block_mask = self.get_block_mask(x, kv_cache, self.config.global_window)
+    def forward(self, x, cond, doc_id=None, kv_cache=None):
+        seq_len, device = x.size(1), x.device
+        q_offset = kv_cache.length_at(0) if kv_cache is not None else 0
+
+        local_block_mask = self.get_block_mask(seq_len, doc_id, self.config.local_window, q_offset, device)
+        global_block_mask = self.get_block_mask(seq_len, doc_id, self.config.global_window, q_offset, device)
 
         for layer_idx, block in enumerate(self.blocks):
             block_mask = local_block_mask if self.local_layers[layer_idx] else global_block_mask
-            x = block(x, cond, block_mask, kv_cache)
+
+            if self.training and getattr(self.config, "gradient_checkpointing", False):
+                x = checkpoint(block, x, cond, block_mask, kv_cache)
+            else:
+                x = block(x, cond, block_mask, kv_cache)
         return x
 
 
@@ -164,6 +181,7 @@ class SkipConnection(nn.Module):
         x = self.proj(x)
 
         return x
+
 
 class UViT(nn.Module):
     get_block_mask = DiT.get_block_mask
@@ -240,7 +258,7 @@ def test_attn_mask():
     tokens_per_frame = 8
     device = "cpu"
 
-    block_mask = create_causal_block_mask(total_tokens, tokens_per_frame, device=device)
+    block_mask = get_block_mask(total_tokens, tokens_per_frame, device=device)
 
     # Convert to dense grid
     idx = torch.arange(total_tokens, device=device, dtype=torch.int32)

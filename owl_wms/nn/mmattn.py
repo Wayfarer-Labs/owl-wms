@@ -7,7 +7,8 @@ from .mlp import MLP
 import einops as eo
 
 from .modulation import cond_adaln, cond_gate
-from .rope import OrthoRoPE
+from .rope import get_rope_cls
+
 from .attn import create_causal_block_mask
 
 from torch.nn.attention.flex_attention import flex_attention
@@ -37,7 +38,7 @@ class MMAttn(nn.Module):
 
         self.qkv_projs = nn.ModuleList([nn.Linear(config.d_model, 3 * config.d_model) for _ in range(2)])
         self.out_projs = nn.ModuleList([nn.Linear(config.d_model, config.d_model)for _ in range(2)])
-        self.rope = OrthoRoPE(config)
+        self.rope = get_rope_cls(getattr(config, "rope_impl", "ortho"))(config)
 
     def split_qkv(self, qkv, tok_per_frm):
         return eo.rearrange(qkv, 'b (f n) (three h d) -> three b h f n d', n=tok_per_frm, three=3, h=self.n_heads)
