@@ -38,7 +38,9 @@ class WanPairDataset(Dataset):
     wan_scheduler_timesteps = {0: 991.0, 1: 982.0, 2: 973.0, 3: 963.0, 4: 954.0, 5: 944.0, 6: 933.0, 7: 922.0, 8: 911.0, 9: 899.0, 10: 887.0, 11: 874.0, 12: 861.0, 13: 847.0, 14: 832.0, 15: 817.0, 16: 801.0, 17: 785.0, 18: 767.0, 19: 749.0, 20: 730.0, 21: 710.0, 22: 688.0, 23: 666.0, 24: 642.0, 25: 617.0, 26: 590.0, 27: 562.0, 28: 531.0, 29: 499.0, 30: 465.0, 31: 428.0, 32: 388.0, 33: 345.0, 34: 299.0, 35: 249.0, 36: 195.0, 37: 136.0, 38: 71.0, 39: 0.0}
     wan_max = 999
 
-    boundary = 0.875  # https://github.com/Wan-Video/Wan2.2/blob/main/wan/configs/wan_t2v_A14B.py#L36
+    boundary = 0.875   # WAN boundary ratio
+    boundary_margin = 0.015   # keep a little distance from the kink
+    min_central_dt = 2.0 / 999.0  # require at least ~2 tick gap across (k-1,k+1)
 
     def __init__(self, root_dir: str):
         self.root = Path(root_dir)
@@ -57,7 +59,7 @@ class WanPairDataset(Dataset):
         self._steps = {}
         for d in self.run_dirs:
             steps = sorted(int(fp.stem.split("_")[0]) for fp in d.glob("*_latents.pt"))
-            if len(steps) >= 2:
+            if len(steps) >= 3:
                 self._steps[d] = steps
 
     def __len__(self):
@@ -76,12 +78,24 @@ class WanPairDataset(Dataset):
         # also keep both indices on the same side of the expert boundary
         K = len(steps)
         while True:
-            i = random.randrange(0, K - 2)  # 0..K-3
-            gap = random.randint(1, min(4, K - 2 - i))  # ensure i_b <= K-2
-            a, b = i, i + gap
+            i = random.randrange(0, K - 2)  # 0..K-3, guarantees b+1 exists
+            gap = 1                         # enforce adjacency: a = b-1
+            a, b = i, i + gap               # a = k-1, b = k
             t_a = self.wan_scheduler_timesteps[steps[a]] / self.wan_max
             t_b = self.wan_scheduler_timesteps[steps[b]] / self.wan_max
-            if (t_a >= self.boundary and t_b >= self.boundary) or (t_a < self.boundary and t_b < self.boundary):
+            # also require next (k+1) to be on the same side of the boundary as u=b
+            t_bp1 = self.wan_scheduler_timesteps[steps[b + 1]] / self.wan_max
+            # fix typo + add boundary margin
+            same_side = lambda x, y: ((x >= self.boundary + self.boundary_margin) and (y >= self.boundary + self.boundary_margin)) \
+                                   or ((x <= self.boundary - self.boundary_margin) and (y <= self.boundary - self.boundary_margin))
+
+            # ensure TRUE adjacency in the saved grid (consecutive step IDs)
+            consec_grid = (steps[b] == steps[a] + 1) and (steps[b + 1] == steps[b] + 1)
+
+            # require a minimum central interval in normalized time to avoid tiny denominators
+            central_dt_ok = (t_a - t_bp1) >= self.min_central_dt  # remember t decreases
+
+            if consec_grid and same_side(t_a, t_b) and same_side(t_bp1, t_b) and central_dt_ok:
                 return a, b
 
     def __getitem__(self, idx):
@@ -90,8 +104,9 @@ class WanPairDataset(Dataset):
 
         i_a, i_b = self._pick_pair_indices(steps)
 
-        x_a = self._load_step(run_dir, steps[i_a])  # [F,C,H,W]
-        x_b = self._load_step(run_dir, steps[i_b])  # [F,C,H,W]
+        x_a = self._load_step(run_dir, steps[i_a])      # [F,C,H,W]  (k-1)
+        x_b = self._load_step(run_dir, steps[i_b])      # [F,C,H,W]  (k)
+        x_next = self._load_step(run_dir, steps[i_b+1]) # [F,C,H,W]  (k+1)
         F = x_a.shape[0]
 
         # WAN clock -> normalized [0,1] clock using the actual saved range [0,991]
@@ -100,7 +115,9 @@ class WanPairDataset(Dataset):
         tau_min, tau_max = 0.0, 999.0
         t_a_scalar = (tau_a - tau_min) / (tau_max - tau_min)
         t_b_scalar = (tau_b - tau_min) / (tau_max - tau_min)
-        assert t_a_scalar > t_b_scalar
+        tau_next = float(self.wan_scheduler_timesteps[steps[i_b+1]])
+        t_next_scalar = (tau_next - tau_min) / (tau_max - tau_min)
+        assert t_a_scalar > t_b_scalar > t_next_scalar
         time_a = torch.full((F,), t_a_scalar, dtype=torch.float32)
         time_b = torch.full((F,), t_b_scalar, dtype=torch.float32)
 
@@ -111,6 +128,7 @@ class WanPairDataset(Dataset):
         return {
             "x_a": x_a, "time_a": time_a,
             "x_b": x_b, "time_b": time_b,
+            "x_next": x_next, "time_next": torch.full((F,), t_next_scalar, dtype=torch.float32),
             "x_clean": x_clean, "time_clean": time_clean,
         }
 

@@ -131,7 +131,7 @@ class RFTPairDistillTrainer(RFTTrainer):
                     tiny anchor with cosine decay to 0, and tangent-norm warmup.
         """
         import math
-        x_a, t_a, x_b, t_b = batch[:4]
+        x_a, t_a, x_b, t_b, x_next, t_next = batch[:6]
 
         # ----- choose target time (gap-tied near u, with small exploration) -----
         delta = (t_a - t_b).abs()
@@ -152,6 +152,7 @@ class RFTPairDistillTrainer(RFTTrainer):
         # RAW Δt for Euler steps; broadcast to match x_*
         dt_s = expand_like(t_raw - t_a, x_a).to(x_a.dtype)  # Δt from s to t (≤ 0)
         dt_u = expand_like(t_raw - t_b, x_b).to(x_b.dtype)  # Δt from u to t (≤ 0)
+        dt_ab = expand_like(t_b - t_a, x_a).to(x_a.dtype)   # < 0
 
         # Optional per-sample tangent normalization
         def normalize_tangent(v: torch.Tensor) -> torch.Tensor:
@@ -165,11 +166,16 @@ class RFTPairDistillTrainer(RFTTrainer):
         # Paper-faithful: use RAW v in the Euler update
         x_direct = (x_a.float() + dt_s.float() * v_a_raw.float()).to(x_a.dtype)
 
-        # ----- via-u branch: u → t (STOP-GRAD, TEACHER PF-ODE one-step via finite diff) -----
-        # Teacher tangent at u is approximated by the chord slope between (x_a,t_a) and (x_b,t_b).
+        # ----- via-u branch: u → t (STOP-GRAD) with a LOCAL slope at u -----
+        # Prefer central difference v(u) ≈ (x_{k+1}-x_{k-1}) / (t_{k+1}-t_{k-1})
+        # Here: prev = (x_a,t_a) = (k-1), u=(x_b,t_b)=k, next=(x_next,t_next)=(k+1).
         with torch.no_grad():
-            dt_ab = expand_like(t_b - t_a, x_a).to(x_a.dtype)  # < 0
-            v_teacher_u = (x_b.float() - x_a.float()) / dt_ab.float()  # finite-diff PF-ODE tangent at u
+            dt_pn = expand_like(t_next - t_a, x_a).to(x_a.dtype)  # t_{k+1} - t_{k-1}
+            # sign-preserving clamp to avoid div-by-zero
+            denom_pn = dt_pn.float()
+            eps = torch.tensor(1e-6, dtype=denom_pn.dtype, device=denom_pn.device)
+            denom_pn = torch.where(denom_pn.abs() < eps, denom_pn.sign() * eps, denom_pn)
+            v_teacher_u = (x_next.float() - x_a.float()) / denom_pn
             x_via_u = (x_b.float() + dt_u.float() * v_teacher_u.float()).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
@@ -190,7 +196,11 @@ class RFTPairDistillTrainer(RFTTrainer):
                 warm = 0.9
         if warm > 0.0:
             with torch.no_grad():
-                v_teacher_s = (x_b.float() - x_a.float()) / dt_ab.float()  # same chord used as proxy at s
+                # chord proxy at s; guard small |dt_ab|
+                denom_ab = dt_ab.float()
+                eps = torch.tensor(1e-6, dtype=denom_ab.dtype, device=denom_ab.device)
+                denom_ab = torch.where(denom_ab.abs() < eps, denom_ab.sign() * eps, denom_ab)
+                v_teacher_s = (x_b.float() - x_a.float()) / denom_ab
             v_a_dir = normalize_tangent(v_a_raw.float())
             v_t_dir = normalize_tangent(v_teacher_s.float()).detach()
             tn_dir_loss = (v_a_dir - v_t_dir).pow(2).mean()
@@ -200,6 +210,7 @@ class RFTPairDistillTrainer(RFTTrainer):
         decay_frac = min(1.0, float(step) / float(max(1, anchor_decay_steps)))
         lambda_anchor = anchor_lambda0 * 0.5 * (1.0 + math.cos(math.pi * decay_frac))
         if lambda_anchor > 0.0:
+            # reuse guarded denom_ab above to stay consistent if you ever refactor
             anchor_res = (x_a.float() + dt_ab.float() * v_a_raw.float()) - x_b.float()
             anchor_per_ex = anchor_res.pow(2).mean(dim=tuple(range(1, anchor_res.ndim)))
             return main_loss + lambda_anchor * anchor_per_ex.mean()

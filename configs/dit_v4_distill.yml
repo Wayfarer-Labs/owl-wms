@@ -36,7 +36,7 @@ train:
   data_id: wan_pair_distill
   data_kwargs:
     dataset_path: /mnt/data/lapp0/datasets/wan_generated/
-    batch_columns: ["x_a", "time_a", "x_b", "time_b", "x_clean", "time_clean"]
+    batch_columns: ["x_a", "time_a", "x_b", "time_b", "x_next", "time_next"]
 
   sample_data_id: wan_sample
   sample_data_kwargs:
