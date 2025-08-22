@@ -204,12 +204,12 @@ class CraftTrainer(BaseTrainer):
         else:
             self.model = self.model
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
-
         self.model = torch.compile(self.model)
 
         self.decoder = self.decoder.cuda().eval()
         self.encoder_decoder = WanEncoderDecoder(self.decoder, self.train_cfg.vae_batch_size)
+
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
 
         # ----- optimiser, scheduler -----
         if self.train_cfg.opt.lower() == "muon":
@@ -230,8 +230,6 @@ class CraftTrainer(BaseTrainer):
             self.opt.load_state_dict(state["opt"])
             if self.scheduler and "scheduler" in state:
                 self.scheduler.load_state_dict(state["scheduler"])
-
-        self.ema.ema_model = torch.compile(self.ema.ema_model)
 
         del state
 
