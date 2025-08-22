@@ -173,7 +173,11 @@ class RFTPairDistillTrainer(RFTTrainer):
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
         per_ex = diff.pow(2).mean(dim=tuple(range(1, diff.ndim)))  # per-sample MSE
-        w = ((t_raw - t_a).abs() + (t_raw - t_b).abs()) * 0.5
+
+        # Use broadcasted dt_s/dt_u so shapes always align with x_*,
+        # then reduce to a single scalar per example: shape [B]
+        w_tokens = (dt_s.abs() + dt_u.abs()) * 0.5            # same shape as x_*
+        w = w_tokens.reshape(w_tokens.shape[0], -1).mean(1)   # -> [B]
         w = w.clamp(1e-3, 5e-2).detach()
         main_loss = (w * per_ex).mean()
 
