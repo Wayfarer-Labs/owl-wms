@@ -13,11 +13,11 @@ model:
   #  height: 15
   #  width: 26
 
-  tokens_per_frame: 880
-  height: 22
-  width: 40
+  tokens_per_frame: 220
+  height: 11
+  width: 20
 
-  patch_size: [1, 2, 2]
+  patch_size: [1, 4, 4]
 
   has_audio: false
 
