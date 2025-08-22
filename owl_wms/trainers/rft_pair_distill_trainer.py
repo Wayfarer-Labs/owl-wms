@@ -1,11 +1,10 @@
 import torch
 import torch.nn.functional as F
-import random
 
-from .rft_trainer import RFTTrainer
+from .craft_trainer import CraftTrainer
 
 
-class RFTPairDistillTrainer(RFTTrainer):
+class RFTPairDistillTrainer(CraftTrainer):
     def fwd_step(self, batch, train_step: int):
         return self.ayf_emd(batch)
         """

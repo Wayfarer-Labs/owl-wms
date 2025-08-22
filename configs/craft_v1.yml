@@ -9,13 +9,13 @@ model:
 
   n_frames: 512
 
-  #  tokens_per_frame: 390
-  #  height: 15
-  #  width: 26
+  tokens_per_frame: 390
+  height: 15
+  width: 26
 
-  tokens_per_frame: 220
-  height: 11
-  width: 20
+  #  tokens_per_frame: 220
+  #  height: 11
+  #  width: 20
 
   patch_size: [1, 4, 4]
 
@@ -39,33 +39,33 @@ model:
 train:
   trainer_id: craft
 
-  #  data_id: wan_sample
-  #  data_kwargs:
-  #    window_length: 21
-  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
-  #    batch_columns: ["x"]
-  #
-  #  sample_data_id: wan_sample
-  #  sample_data_kwargs:
-  #    window_length: 10  # size of single ground truth start tokens
-  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
-  #    batch_columns: ["x"]
-  #
-  #  raw_rgb: false
-
-  data_id: sequence_packing
+  data_id: wan_sample
   data_kwargs:
-    window_length: 256
-    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["rgb"]
+    window_length: 21
+    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
+    batch_columns: ["x"]
 
-  sample_data_id: cod
+  sample_data_id: wan_sample
   sample_data_kwargs:
-    window_length: 50  # size of single ground truth start tokens
-    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["rgb"]
+    window_length: 10  # size of single ground truth start tokens
+    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
+    batch_columns: ["x"]
 
-  raw_rgb: true
+  raw_rgb: false
+
+  #  data_id: sequence_packing
+  #  data_kwargs:
+  #    window_length: 256
+  #    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+  #    batch_columns: ["rgb"]
+  #
+  #  sample_data_id: cod
+  #  sample_data_kwargs:
+  #    window_length: 50  # size of single ground truth start tokens
+  #    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+  #    batch_columns: ["rgb"]
+  #
+  #  raw_rgb: true
 
   target_batch_size: 16
   batch_size: 1
