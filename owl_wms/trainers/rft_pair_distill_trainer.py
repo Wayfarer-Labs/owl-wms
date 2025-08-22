@@ -130,7 +130,6 @@ class RFTPairDistillTrainer(RFTTrainer):
           Includes: gap-tied target, dt hygiene, per-example reduction, clipped step-size weighting,
                     tiny anchor with cosine decay to 0, and tangent-norm warmup.
         """
-        import math
         x_a, t_a, x_b, t_b, x_next, t_next = batch[:6]
 
         # ----- choose target time (gap-tied near u, with small exploration) -----
@@ -152,7 +151,6 @@ class RFTPairDistillTrainer(RFTTrainer):
         # RAW Δt for Euler steps; broadcast to match x_*
         dt_s = expand_like(t_raw - t_a, x_a).to(x_a.dtype)  # Δt from s to t (≤ 0)
         dt_u = expand_like(t_raw - t_b, x_b).to(x_b.dtype)  # Δt from u to t (≤ 0)
-        dt_ab = expand_like(t_b - t_a, x_a).to(x_a.dtype)   # < 0
 
         # Optional per-sample tangent normalization
         def normalize_tangent(v: torch.Tensor) -> torch.Tensor:
@@ -163,8 +161,27 @@ class RFTPairDistillTrainer(RFTTrainer):
         # ----- direct branch: s → t (grads on) -----
         with self.autocast_ctx:
             v_a_raw = self.core_fwd(x_a, t_a)
-        # Paper-faithful: use RAW v in the Euler update
-        x_direct = (x_a.float() + dt_s.float() * v_a_raw.float()).to(x_a.dtype)
+
+        # ---- AYF Tangent Normalization (TN) with warmup (paper §3.4) ----
+        # Warmup coefficient linearly increases, clamped < 1 to keep some regularization.
+        tn_coeff = 0.0
+        if tangent_norm:
+            if tn_warmup_steps > 0:
+                tn_coeff = min(0.9, float(step) / float(tn_warmup_steps))
+            else:
+                tn_coeff = 0.9
+
+        def blend_tn(v: torch.Tensor) -> torch.Tensor:
+            # Per-sample L2 normalization over non-batch dims; detach scale per sCM/AYF intent.
+            v32 = v.float()
+            denom = v32.pow(2).mean(dim=tuple(range(1, v32.ndim)), keepdim=True).sqrt().clamp_min(1e-6)
+            v_norm = v32 / denom.detach()
+            # Interpolate between raw and normalized tangent (TN on) per warmup.
+            return ((1.0 - tn_coeff) * v32 + tn_coeff * v_norm).to(v.dtype)
+
+        v_a_eff = blend_tn(v_a_raw) if tangent_norm else v_a_raw
+        # Euler update with TN-applied tangent
+        x_direct = (x_a.float() + dt_s.float() * v_a_eff.float()).to(x_a.dtype)
 
         # ----- via-u branch: u → t (STOP-GRAD) with a LOCAL slope at u -----
         # Prefer central difference v(u) ≈ (x_{k+1}-x_{k-1}) / (t_{k+1}-t_{k-1})
@@ -176,7 +193,9 @@ class RFTPairDistillTrainer(RFTTrainer):
             eps = torch.tensor(1e-6, dtype=denom_pn.dtype, device=denom_pn.device)
             denom_pn = torch.where(denom_pn.abs() < eps, denom_pn.sign() * eps, denom_pn)
             v_teacher_u = (x_next.float() - x_a.float()) / denom_pn
-            x_via_u = (x_b.float() + dt_u.float() * v_teacher_u.float()).to(x_b.dtype)
+            # Apply the same TN+warmup to the teacher tangent used in the EMD target
+            v_u_eff = blend_tn(v_teacher_u) if tangent_norm else v_teacher_u
+            x_via_u = (x_b.float() + dt_u.float() * v_u_eff.float()).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
@@ -184,38 +203,7 @@ class RFTPairDistillTrainer(RFTTrainer):
 
         # Paper recommendation: constant weight
         main_loss = per_ex.mean()
-
-        # ----- TN directional regularizer with regularized warm-up (small) -----
-        # Encourage student tangent direction at s to align with teacher direction.
-        lambda_tn = 0.05
-        warm = 0.0
-        if tangent_norm:
-            if tn_warmup_steps > 0:
-                warm = min(0.9, float(step) / float(tn_warmup_steps))  # clamp < 1.0
-            else:
-                warm = 0.9
-        if warm > 0.0:
-            with torch.no_grad():
-                # chord proxy at s; guard small |dt_ab|
-                denom_ab = dt_ab.float()
-                eps = torch.tensor(1e-6, dtype=denom_ab.dtype, device=denom_ab.device)
-                denom_ab = torch.where(denom_ab.abs() < eps, denom_ab.sign() * eps, denom_ab)
-                v_teacher_s = (x_b.float() - x_a.float()) / denom_ab
-            v_a_dir = normalize_tangent(v_a_raw.float())
-            v_t_dir = normalize_tangent(v_teacher_s.float()).detach()
-            tn_dir_loss = (v_a_dir - v_t_dir).pow(2).mean()
-            main_loss = main_loss + warm * lambda_tn * tn_dir_loss
-
-        # ----- tiny Euler-consistency anchor with cosine decay to 0 -----
-        decay_frac = min(1.0, float(step) / float(max(1, anchor_decay_steps)))
-        lambda_anchor = anchor_lambda0 * 0.5 * (1.0 + math.cos(math.pi * decay_frac))
-        if lambda_anchor > 0.0:
-            # reuse guarded denom_ab above to stay consistent if you ever refactor
-            anchor_res = (x_a.float() + dt_ab.float() * v_a_raw.float()) - x_b.float()
-            anchor_per_ex = anchor_res.pow(2).mean(dim=tuple(range(1, anchor_res.ndim)))
-            return main_loss + lambda_anchor * anchor_per_ex.mean()
-        else:
-            return main_loss
+        return main_loss
 
     @torch.compile
     def core_fwd(self, *args, **kwargs):
