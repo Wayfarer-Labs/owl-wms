@@ -122,7 +122,9 @@ class RFTPairDistillTrainer(RFTTrainer):
         tn_warmup_steps: int = 4000,
     ):
         """
-        Offline AYF-EMD (one-step Euler), raw clock t∈[0,1], no warping.
+        Offline AYF-EMD https://arxiv.org/pdf/2506.14603
+          one-step Euler
+          raw clock t in [0,1], no warping.
           s=(x_a,t_a), u=(x_b,t_b), with t_a > t_b.
           Compare: direct s→t (grads on) vs via-u u→t (stop-grad).
           Includes: gap-tied target, dt hygiene, per-example reduction, clipped step-size weighting,
@@ -153,39 +155,51 @@ class RFTPairDistillTrainer(RFTTrainer):
 
         # Optional per-sample tangent normalization
         def normalize_tangent(v: torch.Tensor) -> torch.Tensor:
+            assert v.dtype == torch.float32
             denom = v.pow(2).mean(dim=tuple(range(1, v.ndim)), keepdim=True).sqrt().clamp_min(1e-6)
             return v / denom.detach()  # supervise direction; stop scale-grad
 
         # ----- direct branch: s → t (grads on) -----
         with self.autocast_ctx:
             v_a_raw = self.core_fwd(x_a, t_a)
-            use_tn = tangent_norm and (step < tn_warmup_steps)
-            v_a = normalize_tangent(v_a_raw) if use_tn else v_a_raw
-        x_direct = (x_a.float() + dt_s.float() * v_a.float()).to(x_a.dtype)
+        # Paper-faithful: use RAW v in the Euler update
+        x_direct = (x_a.float() + dt_s.float() * v_a_raw.float()).to(x_a.dtype)
 
-        # ----- via-u branch: u → t (STOP-GRAD) -----
+        # ----- via-u branch: u → t (STOP-GRAD, TEACHER PF-ODE one-step via finite diff) -----
+        # Teacher tangent at u is approximated by the chord slope between (x_a,t_a) and (x_b,t_b).
         with torch.no_grad():
-            with self.autocast_ctx:
-                v_b_raw = self.core_fwd(x_b, t_b)
-                v_b = normalize_tangent(v_b_raw) if use_tn else v_b_raw
-            x_via_u = (x_b.float() + dt_u.float() * v_b.float()).to(x_b.dtype)
+            dt_ab = expand_like(t_b - t_a, x_a).to(x_a.dtype)  # < 0
+            v_teacher_u = (x_b.float() - x_a.float()) / dt_ab.float()  # finite-diff PF-ODE tangent at u
+            x_via_u = (x_b.float() + dt_u.float() * v_teacher_u.float()).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
         per_ex = diff.pow(2).mean(dim=tuple(range(1, diff.ndim)))  # per-sample MSE
 
-        # Use broadcasted dt_s/dt_u so shapes always align with x_*,
-        # then reduce to a single scalar per example: shape [B]
-        w_tokens = (dt_s.abs() + dt_u.abs()) * 0.5            # same shape as x_*
-        w = w_tokens.reshape(w_tokens.shape[0], -1).mean(1)   # -> [B]
-        w = w.clamp(1e-3, 5e-2).detach()
-        main_loss = (w * per_ex).mean()
+        # Paper recommendation: constant weight
+        main_loss = per_ex.mean()
+
+        # ----- TN directional regularizer with regularized warm-up (small) -----
+        # Encourage student tangent direction at s to align with teacher direction.
+        lambda_tn = 0.05
+        warm = 0.0
+        if tangent_norm:
+            if tn_warmup_steps > 0:
+                warm = min(0.9, float(step) / float(tn_warmup_steps))  # clamp < 1.0
+            else:
+                warm = 0.9
+        if warm > 0.0:
+            with torch.no_grad():
+                v_teacher_s = (x_b.float() - x_a.float()) / dt_ab.float()  # same chord used as proxy at s
+            v_a_dir = normalize_tangent(v_a_raw.float())
+            v_t_dir = normalize_tangent(v_teacher_s.float()).detach()
+            tn_dir_loss = (v_a_dir - v_t_dir).pow(2).mean()
+            main_loss = main_loss + warm * lambda_tn * tn_dir_loss
 
         # ----- tiny Euler-consistency anchor with cosine decay to 0 -----
         decay_frac = min(1.0, float(step) / float(max(1, anchor_decay_steps)))
         lambda_anchor = anchor_lambda0 * 0.5 * (1.0 + math.cos(math.pi * decay_frac))
         if lambda_anchor > 0.0:
-            dt_ab = expand_like(t_b - t_a, x_a).to(x_a.dtype)
             anchor_res = (x_a.float() + dt_ab.float() * v_a_raw.float()) - x_b.float()
             anchor_per_ex = anchor_res.pow(2).mean(dim=tuple(range(1, anchor_res.ndim)))
             return main_loss + lambda_anchor * anchor_per_ex.mean()
