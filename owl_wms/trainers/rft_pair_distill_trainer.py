@@ -182,19 +182,12 @@ class RFTPairDistillTrainer(CraftTrainer):
         # Euler update with TN-applied tangent
         x_direct = (x_a.float() + dt_s.float() * v_a_eff.float()).to(x_a.dtype)
 
-        # ----- via-u branch: u → t (STOP-GRAD) with a LOCAL slope at u -----
-        # Prefer central difference v(u) ≈ (x_{k+1}-x_{k-1}) / (t_{k+1}-t_{k-1})
-        # Here: prev = (x_a,t_a) = (k-1), u=(x_b,t_b)=k, next=(x_next,t_next)=(k+1).
-        with torch.no_grad():
-            dt_pn = expand_like(t_next - t_a, x_a).to(x_a.dtype)  # t_{k+1} - t_{k-1}
-            # sign-preserving clamp to avoid div-by-zero
-            denom_pn = dt_pn.float()
-            eps = torch.tensor(1e-6, dtype=denom_pn.dtype, device=denom_pn.device)
-            denom_pn = torch.where(denom_pn.abs() < eps, denom_pn.sign() * eps, denom_pn)
-            v_teacher_u = (x_next.float() - x_a.float()) / denom_pn
-            # Apply the same TN+warmup to the teacher tangent used in the EMD target
-            v_u_eff = blend_tn(v_teacher_u) if tangent_norm else v_teacher_u
-            x_via_u = (x_b.float() + dt_u.float() * v_u_eff.float()).to(x_b.dtype)
+        # ----- via-u branch: student(u → t) with STOP-GRAD (AYF-EMD) -----
+        # Use the recorded adjacent teacher state as x^u := x_b.
+        with torch.no_grad():  # stop-grad on the via-u student map
+            v_b = self.core_fwd(x_b, t_b)          # student velocity at u
+            v_b_eff = blend_tn(v_b) if tangent_norm else v_b  # apply SAME TN policy
+            x_via_u = (x_b.float() + dt_u.float() * v_b_eff.float()).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
