@@ -178,16 +178,14 @@ class RFTPairDistillTrainer(CraftTrainer):
             # Interpolate between raw and normalized tangent (TN on) per warmup.
             return ((1.0 - tn_coeff) * v32 + tn_coeff * v_norm).to(v.dtype)
 
-        v_a_eff = blend_tn(v_a_raw) if tangent_norm else v_a_raw
-        # Euler update with TN-applied tangent
-        x_direct = (x_a.float() + dt_s.float() * v_a_eff.float()).to(x_a.dtype)
+        x_direct = (x_a.float() + dt_s.float() * v_a_raw.float()).to(x_a.dtype)
 
         # ----- via-u branch: student(u → t) with STOP-GRAD (AYF-EMD) -----
         # Use the recorded adjacent teacher state as x^u := x_b.
-        with torch.no_grad():  # stop-grad on the via-u student map
-            v_b = self.core_fwd(x_b, t_b)          # student velocity at u
-            v_b_eff = blend_tn(v_b) if tangent_norm else v_b  # apply SAME TN policy
-            x_via_u = (x_b.float() + dt_u.float() * v_b_eff.float()).to(x_b.dtype)
+        with torch.no_grad():  # stop-grad on the via-u path
+            v_b = self.core_fwd(x_b, t_b)  # slope used only to build the target
+            # Do NOT apply TN here—keep the target step's magnitude faithful.
+            x_via_u = (x_b.float() + dt_u.float() * v_b.float()).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
