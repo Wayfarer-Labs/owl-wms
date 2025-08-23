@@ -17,7 +17,7 @@ class RFTPairDistillTrainer(CraftTrainer):
 
     def flowmap_consistency_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
-        dt = (t_b - t_a)[..., None, None, None].to(x_a.dtype)
+        dt = (t_b - t_a)[..., None, None, None]
         with self.autocast_ctx:
             v = self.core_fwd(x_a, t_a)
         x_pred = x_a + dt * v
