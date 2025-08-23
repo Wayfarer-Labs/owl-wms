@@ -9,10 +9,11 @@ class RFTPairDistillTrainer(CraftTrainer):
         return [x.cuda() for x in batch]
 
     def fwd_step(self, batch, train_step: int):
-        if train_step % 10 == 0:
-            return super().fwd_step(batch, train_step)
-        else:
-            return self.tcd_rft(batch)
+        return self.tcd_rft(batch)
+        #if train_step % 10 == 0:
+        #    return super().fwd_step(batch, train_step)
+        #else:
+        #    return self.tcd_rft(batch)
 
     def flowmap_consistency_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
