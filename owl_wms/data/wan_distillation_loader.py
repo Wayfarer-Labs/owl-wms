@@ -92,12 +92,13 @@ class WanPairDataset(Dataset):
             t_a = self.sigmas[steps[a]]
             t_b = self.sigmas[steps[b]]
             # also require next (k+1) to be on the same side of the boundary as u=b
-            t_bp1 = self.sigmas[steps[b + 1]]
+            t_bp1 = self.sigmas[steps[b + 1]] if (b + 1) < K else None
             # fix typo + add boundary margin
             same_side = lambda x, y: ((x >= self.boundary + self.boundary_margin) and (y >= self.boundary + self.boundary_margin)) \
                                    or ((x <= self.boundary - self.boundary_margin) and (y <= self.boundary - self.boundary_margin))
 
-            if same_side(t_a, t_b) and same_side(t_bp1, t_b):
+            ok_next = True if t_bp1 is None else same_side(t_bp1, t_b)
+            if same_side(t_a, t_b) and ok_next:
                 return a, b
 
     def __getitem__(self, idx):
