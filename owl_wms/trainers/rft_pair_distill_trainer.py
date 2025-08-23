@@ -9,7 +9,7 @@ class RFTPairDistillTrainer(CraftTrainer):
         return [x.cuda() for x in batch]
 
     def fwd_step(self, batch, train_step: int):
-        return self.tcd_rft(batch)
+        return self.tcd_rft2(batch)
         #if train_step % 10 == 0:
         #    return super().fwd_step(batch, train_step)
         #else:
@@ -23,14 +23,19 @@ class RFTPairDistillTrainer(CraftTrainer):
         x_pred = x_a + dt * v
         return F.mse_loss(x_pred, x_b)
 
-    def tcd_rft(self, batch, tangent_norm=True, local_span=0.05):
+    def tcd_rft2(self, batch, tangent_norm=True, local_span=0.05):
         # batch: (x_a, t_a, x_b, t_b, x_clean, t_clean)
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
         dt = (t_b - t_a)[..., None, None, None]           # map from s=t_a to t=t_b
         with self.autocast_ctx:
             v = self.core_fwd(x_a, t_a)
         x_pred = (x_a.float() + dt.float() * v.float()).to(x_a.dtype)
-        return F.mse_loss(x_pred.float(), x_b.float())
+        loss_pc = F.mse_loss(x_pred.float(), x_b.float())
+        v_teacher = (x_b.float() - x_a.float()) / dt.float()
+        loss = loss_pc + 0.1 * F.mse_loss(v.float(), v_teacher)
+        with self.autocast_ctx:
+            v0 = self.core_fwd(x_clean, t_clean)
+        return loss + 1e-3 * v0.float().pow(2).mean()
 
     def ode_fwd(self, batch):
         x_a, t_a, _, _, x_clean, t_clean = batch
