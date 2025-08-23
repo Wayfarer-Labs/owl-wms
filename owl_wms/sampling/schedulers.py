@@ -1,16 +1,19 @@
-from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 import torch
 
 
 def get_sd3_euler(n_steps):
-    n_steps = 1000  # hack
-    return FlowMatchEulerDiscreteScheduler(
-        shift=3,
-        num_train_timesteps=n_steps
+    scheduler = UniPCMultistepScheduler(
+        prediction_type="flow_prediction",
+        use_flow_sigmas=True,
+        flow_shift=3.0,
     )
-    ts = scheduler.timesteps / n_steps
-    ts = torch.cat([ts, torch.zeros(1, dtype=ts.dtype, device=ts.device)])
-    dt = ts[:-1] - ts[1:]
+    scheduler.set_timesteps(n_steps)
+
+    t = scheduler.timesteps.float() / float(scheduler.config.num_train_timesteps - 1)
+    t_next = torch.cat([t[1:], t.new_zeros(1)])  # add 0 to end
+    dt = t - t_next
+
     return dt
 
 
