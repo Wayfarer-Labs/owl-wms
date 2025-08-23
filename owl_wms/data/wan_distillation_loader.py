@@ -35,12 +35,14 @@ class WanPairDataset(Dataset):
     """
 
     # pure noise: 999
-    wan_scheduler_timesteps = {0: 991.0, 1: 982.0, 2: 973.0, 3: 963.0, 4: 954.0, 5: 944.0, 6: 933.0, 7: 922.0, 8: 911.0, 9: 899.0, 10: 887.0, 11: 874.0, 12: 861.0, 13: 847.0, 14: 832.0, 15: 817.0, 16: 801.0, 17: 785.0, 18: 767.0, 19: 749.0, 20: 730.0, 21: 710.0, 22: 688.0, 23: 666.0, 24: 642.0, 25: 617.0, 26: 590.0, 27: 562.0, 28: 531.0, 29: 499.0, 30: 465.0, 31: 428.0, 32: 388.0, 33: 345.0, 34: 299.0, 35: 249.0, 36: 195.0, 37: 136.0, 38: 71.0, 39: 0.0}
-    wan_max = 999
+    sigmas = [0.9997, 0.9912, 0.9824, 0.9733, 0.9639, 0.9542, 0.9441, 0.9336, 0.9227,
+        0.9114, 0.8996, 0.8874, 0.8746, 0.8613, 0.8475, 0.8330, 0.8178, 0.8020,
+        0.7853, 0.7679, 0.7496, 0.7304, 0.7102, 0.6888, 0.6663, 0.6425, 0.6173,
+        0.5906, 0.5621, 0.5319, 0.4997, 0.4652, 0.4283, 0.3886, 0.3459, 0.2998,
+        0.2498, 0.1955, 0.1362, 0.0714]
 
     boundary = 0.875   # WAN boundary ratio
     boundary_margin = 0.015   # keep a little distance from the kink
-    min_central_dt = 2.0 / 999.0  # require at least ~2 tick gap across (k-1,k+1)
 
     def __init__(self, root_dir: str):
         self.root = Path(root_dir)
@@ -81,10 +83,10 @@ class WanPairDataset(Dataset):
             i = random.randrange(0, K - 2)  # 0..K-3, guarantees b+1 exists
             gap = 1                         # enforce adjacency: a = b-1
             a, b = i, i + gap               # a = k-1, b = k
-            t_a = self.wan_scheduler_timesteps[steps[a]] / self.wan_max
-            t_b = self.wan_scheduler_timesteps[steps[b]] / self.wan_max
+            t_a = self.sigmas[steps[a]]
+            t_b = self.sigmas[steps[b]]
             # also require next (k+1) to be on the same side of the boundary as u=b
-            t_bp1 = self.wan_scheduler_timesteps[steps[b + 1]] / self.wan_max
+            t_bp1 = self.sigmas[steps[b + 1]]
             # fix typo + add boundary margin
             same_side = lambda x, y: ((x >= self.boundary + self.boundary_margin) and (y >= self.boundary + self.boundary_margin)) \
                                    or ((x <= self.boundary - self.boundary_margin) and (y <= self.boundary - self.boundary_margin))
@@ -110,16 +112,12 @@ class WanPairDataset(Dataset):
         F = x_a.shape[0]
 
         # WAN clock -> normalized [0,1] clock using the actual saved range [0,991]
-        tau_a = float(self.wan_scheduler_timesteps[steps[i_a]])  # e.g., 991, 982, ...
-        tau_b = float(self.wan_scheduler_timesteps[steps[i_b]])  # ...
-        tau_min, tau_max = 0.0, 999.0
-        t_a_scalar = (tau_a - tau_min) / (tau_max - tau_min)
-        t_b_scalar = (tau_b - tau_min) / (tau_max - tau_min)
-        tau_next = float(self.wan_scheduler_timesteps[steps[i_b+1]])
-        t_next_scalar = (tau_next - tau_min) / (tau_max - tau_min)
-        assert t_a_scalar > t_b_scalar > t_next_scalar
-        time_a = torch.full((F,), t_a_scalar, dtype=torch.float32)
-        time_b = torch.full((F,), t_b_scalar, dtype=torch.float32)
+        sigma_a = float(self.sigmas[steps[i_a]])  # e.g., 991, 982, ...
+        sigma_b = float(self.sigmas[steps[i_b]])  # ...
+        sigma_next = float(self.sigmas[steps[i_b+1]])
+        assert sigma_a > sigma_b > sigma_next
+        time_a = torch.full((F,), sigma_a, dtype=torch.float32)
+        time_b = torch.full((F,), sigma_b, dtype=torch.float32)
 
         # teacher clean endpoint (assume step 39 exists)
         x_clean = self._load_step(run_dir, 39)               # [F,C,H,W]
@@ -128,7 +126,7 @@ class WanPairDataset(Dataset):
         return {
             "x_a": x_a, "time_a": time_a,
             "x_b": x_b, "time_b": time_b,
-            "x_next": x_next, "time_next": torch.full((F,), t_next_scalar, dtype=torch.float32),
+            "x_next": x_next, "time_next": torch.full((F,), sigma_next, dtype=torch.float32),
             "x_clean": x_clean, "time_clean": time_clean,
         }
 
