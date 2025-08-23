@@ -209,7 +209,7 @@ class RFTPairDistillTrainer(CraftTrainer):
         main_loss = per_ex.mean()
         return main_loss
 
-    @torch.compilea
+    @torch.compile
     def core_fwd(self, *args, **kwargs):
         core = self.get_module(ema=False).core
         return core(*args, **kwargs)
