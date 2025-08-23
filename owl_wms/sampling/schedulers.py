@@ -9,12 +9,8 @@ def get_sd3_euler(n_steps):
         flow_shift=3.0,
     )
     scheduler.set_timesteps(n_steps)
-
     t = scheduler.timesteps.float() / float(scheduler.config.num_train_timesteps - 1)
-    t_next = torch.cat([t[1:], t.new_zeros(1)])  # add 0 to end
-    dt = t - t_next
-
-    return dt
+    return t
 
 
 if __name__ == "__main__":
