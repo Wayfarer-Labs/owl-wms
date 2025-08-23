@@ -84,7 +84,7 @@ class AVCachingSampler:
 
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
-        t_new = t_prev.new_ones(batch_size, 1)
+        t_new = t_prev.new_ones(batch_size, 1) * dt.sum()
 
         # update kv cache with previous uncached frames
         kv_cache.enable_cache_updates()
