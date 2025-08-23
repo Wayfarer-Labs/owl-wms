@@ -150,6 +150,8 @@ class RFTPairDistillTrainer(CraftTrainer):
         # RAW Δt for Euler steps; broadcast to match x_*
         dt_s = expand_like(t_raw - t_a, x_a).to(x_a.dtype)  # Δt from s to t (≤ 0)
         dt_u = expand_like(t_raw - t_b, x_b).to(x_b.dtype)  # Δt from u to t (≤ 0)
+        _min_dt = torch.as_tensor(2.0 / 999.0, device=dt_u.device, dtype=dt_u.dtype)
+        dt_u = torch.where(dt_u.abs() < _min_dt, torch.sign(dt_u) * _min_dt, dt_u)
 
         # Optional per-sample tangent normalization
         def normalize_tangent(v: torch.Tensor) -> torch.Tensor:
@@ -161,31 +163,35 @@ class RFTPairDistillTrainer(CraftTrainer):
         with self.autocast_ctx:
             v_a_raw = self.core_fwd(x_a, t_a)
 
-        # ---- AYF Tangent Normalization (TN) with warmup (paper §3.4) ----
-        # Warmup coefficient linearly increases, clamped < 1 to keep some regularization.
-        tn_coeff = 0.0
-        if tangent_norm:
-            if tn_warmup_steps > 0:
-                tn_coeff = min(0.9, float(step) / float(tn_warmup_steps))
-            else:
-                tn_coeff = 0.9
-
-        def blend_tn(v: torch.Tensor) -> torch.Tensor:
-            # Per-sample L2 normalization over non-batch dims; detach scale per sCM/AYF intent.
-            v32 = v.float()
-            denom = v32.pow(2).mean(dim=tuple(range(1, v32.ndim)), keepdim=True).sqrt().clamp_min(1e-6)
-            v_norm = v32 / denom.detach()
-            # Interpolate between raw and normalized tangent (TN on) per warmup.
-            return ((1.0 - tn_coeff) * v32 + tn_coeff * v_norm).to(v.dtype)
+        # ---- Teacher-only TN + warmup (AYF §3.4 / Alg. F.3) ----
+        # We only normalize the *teacher* tangent used in the via-u branch.
+        def blend_tn(v_raw: torch.Tensor) -> torch.Tensor:
+            # linear warmup from 0→1 over tn_warmup_steps
+            w = float(step) / float(max(1, tn_warmup_steps))
+            w = 0.8 if w > 0.8 else (0.0 if w < 0.0 else w)
+            if not tangent_norm:
+                return v_raw
+            v_norm = normalize_tangent(v_raw.float())
+            # start fully normalized, end fully raw
+            return ((1.0 - w) * v_norm + w * v_raw.float()).to(v_raw.dtype)
 
         x_direct = (x_a.float() + dt_s.float() * v_a_raw.float()).to(x_a.dtype)
 
-        # ----- via-u branch: student(u → t) with STOP-GRAD (AYF-EMD) -----
-        # Use the recorded adjacent teacher state as x^u := x_b.
-        with torch.no_grad():  # stop-grad on the via-u path
-            v_b = self.core_fwd(x_b, t_b)  # slope used only to build the target
-            # Do NOT apply TN here—keep the target step's magnitude faithful.
-            x_via_u = (x_b.float() + dt_u.float() * v_b.float()).to(x_b.dtype)
+        # ----- via-u branch: u → t under STOP-GRAD, with TEACHER tangent -----
+        # Offline teacher tangent at u via central difference around (k): (k+1)-(k-1)
+        with torch.no_grad():
+            # expect x_next,t_next to be provided by the loader (k+1)
+            # and x_a,t_a is (k-1). Both come from the *teacher* rollouts.
+            # Central Δt around u=b (note: t decreases with k)
+            dt_c = expand_like(t_next - t_a, x_b).to(x_b.dtype)
+            _min_dt_c = torch.as_tensor(2.0 / 999.0, device=dt_c.device, dtype=dt_c.dtype)
+            _sign_c = dt_c.sign()
+            dt_c = _sign_c * torch.maximum(dt_c.abs(), _min_dt_c)
+            # your loader enforces a min central gap; still clamp for safety
+            dt_c = dt_c.clamp_min(2.0/999.0)
+            v_b_raw = (x_next.float() - x_a.float()) / dt_c.float()
+            v_b_eff = blend_tn(v_b_raw)
+            x_via_u = (x_b.float() + dt_u.float() * v_b_eff).to(x_b.dtype)
 
         # ----- per-example loss with clipped step-size weighting -----
         diff = x_direct.float() - x_via_u.float()
