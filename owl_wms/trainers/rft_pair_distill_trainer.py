@@ -5,15 +5,14 @@ from .craft_trainer import CraftTrainer
 
 
 class RFTPairDistillTrainer(CraftTrainer):
+    def prep_batch(self, batch):
+        return [x.cuda() for x in batch]
+
     def fwd_step(self, batch, train_step: int):
-        return self.tcd_rft(batch)
-        # return self.ayf_emd(batch)
-        """
-        if train_step < self.train_cfg.finite_difference_step:
-            return self.ode_fwd(batch)
+        if train_step % 10 == 0:
+            return super().fwd_step(batch, train_step)
         else:
-            return self.flow_matching_fwd(batch)
-        """
+            return self.tcd_rft(batch)
 
     def flowmap_consistency_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
@@ -23,14 +22,14 @@ class RFTPairDistillTrainer(CraftTrainer):
         x_pred = x_a + dt * v
         return F.mse_loss(x_pred, x_b)
 
-    def tcd_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
+    def tcd_rft(self, batch, tangent_norm=True, local_span=0.05):
         # batch: (x_a, t_a, x_b, t_b, x_clean, t_clean)
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
         dt = (t_b - t_a)[..., None, None, None]           # map from s=t_a to t=t_b
         with self.autocast_ctx:
-            v = self.core_fwd(x_a, t_b)                   # **target-conditioned**
-        x_pred = x_a + dt * v                              # discrete flow-map (Eulerized)
-        return F.mse_loss(x_pred, x_b)
+            v = self.core_fwd(x_a, t_a)
+        x_pred = (x_a.float() + dt.float() * v.float()).to(x_a.dtype)
+        return F.mse_loss(x_pred.float(), x_b.float())
 
     def ode_fwd(self, batch):
         x_a, t_a, _, _, x_clean, t_clean = batch
