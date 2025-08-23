@@ -2,7 +2,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 
 
 def get_sd3_euler(n_steps, num_train_timesteps=1000):
-    # TODO: keep old fn for backwards compatability, rename to def get_dsigmas
+    # TODO: rename to def get_dsigmas
     scheduler = UniPCMultistepScheduler(
         prediction_type="flow_prediction",
         use_flow_sigmas=True,
