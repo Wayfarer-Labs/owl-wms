@@ -18,7 +18,7 @@ class RFTPairDistillTrainer(CraftTrainer):
     def flowmap_consistency_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
         x_a, t_a, x_b, t_b, x_clean, t_clean = batch
         dt = (t_b - t_a)[..., None, None, None].to(x_a.dtype)
-        v = self.core(x_a, t_a)
+        v = self.core_fwd(x_a, t_a)
         x_pred = x_a + dt * v
         return F.mse_loss(x_pred, x_b)
 
@@ -209,7 +209,7 @@ class RFTPairDistillTrainer(CraftTrainer):
         main_loss = per_ex.mean()
         return main_loss
 
-    @torch.compile
+    @torch.compilea
     def core_fwd(self, *args, **kwargs):
         core = self.get_module(ema=False).core
         return core(*args, **kwargs)
