@@ -86,7 +86,7 @@ class WanPairDataset(Dataset):
         # also keep both indices on the same side of the expert boundary
         K = len(steps)
         while True:
-            i = random.randrange(0, K - 2)  # 0..K-3, guarantees b+1 exists
+            i = random.randrange(0, K - 1)  # 0..K-3, guarantees b+1 exists
             gap = 1                         # enforce adjacency: a = b-1
             a, b = i, i + gap               # a = k-1, b = k
             t_a = self.sigmas[steps[a]]
