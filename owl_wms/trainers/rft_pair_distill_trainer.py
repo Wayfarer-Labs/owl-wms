@@ -9,8 +9,9 @@ class RFTPairDistillTrainer(CraftTrainer):
         return [x.cuda() for x in batch]
 
     def fwd_step(self, batch, train_step: int):
-        # return self.ode_fwd(batch)
         return self.flowmap_consistency_rft(batch)
+        # return self.ode_fwd(batch)
+        # return self.flowmap_consistency_rft(batch)
         #return self.tcd_rft2(batch)
         #if train_step % 10 == 0:
         #    return super().fwd_step(batch, train_step)
@@ -24,6 +25,18 @@ class RFTPairDistillTrainer(CraftTrainer):
             v = self.core_fwd(x_a, t_a)
         x_pred = x_a + dt * v
         return F.mse_loss(x_pred, x_b)
+
+    def slope_regression_rft(self, batch, eps_dt: float = 2.0/999.0):
+        x_a, t_a, x_b, t_b = batch[:4]
+        dt = (t_b - t_a)[..., None, None, None]
+        eps = torch.as_tensor(eps_dt, device=dt.device, dtype=dt.dtype)
+        dt = dt.sign() * torch.maximum(dt.abs(), eps)
+
+        with self.autocast_ctx:
+            v = self.core_fwd(x_a, t_a)
+
+        target_slope = (x_b - x_a) / dt
+        return F.mse_loss(v, target_slope)
 
     def tcd_rft2(self, batch, tangent_norm=True, local_span=0.05):
         # batch: (x_a, t_a, x_b, t_b, x_clean, t_clean)
