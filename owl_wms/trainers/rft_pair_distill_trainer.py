@@ -6,7 +6,7 @@ from .craft_trainer import CraftTrainer
 
 class RFTPairDistillTrainer(CraftTrainer):
     def fwd_step(self, batch, train_step: int):
-        return self.flowmap_consistency_rft(batch)
+        return self.tcd_rft(batch)
         # return self.ayf_emd(batch)
         """
         if train_step < self.train_cfg.finite_difference_step:
@@ -21,6 +21,15 @@ class RFTPairDistillTrainer(CraftTrainer):
         with self.autocast_ctx:
             v = self.core_fwd(x_a, t_a)
         x_pred = x_a + dt * v
+        return F.mse_loss(x_pred, x_b)
+
+    def tcd_rft(self, batch, tangent_norm: bool = True, local_span: float = 0.05):
+        # batch: (x_a, t_a, x_b, t_b, x_clean, t_clean)
+        x_a, t_a, x_b, t_b, x_clean, t_clean = batch
+        dt = (t_b - t_a)[..., None, None, None]           # map from s=t_a to t=t_b
+        with self.autocast_ctx:
+            v = self.core_fwd(x_a, t_b)                   # **target-conditioned**
+        x_pred = x_a + dt * v                              # discrete flow-map (Eulerized)
         return F.mse_loss(x_pred, x_b)
 
     def ode_fwd(self, batch):
