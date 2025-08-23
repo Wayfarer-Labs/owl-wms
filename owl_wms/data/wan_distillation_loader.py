@@ -91,13 +91,7 @@ class WanPairDataset(Dataset):
             same_side = lambda x, y: ((x >= self.boundary + self.boundary_margin) and (y >= self.boundary + self.boundary_margin)) \
                                    or ((x <= self.boundary - self.boundary_margin) and (y <= self.boundary - self.boundary_margin))
 
-            # ensure TRUE adjacency in the saved grid (consecutive step IDs)
-            consec_grid = (steps[b] == steps[a] + 1) and (steps[b + 1] == steps[b] + 1)
-
-            # require a minimum central interval in normalized time to avoid tiny denominators
-            central_dt_ok = (t_a - t_bp1) >= self.min_central_dt  # remember t decreases
-
-            if consec_grid and same_side(t_a, t_b) and same_side(t_bp1, t_b) and central_dt_ok:
+            if same_side(t_a, t_b) and same_side(t_bp1, t_b):
                 return a, b
 
     def __getitem__(self, idx):
