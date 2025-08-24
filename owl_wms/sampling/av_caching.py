@@ -60,7 +60,7 @@ class AVCachingSampler:
         return torch.cat(latents, dim=1)
 
     @staticmethod
-    def slerp(x, sigma):
+    def sigma_noise(x, sigma):
         return x + torch.randn_like(x) * sigma
 
     def denoise_frame(
@@ -78,7 +78,7 @@ class AVCachingSampler:
         batch_size = prev_video.size(0)
 
         # Partially re-noise history
-        prev_vid = self.slerp(prev_video, self.noise_prev)
+        prev_vid = self.sigma_noise(prev_video, self.noise_prev)
         t_prev = prev_video.new_full((batch_size, prev_vid.size(1)), self.noise_prev)
 
         # Create new pure-noise frame
