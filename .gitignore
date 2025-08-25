@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+#venv 
+tensorrt_env/
+
 # C extensions
 *.so
 
