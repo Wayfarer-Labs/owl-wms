@@ -72,9 +72,8 @@ train:
   sampler_id: av_caching
   sampler_kwargs:
     n_steps: 2
-    #window_length: 16
     cfg_scale: 1.0
-    num_frames: 600
+    num_frames: 60
     noise_prev: 0.2
     custom_schedule: [1.0, 0.5]
 
@@ -82,11 +81,11 @@ train:
   eval_sample_dir: null
 
   vae_id: null
-  vae_batch_size: 4
+  vae_batch_size: 1
 
   vae_scale: 0.63
-  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/cod_yt_v2/base.yml
-  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_yt_v2/cod_yt_v2_515k_ema_decoder.pt
+  vae_cfg_path: ./dec_dist.yml
+  vae_ckpt_path: ./dec_distill_cod_v2.pt
 
   update_ratio: 5
   ts_shift: 8

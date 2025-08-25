@@ -76,6 +76,10 @@ class Attn(nn.Module):
         self.local = local
         self.local_offset = config.local_window * config.tokens_per_frame
 
+    def cache_update(self, k, v, kv_cache = None):
+        if kv_cache is not None and kv_cache.should_update:
+            kv_cache.update(k, v, self.layer_idx)
+
     def forward(self, x, block_mask, kv_cache=None):
         B, L, _ = x.shape
 
@@ -88,15 +92,11 @@ class Attn(nn.Module):
         q = self.rope(q, offset=offset)
         k = self.rope(k, offset=offset)
 
-        # prepend cached values
-        if offset > 0:
-            old_k, old_v = kv_cache.get(self.layer_idx)
-            k = torch.cat([old_k, k], dim=2)
-            v = torch.cat([old_v, v], dim=2)
-
         # update cache
-        if kv_cache is not None and kv_cache.should_update:
-            kv_cache.update(k, v, self.layer_idx)
+        self.cache_update(k, v, kv_cache)
+
+        if offset > 0:
+            k, v = kv_cache.get(self.layer_idx)
 
         # NOTE: Using block_mask = None to mark decoding, probably need something more explicit in future
         if self.local and block_mask is None:

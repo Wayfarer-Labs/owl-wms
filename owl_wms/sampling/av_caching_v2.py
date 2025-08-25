@@ -2,7 +2,7 @@ import torch
 from tqdm import tqdm
 import gc
 
-from ..nn.kv_cache import KVCache
+from ..nn.kv_cache import KVCache, InferenceKVCache
 
 from .schedulers import get_sd3_euler
 
@@ -74,6 +74,7 @@ class AVCachingSamplerV2:
             kv_cache=kv_cache
         )
         kv_cache.disable_cache_updates()
+        kv_cache = InferenceKVCache(kv_cache)
 
         def new_xt():
             return torch.randn_like(prev_x[:,:1]), prev_t.new_ones(batch_size, 1)
@@ -133,8 +134,6 @@ class AVCachingSamplerV2:
                 kv_cache=kv_cache
             )
             kv_cache.disable_cache_updates()
-            if self.max_window is not None and len(latents) > self.max_window:
-                kv_cache.truncate(1, front=False) # Eject oldest
 
             gc.collect()
             torch.cuda.empty_cache()

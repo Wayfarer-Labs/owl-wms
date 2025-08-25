@@ -26,7 +26,7 @@ def to_bgr_uint8(frame, target_size=(1080,1920)):
     return frame
 
 class CausvidPipeline:
-    def __init__(self, cfg_path="configs/causvid.yml", ckpt_path="causvid_ema.pt"):
+    def __init__(self, cfg_path="configs/dit_v4_dmd.yml", ckpt_path="vid_dit_v4_dmd_7k.pt"):
         cfg = Config.from_yaml(cfg_path)
         model_cfg = cfg.model
         train_cfg = cfg.train
@@ -41,12 +41,6 @@ class CausvidPipeline:
             train_cfg.vae_ckpt_path
         )
         self.frame_decoder = self.frame_decoder.cuda().bfloat16().eval()
-
-        #audio_decoder = get_decoder_only(
-        #    None,
-        #    train_cfg.audio_vae_cfg_path,
-        #    train_cfg.audio_vae_ckpt_path
-        #)
 
         # Store scales as instance variables
         self.frame_scale = train_cfg.vae_scale

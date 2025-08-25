@@ -9,7 +9,11 @@ from .utils.owl_vae_bridge import get_decoder_only
 def from_pretrained(cfg_path, ckpt_path, return_decoder=False):
     cfg = Config.from_yaml(cfg_path)
     model = get_model_cls(cfg.model.model_id)(cfg.model)
-    model.load_state_dict(versatile_load(ckpt_path))
+
+    try:
+        model.load_state_dict(versatile_load(ckpt_path))
+    except:
+        model.core.load_state_dict(versatile_load(ckpt_path))
 
     if not return_decoder:
         return model
