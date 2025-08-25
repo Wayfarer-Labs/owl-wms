@@ -102,3 +102,78 @@ class SingleKVCache:
     @property
     def shape(self):
         return self.cache[0][0].shape
+
+class InferenceKVCache:
+    """
+    Optimized for inference with static shapes and in-place updates
+    """
+    def __init__(self, kv_cache : SingleKVCache):
+        self.cache = kv_cache.cache
+        self.offsets = kv_cache.offsets
+
+        self.tokens_per_frame = kv_cache.config.tokens_per_frame
+        self.n_layers = kv_cache.config.n_layers
+        self.should_update = False
+
+    def enable_cache_updates(self):
+        self.should_update = True
+    
+    def disable_cache_updates(self):
+        self.should_update = False
+    
+    def to(self, device = 'cuda', dtype = torch.bfloat16):
+        self.device = device
+        self.dtype = dtype
+        return self
+
+    def get(self, layer_ind):
+        assert self.cache is not None, "Must reset cache before using"
+        k,v = self.cache[layer_ind]
+        return k,v
+
+    def update(self, new_k, new_v, layer_ind):
+        # Assumed that both are tokens_per_frame
+        self.cache[layer_ind][0][:,:,:-self.tokens_per_frame] = self.cache[layer_ind][0][:,:,self.tokens_per_frame:]
+        self.cache[layer_ind][1][:,:,:-self.tokens_per_frame] = self.cache[layer_ind][1][:,:,self.tokens_per_frame:]
+
+        self.cache[layer_ind][0][:,:,-self.tokens_per_frame:] = new_k
+        self.cache[layer_ind][1][:,:,-self.tokens_per_frame:] = new_v
+
+        self.offsets[layer_ind] += self.tokens_per_frame
+
+    def _update(self, new_k, new_v, layer_ind):
+        self.cache[layer_ind][0] = torch.cat([self.cache[layer_ind][0][:,:,self.tokens_per_frame:], new_k], dim=2)
+        self.cache[layer_ind][1] = torch.cat([self.cache[layer_ind][1][:,:,self.tokens_per_frame:], new_v], dim=2)
+        self.offsets[layer_ind] += self.tokens_per_frame
+
+    def truncate(self, *args, **kwargs):
+        pass
+
+    def length_at(self, idx):
+        return self.cache[idx][0].shape[2]
+    
+    def get_offset(self, idx=0):
+        return self.offsets[idx]
+
+    def __len__(self):
+        assert self.cache is not None, "Must reset cache before using"
+        return self.cache[0][0].shape[2]
+
+    def n_frames(self):
+        assert len(self) % self.config.tokens_per_frame == 0
+        return len(self) // self.config.tokens_per_frame
+    
+    def clone(self):
+        # Clones all tensors for max-autotune to work properly
+        for i in range(self.config.n_layers):
+            self.cache[i] = (self.cache[i][0].clone(), self.cache[i][1].clone())
+        return self
+    
+    def detach(self):
+        for i in range(self.config.n_layers):
+            self.cache[i] = (self.cache[i][0].detach(), self.cache[i][1].detach())
+        return self
+
+    @property
+    def shape(self):
+        return self.cache[0][0].shape

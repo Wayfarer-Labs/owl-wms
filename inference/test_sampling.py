@@ -8,9 +8,10 @@ from owl_wms.utils.logging import LogHelper, to_wandb_av
 from owl_wms.nn.rope import RoPE
 
 import torch
+import gc
 
-cfg_path = "configs/dit_v4.yml"
-ckpt_path = "/mnt/data/lapp0/checkpoints/89220499/checkpoints/step_120000.pt"
+cfg_path = "configs/dit_v4_dmd.yml"
+ckpt_path = "vid_dit_v4_dmd_7k.pt"
 
 model, decoder = from_pretrained(cfg_path, ckpt_path, return_decoder=True)
 model = model.core.eval().cuda().bfloat16()
@@ -46,47 +47,18 @@ wandb.init(
 )
 
 from owl_wms.sampling import get_sampler_cls
-
-only_return_generated = train_cfg.sampler_kwargs.pop("only_return_generated")
 import os
 
 sampler = get_sampler_cls(train_cfg.sampler_id)(**train_cfg.sampler_kwargs)
 
-cache_path = "test_sampling_cache.pt"
+data = torch.load("data_cache.pt")
+vid = data["vid"]
+mouse = data["mouse"]
+btn = data["btn"]
 
-if os.path.exists(cache_path):
-    print(f"Loading cached data from {cache_path}")
-    cache = torch.load(cache_path)
-    vid = cache["vid"]
-    mouse = cache["mouse"]
-    btn = cache["btn"]
-else:
-    loader = get_loader(
-        train_cfg.data_id,
-        1,  # batch size must be 1 for the loader
-        **train_cfg.sample_data_kwargs
-    )
-
-    loader = iter(loader)
-    vids, mouses, btns, doc_ids = [], [], [], []
-    for _ in range(16):
-        vid, mouse, btn, doc_id = [t.bfloat16().cuda() for t in next(loader)]
-        vids.append(vid)
-        mouses.append(mouse)
-        btns.append(btn)
-        doc_ids.append(doc_id)
-    # Stack along batch dimension
-    vids = torch.cat(vids, dim=0)
-    mouses = torch.cat(mouses, dim=0)
-    btns = torch.cat(btns, dim=0)
-    # Only use the first video, but all mouse/btn for batch_permute_to_length
-    vid = vids[:1]
-    mouse, btn = batch_permute_to_length(mouses, btns, sampler.num_frames + vid.size(1))
-    mouse = mouse[:1]
-    btn = btn[:1]
-    # Save to cache
-    torch.save({"vid": vid, "mouse": mouse, "btn": btn}, cache_path)
-    print(f"Saved data to cache at {cache_path}")
+vid = vid[:1]
+mouse = mouse[:1]
+btn = btn[:1]
 
 with torch.no_grad():
 
@@ -97,7 +69,10 @@ with torch.no_grad():
     btn = btn[:, vid.size(1):]
 
     del model
-
+    # Clear cuda cachce and collect garbage
+    torch.cuda.empty_cache()
+    gc.collect()
+    
     video = decode_fn(latent_vid * train_cfg.vae_scale)
 
 wandb_av_out = to_wandb_av(video, None, mouse, btn)

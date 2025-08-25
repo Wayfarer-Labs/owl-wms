@@ -2,7 +2,6 @@ import sys
 import os
 
 import torch
-from diffusers import AutoencoderDC
 
 sys.path.append("./owl-vaes")
 from owl_vaes.utils.proxy_init import load_proxy_model
