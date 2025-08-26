@@ -2,26 +2,25 @@
 
 ## Overview
 
-Implement TensorRT optimization for VAE decoder inference in the owl-wms world model system to achieve 2-6x faster inference throughput while maintaining backward compatibility. The implementation focuses on replacing PyTorch decoder inference with optimized TensorRT engines, starting with audio decoders and progressing to video decoders.
+Implement TensorRT optimization for VAE decoder inference in the owl-wms world model system to achieve 2-6x faster inference throughput while maintaining backward compatibility. The implementation focuses on replacing PyTorch decoder inference with optimized TensorRT engines, focusing on the video decoder `dec_64x_depth_515k.pt`.
 
 ## Current State Analysis
 
 **Existing Infrastructure:**
 - PyTorch-based VAE decoders in `owl_wms/utils/owl_vae_bridge.py`
-- Two decoder types: OobleckVAE (audio, simpler) and DCAE (video, complex)
+- Decoder types: DCAE (video)
 - Batched inference functions with fixed batch_size=8 pattern
 - TensorRT 10.7.0 already available in NGC PyTorch 24.12 container
 - Extensive `torch.compile` optimizations already in place
 
 **Current Performance:**
-- Audio decoder: 1D convolutional operations, transpose-based batching
 - Video decoder: 2D convolutional operations with complex reshaping
-- Both use bfloat16 precision and fixed batch processing patterns
+- The video decoder uses bfloat16 precision and fixed batch processing patterns
 
 ## Desired End State
 
 After implementation completion:
-- **Performance**: 2-6x faster decoder inference throughput
+- **Performance**: 2-6x faster decoder inference throughput for the video decoder
 - **Caching**: TensorRT engines cached to disk following NVIDIA best practices
 - **Fallback**: Automatic fallback to PyTorch if TensorRT engine creation/loading fails
 - **Compatibility**: All existing usage patterns continue working unchanged
@@ -29,7 +28,6 @@ After implementation completion:
 
 ### Key Discoveries:
 - Primary implementation in `owl_wms/utils/owl_vae_bridge.py:22-75` (3 core functions)
-- Audio decoder complexity: Simple 1D ops, SnakeBeta activation replacement needed
 - Video decoder complexity: Custom landscape handling, SANA operations, attention mechanisms
 - 7 usage locations automatically benefit without code changes
 - Fixed batch_size=8 ideal for static TensorRT engine optimization
@@ -44,12 +42,13 @@ After implementation completion:
 
 ## Implementation Approach
 
-**Strategy**: Progressive enhancement with fallback safety
-1. Start with simpler audio decoder to establish patterns and infrastructure
-2. Implement robust engine caching and error handling early
-3. Maintain backward compatibility throughout
-4. Add video decoder using lessons learned from audio implementation
+**Strategy**: Video decoder focus with fallback safety
+1. Establish TensorRT infrastructure and engine caching (Phase 1)
+2. Focus exclusively on video decoder (DCAE) optimization (Phase 2)
+3. Implement robust TensorRT integration for video inference (Phase 3)
+4. Maintain backward compatibility throughout
 5. Focus on single file modification with minimal surface area changes
+6. Audio decoder improvements deferred to future work
 
 ## Phase 1: Foundation Setup
 
@@ -125,27 +124,17 @@ class TensorRTConfig:
 
 ---
 
-## Phase 2: Audio Decoder ONNX Export
+## Phase 2: Video Decoder ONNX Export
 
 ### Overview
-Implement ONNX export for OobleckVAE audio decoder with custom layer replacements and validation against PyTorch baseline.
+Implement ONNX export for DCAE video decoder with custom layer replacements and validation against PyTorch baseline.
 
 ### Changes Required:
 
-#### 1. Custom Layer Replacements
+#### 1. Core Utilities
 **File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: ONNX-compatible implementations of custom audio decoder operations
+**Changes**: Utility functions for model preparation
 ```python
-def replace_snake_activation(model):
-    """Replace SnakeBeta with ONNX-compatible operations"""
-    for name, module in model.named_modules():
-        if hasattr(module, 'snake') and hasattr(module.snake, 'alpha'):
-            # Replace SnakeBeta: x + (1/alpha) * sin^2(alpha * x)
-            # This becomes: x + (1/alpha) * (sin(alpha * x))^2
-            alpha = module.snake.alpha.data.clone()
-            # Store alpha for ONNX conversion
-            module.snake_alpha = alpha
-
 def unwrap_weight_norm(model):
     """Convert weight_norm parametrizations to standard weights"""
     from torch.nn.utils import remove_weight_norm
@@ -153,24 +142,50 @@ def unwrap_weight_norm(model):
         if hasattr(module, 'weight_g') and hasattr(module, 'weight_v'):
             remove_weight_norm(module)
     return model
+
+def replace_landscape_operations(model):
+    """Replace landscape/square conversion with ONNX-compatible operations"""
+    for name, module in model.named_modules():
+        if 'landscape' in name.lower() or 'square' in name.lower():
+            # Replace with standard interpolation operations
+            # Store original aspect ratio handling logic as constants
+            pass
+
+def replace_sana_operations(model):
+    """Replace SANA pixel_shuffle operations with standard PyTorch equivalents"""
+    for name, module in model.named_modules():
+        if hasattr(module, 'pixel_shuffle') or hasattr(module, 'pixel_unshuffle'):
+            # Replace with torch.nn.PixelShuffle/PixelUnshuffle
+            pass
+
+def simplify_attention_blocks(model):
+    """Simplify or remove attention blocks for ONNX compatibility"""
+    for name, module in model.named_modules():
+        if 'attn' in name.lower() and hasattr(module, 'attention'):
+            # Option 1: Replace with simpler operations
+            # Option 2: Remove if not critical for decoder quality
+            pass
 ```
 
-#### 2. Audio Decoder ONNX Export Function
+#### 2. Video Decoder Export Function
 **File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: Export function with validation
+**Changes**: DCAE-specific export with validation
 ```python
-def export_audio_decoder_to_onnx(decoder_model, output_path: Path, batch_size: int = 8):
-    """Export OobleckVAE audio decoder to ONNX with custom layer handling"""
+def export_video_decoder_to_onnx(decoder_model, output_path: Path, batch_size: int = 8):
+    """Export DCAE video decoder to ONNX with custom operation handling"""
     
     # Prepare model for export
-    decoder_model = unwrap_weight_norm(decoder_model.cpu().eval())
-    replace_snake_activation(decoder_model)
+    decoder_model = decoder_model.cpu().eval()
+    decoder_model = unwrap_weight_norm(decoder_model)
+    replace_landscape_operations(decoder_model)
+    replace_sana_operations(decoder_model)
+    simplify_attention_blocks(decoder_model)
     
-    # Typical audio input: [batch_size, channels, sequence_length]
-    dummy_input = torch.randn(batch_size, 64, 1024, dtype=torch.float32)
+    # Video input: [batch_size, channels, height, width] = [8, 128, 8, 8]
+    dummy_input = torch.randn(batch_size, 128, 8, 8, dtype=torch.float32)
     
     with torch.no_grad():
-        # Test PyTorch output for validation
+        # Test PyTorch output
         pytorch_output = decoder_model(dummy_input)
         
         # Export to ONNX
@@ -178,29 +193,29 @@ def export_audio_decoder_to_onnx(decoder_model, output_path: Path, batch_size: i
             decoder_model,
             dummy_input,
             output_path,
-            input_names=['latent_audio'],
-            output_names=['decoded_audio'],
+            input_names=['latent_video'],
+            output_names=['decoded_video'],
             dynamic_axes={
-                'latent_audio': {2: 'sequence_length'},
-                'decoded_audio': {2: 'audio_length'}
+                'latent_video': {0: 'batch_size'},
+                'decoded_video': {0: 'batch_size'}
             },
             opset_version=17,
             do_constant_folding=True
         )
         
-        # Validate ONNX model
+        # Validation steps
         onnx_model = onnx.load(output_path)
         onnx.checker.check_model(onnx_model)
         
         # Test ONNX Runtime inference
         ort_session = ort.InferenceSession(str(output_path))
-        ort_output = ort_session.run(None, {'latent_audio': dummy_input.numpy()})
+        ort_output = ort_session.run(None, {'latent_video': dummy_input.numpy()})
         
-        # Validate numerical accuracy
+        # Validate numerical accuracy with relaxed tolerance due to custom operations
         max_diff = torch.abs(pytorch_output - torch.from_numpy(ort_output[0])).max()
-        assert max_diff < 1e-4, f"ONNX export validation failed: max_diff={max_diff}"
+        assert max_diff < 1e-2, f"Video decoder ONNX export validation failed: max_diff={max_diff}"
         
-        logging.info(f"Audio decoder ONNX export successful: {output_path}")
+        logging.info(f"Video decoder ONNX export successful: {output_path}")
         return True
 ```
 
@@ -208,28 +223,28 @@ def export_audio_decoder_to_onnx(decoder_model, output_path: Path, batch_size: i
 
 #### Automated Verification:
 - [ ] ONNX export completes without errors: Custom test script
-- [ ] ONNX model validates: `python -c "import onnx; onnx.checker.check_model(onnx.load('audio_decoder.onnx'))"`
-- [ ] Numerical accuracy within 1e-4 tolerance vs PyTorch
+- [ ] ONNX model validates: `python -c "import onnx; onnx.checker.check_model(onnx.load('video_decoder.onnx'))"`
+- [ ] Numerical accuracy within 1e-2 tolerance vs PyTorch
 - [ ] ONNX Runtime inference works: Custom validation test
 
 #### Manual Verification:
-- [ ] Audio decoder export handles various input lengths
-- [ ] Custom activation replacement maintains audio quality
+- [ ] Video decoder export handles batch processing correctly
+- [ ] Custom operation replacement maintains video quality
 - [ ] Memory usage reasonable during export process
-- [ ] Export time under 60 seconds
+- [ ] Export time under 120 seconds
 
 ---
 
-## Phase 3: Audio TensorRT Integration
+## Phase 3: Video TensorRT Integration
 
 ### Overview
-Convert ONNX audio decoder to TensorRT engine with disk caching and integrate into batched decode function.
+Convert ONNX video decoder to TensorRT engine with disk caching and integrate into batched decode function.
 
 ### Changes Required:
 
 #### 1. TensorRT Engine Creation
 **File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: Engine builder with optimization
+**Changes**: Engine builder optimized for video
 ```python
 def build_tensorrt_engine(onnx_path: Path, engine_path: Path, config: TensorRTConfig) -> bool:
     """Build TensorRT engine from ONNX model with caching"""
@@ -258,12 +273,12 @@ def build_tensorrt_engine(onnx_path: Path, engine_path: Path, config: TensorRTCo
     elif config.precision == "int8":
         builder_config.set_flag(trt.BuilderFlag.INT8)
     
-    # Set optimization profiles for dynamic shapes
+    # Set optimization profiles for video (static shapes work better)
     profile = builder.create_optimization_profile()
-    profile.set_shape("latent_audio", 
-                     min=(1, 64, 512),     # Min sequence length
-                     opt=(config.max_batch_size, 64, 1024),  # Optimal
-                     max=(config.max_batch_size, 64, 4096))  # Max sequence length
+    profile.set_shape("latent_video", 
+                     min=(1, 128, 8, 8),     # Min batch
+                     opt=(config.max_batch_size, 128, 8, 8),  # Optimal
+                     max=(config.max_batch_size, 128, 8, 8))  # Max batch
     builder_config.add_optimization_profile(profile)
     
     # Build engine
@@ -280,11 +295,11 @@ def build_tensorrt_engine(onnx_path: Path, engine_path: Path, config: TensorRTCo
     return True
 ```
 
-#### 2. TensorRT Audio Decoder Wrapper
+#### 2. TensorRT Video Decoder Wrapper
 **File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: TensorRT inference wrapper
+**Changes**: TensorRT inference wrapper for video
 ```python
-class TensorRTAudioDecoder:
+class TensorRTVideoDecoder:
     def __init__(self, engine_path: Path):
         self.logger = trt.Logger(trt.Logger.WARNING)
         
@@ -295,32 +310,27 @@ class TensorRTAudioDecoder:
             
         self.context = self.engine.create_execution_context()
         
-        # Allocate buffers (will be resized dynamically)
-        self.inputs = {}
-        self.outputs = {}
-        self.bindings = {}
-        
-    def __call__(self, latent_audio: torch.Tensor) -> torch.Tensor:
+    def __call__(self, latent_video: torch.Tensor) -> torch.Tensor:
         """TensorRT inference call compatible with PyTorch decoder interface"""
-        batch_size, channels, seq_len = latent_audio.shape
+        batch_size, channels, height, width = latent_video.shape
         
-        # Set dynamic shape
-        self.context.set_input_shape("latent_audio", (batch_size, channels, seq_len))
+        # Set input shape
+        self.context.set_input_shape("latent_video", (batch_size, channels, height, width))
         
-        # Allocate GPU memory if needed
+        # Get tensor names
         input_binding = self.engine.get_tensor_name(0)
         output_binding = self.engine.get_tensor_name(1)
         
         # Convert to CUDA tensor if needed
-        if not latent_audio.is_cuda:
-            latent_audio = latent_audio.cuda()
+        if not latent_video.is_cuda:
+            latent_video = latent_video.cuda()
             
         # Convert to fp32 if needed (TensorRT precision handling)
-        if latent_audio.dtype != torch.float32:
-            latent_audio = latent_audio.float()
+        if latent_video.dtype != torch.float32:
+            latent_video = latent_video.float()
         
         # Set input tensor
-        self.context.set_tensor_address(input_binding, latent_audio.data_ptr())
+        self.context.set_tensor_address(input_binding, latent_video.data_ptr())
         
         # Allocate output tensor
         output_shape = self.context.get_tensor_shape(output_binding)
@@ -330,173 +340,10 @@ class TensorRTAudioDecoder:
         # Execute inference
         success = self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
         if not success:
-            raise RuntimeError("TensorRT inference failed")
+            raise RuntimeError("TensorRT video inference failed")
             
         # Convert back to bfloat16 for compatibility
         return output_tensor.bfloat16()
-```
-
-#### 3. Updated Audio Decode Function
-**File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: Modify `make_batched_audio_decode_fn` for TensorRT
-```python
-@torch.no_grad()
-def make_batched_audio_decode_fn(decoder, batch_size=8, use_tensorrt=True):
-    """Enhanced audio decode function with TensorRT support"""
-    
-    tensorrt_decoder = None
-    if use_tensorrt and TENSORRT_AVAILABLE:
-        try:
-            # Try to create/load TensorRT engine
-            model_key = "oobleck_audio_decoder"
-            engine_path = get_engine_cache_path(model_key, (batch_size, 64, 1024))
-            
-            if not engine_path.exists():
-                # Export to ONNX first
-                onnx_path = engine_path.with_suffix('.onnx')
-                if export_audio_decoder_to_onnx(decoder, onnx_path, batch_size):
-                    # Build TensorRT engine
-                    build_tensorrt_engine(onnx_path, engine_path, TensorRTConfig())
-            
-            if engine_path.exists():
-                tensorrt_decoder = TensorRTAudioDecoder(engine_path)
-                logging.info("Using TensorRT for audio decoder inference")
-                
-        except Exception as e:
-            logging.warning(f"TensorRT audio decoder initialization failed: {e}")
-            logging.info("Falling back to PyTorch audio decoder")
-
-    def decode(x):
-        # x is [b,n,c] audio samples
-        x = x.transpose(1,2)  # [b,c,n]
-        b, c, n = x.shape
-
-        if tensorrt_decoder is not None:
-            # Use TensorRT path
-            try:
-                batches = x.contiguous().split(batch_size)
-                batch_out = []
-                for batch in batches:
-                    batch_out.append(tensorrt_decoder(batch))
-                x = torch.cat(batch_out)
-                x = x.transpose(-1,-2).contiguous()  # [b,n,2]
-                return x
-            except Exception as e:
-                logging.warning(f"TensorRT inference failed: {e}, falling back to PyTorch")
-        
-        # PyTorch fallback path (original implementation)
-        batches = x.contiguous().split(batch_size)
-        batch_out = []
-        for batch in batches:
-            batch_out.append(decoder(batch).bfloat16())
-        x = torch.cat(batch_out)  # [b,c,n]
-        x = x.transpose(-1,-2).contiguous()  # [b,n,2]
-        return x
-        
-    return decode
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] TensorRT engine builds successfully: Custom test script
-- [ ] Engine caching works: Verify cached files exist and load correctly
-- [ ] Numerical accuracy within 1e-3 tolerance vs PyTorch baseline
-- [ ] Fallback triggers on TensorRT failure: Error injection test
-- [ ] Memory usage stable: No memory leaks over 100 inference cycles
-
-#### Manual Verification:
-- [ ] Audio inference 2-6x faster than PyTorch (benchmark test)
-- [ ] First run builds engine, subsequent runs load from cache
-- [ ] Audio quality maintained (A/B listening test)
-- [ ] Graceful fallback when TensorRT unavailable
-
----
-
-## Phase 4: Video Decoder Implementation
-
-### Overview
-Implement ONNX export and TensorRT integration for DCAE video decoder with custom operation handling.
-
-### Changes Required:
-
-#### 1. Video-Specific Custom Operations
-**File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: ONNX-compatible video decoder operations
-```python
-def replace_landscape_operations(model):
-    """Replace landscape/square conversion with ONNX-compatible operations"""
-    for name, module in model.named_modules():
-        if 'landscape' in name.lower() or 'square' in name.lower():
-            # Replace with standard interpolation operations
-            # Store original aspect ratio handling logic as constants
-            pass
-
-def replace_sana_operations(model):
-    """Replace SANA pixel_shuffle operations with standard PyTorch equivalents"""
-    for name, module in model.named_modules():
-        if hasattr(module, 'pixel_shuffle') or hasattr(module, 'pixel_unshuffle'):
-            # Replace with torch.nn.PixelShuffle/PixelUnshuffle
-            pass
-
-def simplify_attention_blocks(model):
-    """Simplify or remove attention blocks for ONNX compatibility"""
-    for name, module in model.named_modules():
-        if 'attn' in name.lower() and hasattr(module, 'attention'):
-            # Option 1: Replace with simpler operations
-            # Option 2: Remove if not critical for decoder quality
-            pass
-```
-
-#### 2. Video Decoder Export Function
-**File**: `owl_wms/utils/owl_vae_bridge.py`
-**Changes**: DCAE-specific export with complexity handling
-```python
-def export_video_decoder_to_onnx(decoder_model, output_path: Path, batch_size: int = 8):
-    """Export DCAE video decoder to ONNX with custom operation handling"""
-    
-    # Prepare model for export
-    decoder_model = decoder_model.cpu().eval()
-    decoder_model = unwrap_weight_norm(decoder_model)
-    replace_landscape_operations(decoder_model)
-    replace_sana_operations(decoder_model)
-    simplify_attention_blocks(decoder_model)
-    
-    # Typical video input: [batch_size, channels, height, width]
-    dummy_input = torch.randn(batch_size, 128, 8, 8, dtype=torch.float32)
-    
-    with torch.no_grad():
-        # Test PyTorch output
-        pytorch_output = decoder_model(dummy_input)
-        
-        # Export to ONNX
-        torch.onnx.export(
-            decoder_model,
-            dummy_input,
-            output_path,
-            input_names=['latent_video'],
-            output_names=['decoded_video'],
-            dynamic_axes={
-                'latent_video': {0: 'batch_size'},
-                'decoded_video': {0: 'batch_size'}
-            },
-            opset_version=17,
-            do_constant_folding=True
-        )
-        
-        # Validation steps
-        onnx_model = onnx.load(output_path)
-        onnx.checker.check_model(onnx_model)
-        
-        # Test numerical accuracy with relaxed tolerance due to custom operations
-        ort_session = ort.InferenceSession(str(output_path))
-        ort_output = ort_session.run(None, {'latent_video': dummy_input.numpy()})
-        
-        max_diff = torch.abs(pytorch_output - torch.from_numpy(ort_output[0])).max()
-        assert max_diff < 1e-2, f"Video decoder ONNX export validation failed: max_diff={max_diff}"
-        
-        logging.info(f"Video decoder ONNX export successful: {output_path}")
-        return True
 ```
 
 #### 3. Updated Video Decode Function
@@ -510,20 +357,24 @@ def make_batched_decode_fn(decoder, batch_size=8, use_tensorrt=True):
     tensorrt_decoder = None
     if use_tensorrt and TENSORRT_AVAILABLE:
         try:
+            # Try to create/load TensorRT engine
             model_key = "dcae_video_decoder"
             engine_path = get_engine_cache_path(model_key, (batch_size, 128, 8, 8))
             
             if not engine_path.exists():
+                # Export to ONNX first
                 onnx_path = engine_path.with_suffix('.onnx')
                 if export_video_decoder_to_onnx(decoder, onnx_path, batch_size):
+                    # Build TensorRT engine
                     build_tensorrt_engine(onnx_path, engine_path, TensorRTConfig())
             
             if engine_path.exists():
-                tensorrt_decoder = TensorRTVideoDecoder(engine_path)  # Similar to audio version
+                tensorrt_decoder = TensorRTVideoDecoder(engine_path)
                 logging.info("Using TensorRT for video decoder inference")
                 
         except Exception as e:
             logging.warning(f"TensorRT video decoder initialization failed: {e}")
+            logging.info("Falling back to PyTorch video decoder")
 
     def decode(x):
         # x is [b,n,c,h,w]
@@ -531,8 +382,9 @@ def make_batched_decode_fn(decoder, batch_size=8, use_tensorrt=True):
         x = x.view(b*n, c, h, w).contiguous()
 
         if tensorrt_decoder is not None:
+            # Use TensorRT path
             try:
-                batches = x.split(batch_size)
+                batches = x.contiguous().split(batch_size)
                 batch_out = []
                 for batch in batches:
                     batch_out.append(tensorrt_decoder(batch))
@@ -543,8 +395,8 @@ def make_batched_decode_fn(decoder, batch_size=8, use_tensorrt=True):
             except Exception as e:
                 logging.warning(f"TensorRT video inference failed: {e}, falling back to PyTorch")
 
-        # PyTorch fallback path
-        batches = x.split(batch_size)
+        # PyTorch fallback path (original implementation)
+        batches = x.contiguous().split(batch_size)
         batch_out = []
         for batch in batches:
             batch_out.append(decoder(batch).bfloat16())
@@ -559,20 +411,22 @@ def make_batched_decode_fn(decoder, batch_size=8, use_tensorrt=True):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Video decoder ONNX export completes: Custom test with 360x640 output validation
-- [ ] TensorRT engine builds for video: Memory usage under 2GB during build
-- [ ] Numerical accuracy within 1e-2 tolerance: Relaxed due to custom operations
-- [ ] Video inference performance 2-6x improvement: Benchmark test
+- [ ] TensorRT engine builds successfully: Custom test script
+- [ ] Engine caching works: Verify cached files exist and load correctly
+- [ ] Numerical accuracy within 1e-2 tolerance vs PyTorch baseline
+- [ ] Fallback triggers on TensorRT failure: Error injection test
+- [ ] Memory usage stable: No memory leaks over 100 inference cycles
 
 #### Manual Verification:
-- [ ] Video quality maintained vs PyTorch baseline: Visual comparison test
-- [ ] Aspect ratio handling works correctly: Test with landscape video
-- [ ] Complex scenes render properly: Test with high-detail gaming content
-- [ ] Memory usage stable during video processing: Extended runtime test
+- [ ] Video inference 2-6x faster than PyTorch (benchmark test)
+- [ ] First run builds engine, subsequent runs load from cache
+- [ ] Video quality maintained vs PyTorch baseline: Visual comparison
+- [ ] Aspect ratio handling works correctly: Test with 360x640 output
+- [ ] Graceful fallback when TensorRT unavailable
 
 ---
 
-## Phase 5: Production Integration
+## Phase 4: Production Integration
 
 ### Overview
 Finalize production deployment with comprehensive testing, monitoring, and optimization.
@@ -704,8 +558,7 @@ class TestTensorRTIntegration:
 ## Performance Considerations
 
 **Expected Improvements:**
-- Audio decoder: 3-5x speedup (simpler operations optimize well)
-- Video decoder: 2-4x speedup (limited by custom operation complexity)
+- Video decoder: 2-6x speedup (target performance improvement)
 - Memory usage: Similar or slightly higher due to engine storage
 - Latency: Reduced inference time, potential first-run overhead for engine building
 
@@ -725,9 +578,9 @@ class TestTensorRTIntegration:
 
 **Deployment Strategy:**
 1. Deploy with TensorRT disabled initially (`TENSORRT_ENABLED=false`)
-2. Enable audio decoder TensorRT (`TENSORRT_ENABLED=true`, test audio workflows)
-3. Enable video decoder TensorRT (full TensorRT deployment)
-4. Monitor performance metrics and adjust configuration as needed
+2. Enable video decoder TensorRT (`TENSORRT_ENABLED=true`, test video workflows)
+3. Monitor performance metrics and adjust configuration as needed
+4. Audio decoder improvements planned for future iteration
 
 ## References
 
