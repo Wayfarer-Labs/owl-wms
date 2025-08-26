@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implement TensorRT optimization for VAE decoder inference in the owl-wms world model system to achieve 2-6x faster inference throughput while maintaining backward compatibility. The implementation focuses on replacing PyTorch decoder inference with optimized TensorRT engines, focusing on the video decoder `dec_64x_depth_515k.pt`.
+Implement TensorRT optimization for VAE decoder inference in the owl-wms world model system to achieve 2-6x faster inference throughput while maintaining backward compatibility. The implementation focuses on replacing PyTorch decoder inference with optimized TensorRT engines, focusing on the video decoder at `checkpoints/cod_yt_v2/dec_64x_depth_515k.pt`.
 
 ## Current State Analysis
 
