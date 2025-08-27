@@ -75,10 +75,13 @@ class WorldDiTBlock(nn.Module):
         x = self.attn(x, block_mask, kv_cache)
         x = self.gate0(x, cond) + residual
 
+        # TODO: put back
+        """
         residual = x
         x = self.adaln1(x, cond)
         x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
         x = self.gate1(x, cond) + residual
+        """
 
         residual = x
         x = self.adaln2(x, cond)
