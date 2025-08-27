@@ -1,3 +1,6 @@
+from typing import Optional
+from torch import Tensor
+
 import torch
 from tqdm import tqdm
 
@@ -23,7 +26,7 @@ class AVCachingSampler:
         self.noise_prev = noise_prev
 
     @torch.no_grad()
-    def __call__(self, model, x, prompt, mouse: torch.Tensor | None, btn: torch.Tensor | None):
+    def __call__(self, model, x, prompt: Optional[Tensor], controller_input: Optional[Tensor]):
         """Generate `num_frames` new frames and return updated tensors."""
         batch_size, init_len = x.size(0), x.size(1)
 
@@ -36,18 +39,15 @@ class AVCachingSampler:
 
         # History for the first frame generation step = full clean clip
         prev_x = x
-        prev_mouse = mouse[:, :init_len] if mouse is not None else None
-        prev_btn = btn[:, :init_len] if btn is not None else None
+        prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
 
         for idx in tqdm(range(self.num_frames), desc="Sampling frames"):
-            start = min(init_len + idx, mouse.size(1) - 1) if mouse is not None else init_len + idx
-            curr_mouse = mouse[:, start: start + 1] if mouse is not None else None
-            curr_btn = btn[:, start: start + 1] if btn is not None else None
+            start = min(init_len + idx, controller_input.size(1) - 1) if controller_input is not None else init_len + idx
+            curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
 
             x = self.denoise_frame(
                 model, prompt, kv_cache,
-                prev_x, prev_mouse, prev_btn,
-                curr_mouse, curr_btn,
+                prev_x, prev_ctrl, curr_ctrl,
                 dt=dt,
             )
 
@@ -55,7 +55,7 @@ class AVCachingSampler:
 
             # all history kv cached except for newly generated from - set the previous as the new state
             prev_x = x
-            prev_mouse, prev_btn = curr_mouse, curr_btn
+            prev_ctrl = curr_ctrl
 
         return torch.cat(latents, dim=1)
 
@@ -70,10 +70,8 @@ class AVCachingSampler:
         prompt,
         kv_cache: KVCache,
         prev_video: torch.Tensor,
-        prev_mouse: torch.Tensor,
-        prev_btn: torch.Tensor,
-        curr_mouse: torch.Tensor,
-        curr_btn: torch.Tensor,
+        prev_ctrl: torch.Tensor,
+        curr_ctrl: torch.Tensor,
         dt: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
@@ -93,8 +91,7 @@ class AVCachingSampler:
             torch.cat([prev_vid, new_vid], dim=1),
             torch.cat([t_prev, t_new], dim=1),
             prompt,
-            torch.cat([prev_mouse, curr_mouse], dim=1) if prev_mouse is not None else None,
-            torch.cat([prev_btn, curr_btn], dim=1) if prev_btn is not None else None,
+            torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None,
             kv_cache=kv_cache,
         )
         kv_cache.disable_cache_updates()
@@ -106,7 +103,7 @@ class AVCachingSampler:
 
         # Remaining diffusion steps with cached history, denoising denoising only new frame
         for step in range(1, self.n_steps):
-            eps_vid = model(new_vid, t_new, prompt, curr_mouse, curr_btn, kv_cache=kv_cache)
+            eps_vid = model(new_vid, t_new, prompt, curr_ctrl, kv_cache=kv_cache)
             new_vid -= eps_vid * dt[step]
             t_new -= dt[step]
 
