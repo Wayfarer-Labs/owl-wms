@@ -23,7 +23,6 @@ alias-free-torch
 git+https://github.com/sypsyp97/convnext_perceptual_loss
 torchtyping
 onnx>=1.17.0
-onnxruntime>=1.19.0
-# TensorRT (GPU acceleration) - optional dependency
-# Install via: pip install tensorrt --extra-index-url https://pypi.nvidia.com
-# OR via NGC container with pre-installed TensorRT
+onnxruntime-gpu>=1.19.0
+--extra-index-url https://pypi.nvidia.com
+tensorrt
