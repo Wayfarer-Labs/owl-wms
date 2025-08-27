@@ -1,5 +1,6 @@
 from typing import Optional
 from torch import Tensor
+from tensordict import TensorDict
 
 import torch
 from tqdm import tqdm
@@ -26,7 +27,7 @@ class AVCachingSampler:
         self.noise_prev = noise_prev
 
     @torch.no_grad()
-    def __call__(self, model, x, prompt: Optional[Tensor], controller_input: Optional[Tensor]):
+    def __call__(self, model, x, prompt: Optional[TensorDict], controller_input: Optional[Tensor]):
         """Generate `num_frames` new frames and return updated tensors."""
         batch_size, init_len = x.size(0), x.size(1)
 

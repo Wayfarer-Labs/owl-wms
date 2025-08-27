@@ -357,12 +357,9 @@ class WorldTrainer(BaseTrainer):
 
         # ---- Generate Samples ----
         eval_batch = self.prep_batch(next(sample_loader))
-        if "mouse" in eval_batch:
-            eval_batch["mouse"], eval_batch["btn"] = batch_permute_to_length(
-                eval_batch["mouse"], eval_batch["btn"], sampler.num_frames + eval_batch["x"].size(1)
-            )
-
         vid, prompt_emb, controller_input = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_input")]
+
+        print("controller_input", controller_input)
 
         with self.autocast_ctx:
             latent_vid = sampler(ema_model, vid, prompt_emb, controller_input)
@@ -389,7 +386,8 @@ class WorldTrainer(BaseTrainer):
         mouse, btn = controller_input.split((2, 11), dim=-1)
         ######
 
-        eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=24) if self.rank == 0 else None
+        if self.rank == 0:
+            eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         dist.barrier()
 
         return eval_wandb_dict
