@@ -388,11 +388,10 @@ class WorldTrainer(BaseTrainer):
         # ---- Generate Media Artifacts ----
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
-        # HACK, remove
-        mouse, btn = controller_inputs.split((2, 11), dim=-1)
-        ######
-
         if self.rank == 0:
+            # HACK, move to to_wandb_samples
+            mouse, btn = controller_inputs.split((2, 11), dim=-1)
+            ######
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         dist.barrier()
 
