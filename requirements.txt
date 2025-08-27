@@ -23,6 +23,7 @@ alias-free-torch
 git+https://github.com/sypsyp97/convnext_perceptual_loss
 wandb[media]
 torchtyping
+git+https://github.com/KellerJordan/Muon
 
 # WorldModel deps
 diffusers
