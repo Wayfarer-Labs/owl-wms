@@ -21,7 +21,7 @@ model:
 
   has_audio: false
 
-  n_controller_inputs: 52 # 13
+  n_controller_inputs: 13
 
   cfg_prob: 0.1
 
