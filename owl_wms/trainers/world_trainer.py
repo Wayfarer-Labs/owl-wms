@@ -220,9 +220,11 @@ class WorldTrainer(BaseTrainer):
         if "rgb" in batch:
             assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
             batch["x"] = self.encoder_decoder.encode(batch.pop("rgb"))
+        assert "mouse" in batch
         if "mouse" in batch or "buttons" in batch:
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
+            assert xs
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
@@ -358,8 +360,6 @@ class WorldTrainer(BaseTrainer):
         # ---- Generate Samples ----
         eval_batch = self.prep_batch(next(sample_loader))
         vid, prompt_emb, controller_input = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_input")]
-
-        print("controller_input", controller_input)
 
         with self.autocast_ctx:
             latent_vid = sampler(ema_model, vid, prompt_emb, controller_input)
