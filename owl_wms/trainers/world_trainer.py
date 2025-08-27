@@ -390,7 +390,8 @@ class WorldTrainer(BaseTrainer):
 
         if self.rank == 0:
             # HACK, move to to_wandb_samples
-            mouse, btn = controller_inputs.split((2, 11), dim=-1)
+            #mouse, btn = controller_inputs.split((2, 11), dim=-1)
+            mouse, btn = None, None
             ######
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         dist.barrier()
