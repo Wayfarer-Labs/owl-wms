@@ -220,11 +220,9 @@ class WorldTrainer(BaseTrainer):
         if "rgb" in batch:
             assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
             batch["x"] = self.encoder_decoder.encode(batch.pop("rgb"))
-        assert "mouse" in batch
         if "mouse" in batch or "buttons" in batch:
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
-            assert xs
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
@@ -359,14 +357,14 @@ class WorldTrainer(BaseTrainer):
 
         # ---- Generate Samples ----
         eval_batch = self.prep_batch(next(sample_loader))
-        vid, prompt_emb, controller_input = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_input")]
+        vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         with self.autocast_ctx:
-            latent_vid = sampler(ema_model, vid, prompt_emb, controller_input)
+            latent_vid = sampler(ema_model, vid, prompt_emb, controller_inputs)
 
         if self.sampler_only_return_generated:
-            latent_vid, controller_input = (
-                x[:, vid.size(1):] if x is not None else None for x in (latent_vid, controller_input)
+            latent_vid, controller_inputs = (
+                x[:, vid.size(1):] if x is not None else None for x in (latent_vid, controller_inputs)
             )
 
         video_out = self.encoder_decoder.decode(latent_vid.float()) if self.encoder_decoder is not None else None
@@ -380,10 +378,10 @@ class WorldTrainer(BaseTrainer):
                 torch.save(latent_vid, eval_dir / f"vid.{self.total_step_counter}.pt")
 
         # ---- Generate Media Artifacts ----
-        video_out, controller_input = map(self._gather_concat_cpu, (video_out, controller_input))
+        video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
         # HACK, remove
-        mouse, btn = controller_input.split((2, 11), dim=-1)
+        mouse, btn = controller_inputs.split((2, 11), dim=-1)
         ######
 
         if self.rank == 0:
