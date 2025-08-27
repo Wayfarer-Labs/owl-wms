@@ -3,7 +3,7 @@ model:
 
   channels: 16  # WAN
 
-  n_layers: 20
+  n_layers: 16 # 20
   n_heads: 16
   d_model: 2048
 
