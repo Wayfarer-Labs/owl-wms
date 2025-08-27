@@ -394,6 +394,9 @@ class WorldTrainer(BaseTrainer):
             mouse, btn = None, None
             ######
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
+        else:
+            eval_wandb_dict = None
+
         dist.barrier()
 
         return eval_wandb_dict
