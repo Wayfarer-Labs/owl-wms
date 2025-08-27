@@ -302,6 +302,7 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(**batch)
 
+    @torch.compile
     def conditional_flow_matching_loss(self, x, **kw):
         """
         x0: [B, N, C, H, W] clean latents (timestep 0.0)

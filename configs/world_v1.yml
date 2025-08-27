@@ -3,7 +3,7 @@ model:
 
   channels: 16  # WAN
 
-  n_layers: 16 # 20
+  n_layers: 20
   n_heads: 16
   d_model: 2048
 
@@ -52,7 +52,7 @@ train:
 
   data_id: sequence_packing
   data_kwargs:
-    window_length: 256
+    window_length: 128 # 256
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
