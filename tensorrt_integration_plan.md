@@ -39,6 +39,7 @@ After implementation completion:
 - Optimizing the main transformer models (only VAE decoders)
 - Supporting dynamic batch sizes (keeping static batch_size=8 optimization)
 - Converting encoders (decoder-only optimization as per current pattern)
+- Modifying the inference of the audio decoder 
 
 ## Implementation Approach
 
@@ -48,7 +49,7 @@ After implementation completion:
 3. Implement robust TensorRT integration for video inference (Phase 3)
 4. Maintain backward compatibility throughout
 5. Focus on single file modification with minimal surface area changes
-6. Audio decoder improvements deferred to future work
+6. Audio decoder improvements deferred to future work (do not modify)
 
 ## Phase 1: Foundation Setup
 
@@ -460,7 +461,7 @@ TENSORRT_CACHE_DIR = Path(os.environ.get('TENSORRT_CACHE_DIR', './tensorrt_cache
 
 #### 3. Performance Monitoring
 **File**: `owl_wms/utils/owl_vae_bridge.py`  
-**Changes**: Add timing and performance metrics
+**Changes**: Add timing and performance metrics for video decoding (not audio)
 ```python
 import time
 from contextlib import contextmanager
@@ -475,26 +476,22 @@ def measure_inference_time(operation_name: str):
     logging.info(f"{operation_name} inference time: {elapsed:.2f}ms")
 
 # Usage in decode functions:
-# with measure_inference_time("TensorRT Audio Decode"):
+# with measure_inference_time("TensorRT Video Decode"):
 #     result = tensorrt_decoder(batch)
 ```
 
 #### 4. Comprehensive Testing Suite
 **File**: `tests/test_tensorrt_integration.py` (new file)
-**Changes**: Full test coverage
+**Changes**: Full test coverage for the video decoder improvements
 ```python
 import pytest
 import torch
 from owl_wms.utils.owl_vae_bridge import (
     make_batched_decode_fn, 
-    make_batched_audio_decode_fn,
     get_decoder_only
 )
 
 class TestTensorRTIntegration:
-    def test_audio_decoder_numerical_accuracy(self):
-        """Test audio decoder TensorRT vs PyTorch accuracy"""
-        pass
         
     def test_video_decoder_numerical_accuracy(self):
         """Test video decoder TensorRT vs PyTorch accuracy"""
@@ -524,7 +521,7 @@ class TestTensorRTIntegration:
 
 #### Manual Verification:
 - [ ] Production deployment successful in NGC container
-- [ ] Audio and video quality maintained in production workloads
+- [ ] Video quality maintained in production workloads
 - [ ] Fallback mechanism tested in failure scenarios
 - [ ] Performance monitoring shows expected improvements
 - [ ] Cache management works over extended periods
@@ -548,12 +545,11 @@ class TestTensorRTIntegration:
 - Multi-GPU compatibility (if applicable)
 
 ### Manual Testing Steps:
-1. **Audio Quality Verification**: A/B test generated audio samples
-2. **Video Quality Verification**: Visual comparison of decoded video frames
-3. **Performance Validation**: Measure inference time improvements across different batch sizes
-4. **Production Load Testing**: Extended runtime with realistic workloads
-5. **Failure Scenario Testing**: Verify graceful fallback when engines fail
-6. **Cache Persistence Testing**: Verify engines load correctly across restarts
+1. **Video Quality Verification**: Visual comparison of decoded video frames
+2. **Performance Validation**: Measure inference time improvements across different batch sizes
+3. **Production Load Testing**: Extended runtime with realistic workloads
+4. **Failure Scenario Testing**: Verify graceful fallback when engines fail
+5. **Cache Persistence Testing**: Verify engines load correctly across restarts
 
 ## Performance Considerations
 
