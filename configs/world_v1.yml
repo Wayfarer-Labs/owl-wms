@@ -90,10 +90,10 @@ train:
   sampler_kwargs:
     n_steps: 16
     cfg_scale: 1.0
-    num_seed_frames: 16
-    num_generated_frames: 256
     noise_prev: 0.2
     only_return_generated: false
+  num_seed_frames: 16
+  num_generated_frames: 256
 
   vae_batch_size: 4
   n_samples: 4
