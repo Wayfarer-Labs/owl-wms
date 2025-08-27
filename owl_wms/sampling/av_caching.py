@@ -16,18 +16,16 @@ class AVCachingSampler:
     ----------
     :param n_steps: Number of diffusion steps for each frame
     :param cfg_scale: Must be 1.0
-    :param num_frames: Number of new frames to sample
     :param noise_prev: Noise previous frame
     """
-    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, num_frames: int = 60, noise_prev: float = 0.2) -> None:
+    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, noise_prev: float = 0.2) -> None:
         if cfg_scale != 1.0:
             raise NotImplementedError("cfg_scale must be 1.0 until updated to handle")
         self.n_steps = n_steps
-        self.num_frames = num_frames
         self.noise_prev = noise_prev
 
     @torch.no_grad()
-    def __call__(self, model, x, prompt: Optional[TensorDict], controller_input: Optional[Tensor]):
+    def __call__(self, model, x, prompt: Optional[TensorDict], controller_input: Optional[Tensor], num_frames=60):
         """Generate `num_frames` new frames and return updated tensors."""
         batch_size, init_len = x.size(0), x.size(1)
 
@@ -42,7 +40,7 @@ class AVCachingSampler:
         prev_x = x
         prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
 
-        for idx in tqdm(range(self.num_frames), desc="Sampling frames"):
+        for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = min(init_len + idx, controller_input.size(1) - 1) if controller_input is not None else init_len + idx
             curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
 

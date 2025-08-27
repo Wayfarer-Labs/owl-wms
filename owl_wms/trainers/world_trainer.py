@@ -367,8 +367,13 @@ class WorldTrainer(BaseTrainer):
         eval_batch = self.prep_batch(next(sample_loader))
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
+        if self.train_cfg.num_seed_frames:
+            vid = vid[:, :self.train_cfg.num_seed_frames]
+
         with self.autocast_ctx:
-            latent_vid = sampler(ema_model, vid, prompt_emb, controller_inputs)
+            latent_vid = sampler(
+                ema_model, vid, prompt_emb, controller_inputs, self.train_cfg.num_generated_frames
+            )
 
         if self.sampler_only_return_generated:
             latent_vid, controller_inputs = (
