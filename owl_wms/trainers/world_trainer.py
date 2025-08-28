@@ -401,7 +401,7 @@ class WorldTrainer(BaseTrainer):
         ####
 
         if self.rank == 0:
-            eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=24)
+            eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         else:
             eval_wandb_dict = None
 
