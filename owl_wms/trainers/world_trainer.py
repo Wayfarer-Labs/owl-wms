@@ -135,6 +135,13 @@ class WorldTrainer(BaseTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # Setup GLOO
+        if self.world_size > 1:
+            assert dist.is_initialized()
+            self.pg_cpu = dist.new_group(backend="gloo")
+        else:
+            self.pg_cpu = None
+
         self.model = WorldModel(self.model_cfg).train()
         self.ema = None
         self.opt = None
@@ -235,7 +242,7 @@ class WorldTrainer(BaseTrainer):
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
 
-        batch["x"] = batch["x"].bfloat16()  # test: does converting to bfloat16 result in less memory and equal results?
+        batch["x"] = batch["x"].bfloat16()
 
         return batch
 
@@ -351,16 +358,16 @@ class WorldTrainer(BaseTrainer):
         """Gather *t* from every rank onto rank 0 and return concatenated copy."""
         if t is None:
             return None
-        if self.world_size == 1:
-            return t.cpu()
+        if self.pg_cpu is None:
+            assert self.world_size == 1
+            return t.detach().cpu()
+        tc = t.detach().cpu()
         if self.rank == 0:
-            parts = [t.cpu()]
-            scratch = torch.empty_like(t)
-            for src in range(1, self.world_size):
-                dist.recv(scratch, src=src)
-                parts.append(scratch.cpu())
-            return torch.cat(parts, dim=dim)
-        dist.send(t, dst=0)
+            bufs = [torch.empty_like(tc) for _ in range(self.world_size)]
+            dist.gather(tc, gather_list=bufs, dst=0, group=self.pg_cpu)
+            return torch.cat(bufs, dim=dim)
+        else:
+            dist.gather(tc, dst=0, group=self.pg_cpu)
 
     def eval_step(self, sample_loader, sampler):
         ema_model = self.get_module(ema=True)
