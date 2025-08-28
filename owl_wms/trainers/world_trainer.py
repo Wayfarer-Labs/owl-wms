@@ -394,10 +394,7 @@ class WorldTrainer(BaseTrainer):
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
         if self.rank == 0:
-            # HACK, move to to_wandb_samples
-            #mouse, btn = controller_inputs.split((2, 11), dim=-1)
-            mouse, btn = None, None
-            ######
+            mouse, btn = controller_inputs.split((2, 11), dim=-1)  # HACKY: assumes mouse / btn slice sizes
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         else:
             eval_wandb_dict = None
