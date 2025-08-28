@@ -14,10 +14,10 @@ model:
   #  width: 26
   #  patch_size: [1, 4, 4]
 
-  tokens_per_frame: 220
-  height: 11
-  width: 20
-  patch_size: [1, 4, 4]
+  tokens_per_frame: 880
+  height: 22
+  width: 40
+  patch_size: [1, 2, 2]
 
   has_audio: false
 
@@ -52,7 +52,7 @@ train:
 
   data_id: sequence_packing
   data_kwargs:
-    window_length: 512
+    window_length: 256
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
