@@ -227,7 +227,7 @@ class WorldTrainer(BaseTrainer):
 
         ####
         # Hack: REMOVE
-        # Subsample controller inputs
+        # Subsample controller inputs (WAN-specific)
         if batch["controller_inputs"].size(1) != batch["x"].size(1):
             batch["controller_inputs"] = batch["controller_inputs"][:, ::4, :]
         ####
@@ -235,6 +235,9 @@ class WorldTrainer(BaseTrainer):
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
+
+        batch["x"] = batch["x"].bfloat16()  # test: does converting to bfloat16 result in less memory and equal results?
+
         return batch
 
     def train_loader(self):
