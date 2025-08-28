@@ -367,7 +367,8 @@ class WorldTrainer(BaseTrainer):
         ema_model = self.get_module(ema=True)
 
         # ---- Generate Samples ----
-        eval_batch = self.prep_batch(next(sample_loader))
+        _eval_batch = next(sample_loader)
+        eval_batch = self.prep_batch(_eval_batch)
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         if self.train_cfg.num_seed_frames:
@@ -397,7 +398,7 @@ class WorldTrainer(BaseTrainer):
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
         if self.rank == 0:
-            mouse, btn = controller_inputs.split((2, 11), dim=-1)  # HACKY: assumes mouse / btn slice sizes
+            mouse, btn = eval_batch["mouse"], eval_batch["btn"]
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         else:
             eval_wandb_dict = None
