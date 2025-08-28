@@ -398,7 +398,7 @@ class WorldTrainer(BaseTrainer):
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
         if self.rank == 0:
-            mouse, btn = _eval_batch["mouse"], _eval_batch["btn"]
+            mouse, btn = _eval_batch["mouse"], _eval_batch["buttons"]
             eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
         else:
             eval_wandb_dict = None
