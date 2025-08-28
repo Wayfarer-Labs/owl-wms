@@ -17,7 +17,6 @@ from ..models.world import WorldModel, PromptEncoder
 from ..sampling import get_sampler_cls
 from ..data import get_loader
 from ..utils.logging import LogHelper, to_wandb_samples
-from ..utils import batch_permute_to_length
 from ..muon import init_muon
 
 
