@@ -103,4 +103,4 @@ train:
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
   project: video_models  # owl
-  run_name: craft_v0.1
+  run_name: world_model_v1
