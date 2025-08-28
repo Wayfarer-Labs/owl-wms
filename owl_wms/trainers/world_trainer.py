@@ -398,7 +398,7 @@ class WorldTrainer(BaseTrainer):
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
         ####
-        mouse, btn = map(self._gather_concat_cpu, (_eval_batch["mouse"], _eval_batch["buttons"]))
+        mouse, btn = map(self._gather_concat_cpu, (_eval_batch["mouse"].cuda(), _eval_batch["buttons"].cuda()))
         ####
 
         if self.rank == 0:
