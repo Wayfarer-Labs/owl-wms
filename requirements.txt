@@ -26,7 +26,6 @@ torchtyping
 git+https://github.com/KellerJordan/Muon
 
 # WorldModel deps
-git+https://github.com/mit-han-lab/efficientvit.git
 diffusers
 tensordict
 transformers
