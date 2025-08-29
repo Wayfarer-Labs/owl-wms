@@ -39,40 +39,33 @@ class DCAE:
         assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
         B, T, _, H, W = x_rgb.shape
 
-        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device)
-        if x4.dtype == torch.uint8:
-            x4 = x4.to(torch.float32).div_(255)          # 0..255 -> 0..1
-        else:
-            x4 = x4.to(torch.float32)                    # ensure float for math
-        x4 = x4.mul(2).sub(1).clamp_(-1, 1)              # 0..1 -> -1..1
-        x4 = x4.to(self.dtype)
+        x4 = x_rgb.reshape(B*T, 3, H, W).to(self.device)
+        x4 = x4.float()
+        if x4.max() > 1:
+            x4 = x4 / 255
+        x4 = x4.mul(2).sub(1).clamp_(-1, 1)
 
-        # 2) Chunk across B*T to cap peak memory
         latents = []
         for xb in x4.split(frames_per_chunk, dim=0):
-            out = self.ae.encode(xb, return_dict=True).latent.clone()
+            out = self.ae.encode(xb.to(self.runtime_dtype), return_dict=True).latent
             latents.append(out)
         z = torch.cat(latents, dim=0) * self.scale
-
-        C, h, w = z.shape[1:]
-        return z.reshape(B, T, C, h, w)
+        z = z.to(self.dtype)        # store as bf16 if you want
+        return z.reshape(B, T, *z.shape[1:])
 
     @torch.no_grad()
     def decode(self, z_model: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
         assert z_model.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_model.shape)}"
         B, T, C, h, w = z_model.shape
-        z4 = z_model.reshape(B * T, C, h, w).to(self.device, self.dtype) / max(self.scale, 1e-12)
+        z4 = z_model.reshape(B * T, C, h, w).to(self.device).to(torch.float32) / max(self.scale, 1e-12)
 
-        # match tiling path; also chunk to limit peak mem
         outs = []
         for zb in z4.split(items_per_chunk, dim=0):
-            sample = self.ae.decode(zb).sample.clone()
+            sample = self.ae.decode(zb).sample
             outs.append(sample)
-        x4 = torch.cat(outs, dim=0)  # [-1,1]
-        x4 = (x4 / 2 + 0.5).clamp(0, 1)
-
-        _, _, H, W = x4.shape
-        return x4.reshape(B, T, 3, H, W)
+        x4 = torch.cat(outs, dim=0)             # [-1,1]
+        x4 = (x4 / 2 + 0.5).clamp_(0, 1)
+        return x4.reshape(B, T, 3, *x4.shape[-2:])
 
     def cuda(self):
         self.device = torch.device("cuda")

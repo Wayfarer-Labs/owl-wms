@@ -24,7 +24,6 @@ model:
   width: 20
   patch_size: [1, 1, 1]
 
-
   has_audio: false
 
   n_controller_inputs: 13
