@@ -45,6 +45,10 @@ class DCAE:
             x4 = x4 / 255
         x4 = x4.mul(2).sub(1).clamp_(-1, 1)
 
+        # --- Channel-order sanity: AE expects CHW here ---
+        assert x4.ndim == 4 and x4.shape[1] == 3 and x4.shape[2] == H and x4.shape[3] == W, \
+            f"encode(): expected (B*T,3,H,W) before AE, got {tuple(x4.shape)}"
+
         latents = []
         for xb in x4.split(frames_per_chunk, dim=0):
             out = self.ae.encode(xb.to(self.dtype), return_dict=True).latent.clone()
@@ -64,8 +68,18 @@ class DCAE:
             sample = self.ae.decode(zb.to(self.dtype)).sample.clone()
             outs.append(sample)
         x4 = torch.cat(outs, dim=0)             # [-1,1]
+
+        # --- Channel-order sanity: AE must return CHW ---
+        assert x4.ndim == 4 and x4.shape[1] == 3, \
+            f"decode(): AE returned non-CHW tensor {tuple(x4.shape)}"
+        Hout, Wout = x4.shape[-2], x4.shape[-1]
+
         x4 = (x4 / 2 + 0.5).clamp_(0, 1)
-        return x4.reshape(B, T, 3, *x4.shape[-2:])
+
+        y = x4.reshape(B, T, 3, Hout, Wout)
+        # --- Channel-order sanity: returning (B,T,3,H,W) downstream ---
+        assert y.shape[2] == 3, f"decode(): returning non-(B,T,3,H,W): {tuple(y.shape)}"
+        return y
 
     def cuda(self):
         self.device = torch.device("cuda")
