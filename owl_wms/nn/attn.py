@@ -117,7 +117,7 @@ class Attn(nn.Module):
 
         # update cache
         if kv_cache is not None and kv_cache.should_update:
-            kv_cache.update(k.clone(), v.clone(), self.layer_idx)
+            kv_cache.update(k, v, self.layer_idx)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)

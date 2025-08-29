@@ -7,7 +7,7 @@ model:
   n_heads: 16
   d_model: 2048
 
-  n_frames: 4096
+  n_frames: 2048
 
   #  tokens_per_frame: 390
   #  height: 15
@@ -64,7 +64,7 @@ train:
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 4096  # size of single ground truth start tokens
+    window_length: 2048  # size of single ground truth start tokens
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
@@ -99,7 +99,7 @@ train:
     noise_prev: 0.2
     only_return_generated: false
   num_seed_frames: 60
-  num_generated_frames: 3600
+  num_generated_frames: 1800
 
   vae_batch_size: 4
   n_samples: 4
