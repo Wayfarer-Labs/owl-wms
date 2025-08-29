@@ -47,7 +47,7 @@ class DCAE:
 
         latents = []
         for xb in x4.split(frames_per_chunk, dim=0):
-            out = self.ae.encode(xb.to(self.ae.conv_in.weight.dtype), return_dict=True).latent
+            out = self.ae.encode(xb.float(), return_dict=True).latent
             latents.append(out)
         z = torch.cat(latents, dim=0) * self.scale
         z = z.to(self.dtype)        # store as bf16 if you want
