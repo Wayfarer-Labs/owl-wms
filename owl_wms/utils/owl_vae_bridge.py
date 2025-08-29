@@ -632,6 +632,7 @@ def make_batched_decode_fn(decoder, batch_size: int = 8, use_tensorrt: bool = Tr
     - If anything fails, seamlessly fall back to the original PyTorch path.
     """
     tensorrt_decoder = None
+    compiled_decoder = None
     # Read env dynamically so tests/users can toggle without reloading the module
     env_enabled = os.environ.get("TENSORRT_ENABLED", "true").lower() == "true"
     env_precision = os.environ.get("TENSORRT_PRECISION", TENSORRT_PRECISION)
@@ -640,6 +641,15 @@ def make_batched_decode_fn(decoder, batch_size: int = 8, use_tensorrt: bool = Tr
         env_cache_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
+    # Prepare a compiled PyTorch fallback decoder (max_autotune) up front.
+    # If compilation is unavailable or fails, we will transparently use the
+    # original decoder implementation.
+    try:
+        compiled_decoder = torch.compile(decoder, mode="max_autotune", dynamic=False, fullgraph=True)
+        logging.info("Prepared compiled PyTorch fallback decoder (mode=max_autotune, dynamic=False, fullgraph=True)")
+    except Exception as e:
+        logging.debug(f"torch.compile unavailable or failed; using eager decoder fallback: {e}")
 
     if use_tensorrt and TENSORRT_AVAILABLE and env_enabled:
         try:
@@ -686,12 +696,13 @@ def make_batched_decode_fn(decoder, batch_size: int = 8, use_tensorrt: bool = Tr
             except Exception as e:
                 logging.warning(f"TensorRT inference failed: {e}. Falling back to PyTorch for this call.")
 
-        # PyTorch fallback path (original implementation)
+        # PyTorch fallback path (compiled if available)
         batches = x.split(batch_size)
         batch_out = []
         for batch in batches:
             with measure_inference_time("PyTorch Video Decode"):
-                batch_out.append(decoder(batch).bfloat16())
+                runner = compiled_decoder if compiled_decoder is not None else decoder
+                batch_out.append(runner(batch).bfloat16())
         x = torch.cat(batch_out)
         _, c, h, w = x.shape
         x = x.view(b, n, c, h, w).contiguous()
