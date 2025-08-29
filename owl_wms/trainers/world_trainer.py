@@ -38,9 +38,14 @@ class DCAE:
     def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
         assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
         B, T, _, H, W = x_rgb.shape
-        x4 = x_rgb.reshape(B * T, 3, H, W)\
-                  .to(self.device, self.dtype)\
-                  .mul(2).sub(1).clamp(-1, 1)
+
+        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device)
+        if x4.dtype == torch.uint8:
+            x4 = x4.to(torch.float32).div_(255)          # 0..255 -> 0..1
+        else:
+            x4 = x4.to(torch.float32)                    # ensure float for math
+        x4 = x4.mul(2).sub(1).clamp_(-1, 1)              # 0..1 -> -1..1
+        x4 = x4.to(self.dtype)
 
         # 2) Chunk across B*T to cap peak memory
         latents = []
