@@ -19,10 +19,16 @@ model:
   #  width: 40
   #  patch_size: [1, 2, 2]
 
-  tokens_per_frame: 240
-  height: 12
-  width: 20
+  #  tokens_per_frame: 240
+  #  height: 12
+  #  width: 20
+  #  patch_size: [1, 1, 1]
+
+  tokens_per_frame: 60
+  height: 6
+  width: 10
   patch_size: [1, 1, 1]
+
 
   has_audio: false
 

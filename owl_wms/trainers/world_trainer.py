@@ -21,7 +21,7 @@ from ..muon import init_muon
 
 
 class DCAE:
-    def __init__(self, model_id: str = "mit-han-lab/dc-ae-f32c32-sana-1.1-diffusers", dtype=torch.float32, *_, **__):
+    def __init__(self, model_id: str = "mit-han-lab/dc-ae-f64c128-sana-1.1-diffusers", dtype=torch.float32, *_, **__):
         from diffusers import AutoencoderDC
         self.device = torch.device("cpu")
         self.dtype = dtype
@@ -298,12 +298,13 @@ class WorldTrainer(BaseTrainer):
         if "rgb" in batch:
             assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
             ####
-            # Pad to multiples of 32 (centered) instead of cropping
+            # Pad to multiples of F (centered) instead of cropping
+            F = 64
             rgb = batch.pop("rgb")
             assert rgb.shape[2] == 3
             H, W = rgb.shape[-2], rgb.shape[-1]
-            Hp = ((H + 31) // 32) * 32
-            Wp = ((W + 31) // 32) * 32
+            Hp = ((H + 31) // F) * F
+            Wp = ((W + 31) // F) * F
             pt = (Hp - H) // 2; pb = Hp - H - pt
             pl = (Wp - W) // 2; pr = Wp - W - pl
             rgb = F.pad(rgb, (pl, pr, pt, pb))  # (W_left, W_right, H_top, H_bottom)
