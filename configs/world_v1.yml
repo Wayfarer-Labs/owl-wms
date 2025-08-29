@@ -98,7 +98,7 @@ train:
     noise_prev: 0.2
     only_return_generated: false
   num_seed_frames: 60
-  num_generated_frames: 1000
+  num_generated_frames: 100  # 1000
 
   vae_batch_size: 4
   n_samples: 4
