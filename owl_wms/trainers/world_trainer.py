@@ -37,8 +37,8 @@ class DCAE:
     @torch.no_grad()
     def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
         """
-        Input:  (B,T,3,H,W) uint8 [0,255] or float in [0,1] or [-1,1]
-        Output: (B,T,C,h,w) latents (model space)
+        Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
+        Output: (B,T,C,h,w)  model-space latents
         """
         assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, \
             f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
@@ -47,45 +47,45 @@ class DCAE:
         x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device).to(torch.float32)
 
         # Normalize to [-1, 1]
-        if x4.max() > 1.0:            # likely uint8
-            x4 = x4 / 255.0           # -> [0,1]
-        if x4.min() < 0.0:            # already [-1,1]
+        if x4.max() > 1.0:      # likely uint8
+            x4 = x4 / 255.0     # -> [0,1]
+        if x4.min() < 0.0:      # already [-1,1]
             x4 = x4.clamp_(-1, 1)
-        else:                         # [0,1] -> [-1,1]
+        else:                   # [0,1] -> [-1,1]
             x4 = x4.mul(2).sub(1).clamp_(-1, 1)
 
         latents = []
         for xb in x4.split(frames_per_chunk, dim=0):
-            out = self.ae.encode(xb.to(self.dtype), return_dict=True).latent.clone()
-            latents.append(out)
-        z = torch.cat(latents, dim=0) * self.scale
+            z = self.ae.encode(xb.to(self.dtype), return_dict=True).latent
+            latents.append(z)
+        z = torch.cat(latents, dim=0) * self.scale                      # (B*T,C,h,w) model-space
         z = z.to(self.dtype)
-        return z.reshape(B, T, *z.shape[1:])  # (B,T,C,h,w)
+        return z.reshape(B, T, *z.shape[1:])                            # (B,T,C,h,w)
 
     @torch.no_grad()
     def decode(self, z_model: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
         """
-        Input:  (B,T,C,h,w) latents (model space)
-        Output: (B,T,H,W,3) pixels in [0,1] (channels-last for logging)
+        Input:  (B,T,C,h,w)  model-space latents
+        Output: (B,T,3,H,W)  pixels in [0,1]  (WAN-style: time=dim1, RGB=dim2)
         """
         assert z_model.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_model.shape)}"
         B, T, C, h, w = z_model.shape
 
         z4 = z_model.reshape(B * T, C, h, w).to(self.device).to(torch.float32)
-        z4 = z4 / max(self.scale, 1e-12)
+        z4 = z4 / max(self.scale, 1e-12)                                # back to VAE space
 
         outs = []
         for zb in z4.split(items_per_chunk, dim=0):
-            sample = self.ae.decode(zb.to(self.dtype)).sample.clone()   # (N,3,Hout,Wout) in [-1,1]
-            outs.append(sample)
+            x = self.ae.decode(zb.to(self.dtype)).sample                # (N,3,Hout,Wout) in [-1,1]
+            outs.append(x)
         x4 = torch.cat(outs, dim=0)
 
-        assert x4.ndim == 4 and x4.shape[1] == 3, f"decode(): AE returned {tuple(x4.shape)}"
-        x4 = (x4 / 2 + 0.5).clamp_(0, 1)  # -> [0,1]
-        Hout, Wout = x4.shape[-2], x4.shape[-1]
+        assert x4.ndim == 4 and x4.shape[1] == 3, \
+            f"decode(): AE returned {tuple(x4.shape)}, expected (N,3,H,W)"
 
-        y_cf = x4.reshape(B, T, 3, Hout, Wout)                 # (B,T,3,H,W)
-        return y_cf.permute(0, 1, 3, 4, 2).contiguous()        # (B,T,H,W,3)
+        x4 = (x4 / 2 + 0.5).clamp_(0, 1)                                # -> [0,1]
+        Hout, Wout = x4.shape[-2], x4.shape[-1]
+        return x4.reshape(B, T, 3, Hout, Wout)                          # (B,T,3,H,W)
 
     def cuda(self):
         self.device = torch.device("cuda")
