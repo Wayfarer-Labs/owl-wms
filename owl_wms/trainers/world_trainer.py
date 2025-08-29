@@ -26,7 +26,7 @@ class DCAE:
         self.device = torch.device("cpu")
         self.dtype = dtype
 
-        self.ae = DCAE_HF.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
+        self.ae = AutoencoderDC.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
         freeze(self.ae)
 
         self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
