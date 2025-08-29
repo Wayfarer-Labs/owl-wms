@@ -7,7 +7,7 @@ model:
   n_heads: 16
   d_model: 2048
 
-  n_frames: 2048
+  n_frames: 1024
 
   #  tokens_per_frame: 390
   #  height: 15
@@ -38,7 +38,7 @@ model:
   rope_ats_delta: 2.0
 
   local_window: 16
-  global_window: 128
+  global_window: 256
 
 train:
   trainer_id: world
@@ -57,13 +57,13 @@ train:
 
   data_id: sequence_packing
   data_kwargs:
-    window_length: 128
+    window_length: 256
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 1100  # size of single ground truth start tokens
+    window_length: 1024  # size of single ground truth start tokens
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
@@ -98,7 +98,7 @@ train:
     noise_prev: 0.2
     only_return_generated: false
   num_seed_frames: 60
-  num_generated_frames: 100  # 1000
+  num_generated_frames: 900
 
   vae_batch_size: 4
   n_samples: 4
