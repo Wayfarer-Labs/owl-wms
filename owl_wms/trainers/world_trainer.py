@@ -29,8 +29,8 @@ class DCAE:
         self.ae = AutoencoderDC.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
         freeze(self.ae)
 
-        self.ae.encoder = torch.compile(self.ae.encoder, mode="reduce-overhead", fullgraph=False)
-        self.ae.decoder = torch.compile(self.ae.decoder, mode="reduce-overhead", fullgraph=False)
+        #self.ae.encoder = torch.compile(self.ae.encoder, mode="reduce-overhead", fullgraph=False)
+        #self.ae.decoder = torch.compile(self.ae.decoder, mode="reduce-overhead", fullgraph=False)
 
         self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
 
