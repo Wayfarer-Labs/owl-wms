@@ -26,7 +26,7 @@ class DCAE:
         self.device = torch.device("cpu")
         self.dtype = dtype
 
-        self.ae = AutoencoderDC.from_pretrained(model_id, dtype=self.dtype).to(self.device).eval()
+        self.ae = AutoencoderDC.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
         freeze(self.ae)
 
         #self.ae.encoder = torch.compile(self.ae.encoder, mode="reduce-overhead", fullgraph=False)
