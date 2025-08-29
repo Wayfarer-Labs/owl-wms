@@ -61,7 +61,7 @@ class DCAE:
 
         outs = []
         for zb in z4.split(items_per_chunk, dim=0):
-            sample = self.ae.decode(zb).sample.clone()
+            sample = self.ae.decode(zb.to(self.dtype)).sample.clone()
             outs.append(sample)
         x4 = torch.cat(outs, dim=0)             # [-1,1]
         x4 = (x4 / 2 + 0.5).clamp_(0, 1)
