@@ -87,7 +87,7 @@ class DCAE:
         x4 = (x4 / 2 + 0.5).clamp_(0, 1)  # -> [0,1]
         Hout, Wout = x4.shape[-2], x4.shape[-1]
         # (B*T,3,H,W) -> (B,T,H,W,3)
-        return x4.reshape(B, T, 3, Hout, Wout).permute(0, 1, 3, 4, 2).contiguous()
+        return x4.reshape(B, T, 3, Hout, Wout).contiguous()
 
     def cuda(self):
         self.device = torch.device("cuda")
