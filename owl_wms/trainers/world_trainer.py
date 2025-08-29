@@ -213,7 +213,7 @@ class WorldTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        self.encoder_decoder = DCAE(dtype=torch.bfloat16)
+        self.encoder_decoder = DCAE()
         self.prompt_encoder = PromptEncoder()
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
