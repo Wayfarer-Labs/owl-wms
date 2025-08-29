@@ -21,6 +21,7 @@ datasets
 huggingface-hub
 alias-free-torch
 git+https://github.com/sypsyp97/convnext_perceptual_loss
+wandb[media]
 torchtyping
 onnx>=1.17.0
 onnxruntime-gpu>=1.19.0
