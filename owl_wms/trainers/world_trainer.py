@@ -22,7 +22,7 @@ from ..muon import init_muon
 
 class DCAE:
     def __init__(self, model_id: str = "mit-han-lab/dc-ae-f32c32-sana-1.1-diffusers", dtype=torch.float32, *_, **__):
-        from efficientvit.ae_model_zoo import DCAE_HF
+        from diffusers import AutoencoderDC
         self.device = torch.device("cpu")
         self.dtype = dtype
 
