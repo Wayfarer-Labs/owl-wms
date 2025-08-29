@@ -299,12 +299,12 @@ class WorldTrainer(BaseTrainer):
             assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
             ####
             # Pad to multiples of F (centered) instead of cropping
-            F = 64
+            f = 64
             rgb = batch.pop("rgb")
             assert rgb.shape[2] == 3
             H, W = rgb.shape[-2], rgb.shape[-1]
-            Hp = ((H + 31) // F) * F
-            Wp = ((W + 31) // F) * F
+            Hp = ((H + 31) // f) * f
+            Wp = ((W + 31) // f) * f
             pt = (Hp - H) // 2; pb = Hp - H - pt
             pl = (Wp - W) // 2; pr = Wp - W - pl
             rgb = F.pad(rgb, (pl, pr, pt, pb))  # (W_left, W_right, H_top, H_bottom)
