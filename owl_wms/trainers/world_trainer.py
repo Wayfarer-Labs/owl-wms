@@ -20,6 +20,70 @@ from ..utils.logging import LogHelper, to_wandb_samples
 from ..muon import init_muon
 
 
+class DCAE:
+    def __init__(self, model_id: str = "mit-han-lab/dc-ae-f32c32-sana-1.1-diffusers", dtype=torch.float32, *_, **__):
+        from diffusers import AutoencoderDC
+        self.device = torch.device("cpu")
+        self.dtype = dtype
+
+        self.ae = AutoencoderDC.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
+        freeze(self.ae)
+
+        self.ae.encoder = torch.compile(self.ae.encoder, mode="reduce-overhead", fullgraph=False)
+        self.ae.decoder = torch.compile(self.ae.decoder, mode="reduce-overhead", fullgraph=False)
+
+        self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
+
+    @torch.no_grad()
+    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
+        assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
+        B, T, _, H, W = x_rgb.shape
+        x4 = x_rgb.reshape(B * T, 3, H, W)\
+                  .to(self.device, self.dtype)\
+                  .mul(2).sub(1).clamp(-1, 1)
+
+        # 2) Chunk across B*T to cap peak memory
+        latents = []
+        for xb in x4.split(frames_per_chunk, dim=0):
+            out = self.ae.encode(xb, return_dict=True).latent.clone()
+            latents.append(out)
+        z = torch.cat(latents, dim=0) * self.scale
+
+        C, h, w = z.shape[1:]
+        return z.reshape(B, T, C, h, w)
+
+    @torch.no_grad()
+    def decode(self, z_model: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
+        assert z_model.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_model.shape)}"
+        B, T, C, h, w = z_model.shape
+        z4 = z_model.reshape(B * T, C, h, w).to(self.device, self.dtype) / max(self.scale, 1e-12)
+
+        # match tiling path; also chunk to limit peak mem
+        outs = []
+        for zb in z4.split(items_per_chunk, dim=0):
+            sample = self.ae.decode(zb).sample.clone()
+            outs.append(sample)
+        x4 = torch.cat(outs, dim=0)  # [-1,1]
+        x4 = (x4 / 2 + 0.5).clamp(0, 1)
+
+        _, _, H, W = x4.shape
+        return x4.reshape(B, T, 3, H, W)
+
+    def cuda(self):
+        self.device = torch.device("cuda")
+        self.ae.to(self.device)
+        return self
+
+    def to(self, device):
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        self.ae.to(self.device)
+        return self
+
+    def eval(self):
+        self.ae.eval()
+        return self
+
+
 class WanEncoderDecoder:
     """
     Minimal encode/decode wrapper for Diffusers' AutoencoderKLWan.
@@ -151,13 +215,7 @@ class WorldTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        from diffusers import AutoencoderKLWan
-        self.decoder = AutoencoderKLWan.from_pretrained(
-            "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
-            subfolder="vae",
-            torch_dtype=torch.float32,
-        )
-        freeze(self.decoder)
+        self.encoder_decoder = DCAE(dtype=torch.bfloat16)
         self.prompt_encoder = PromptEncoder()
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
@@ -181,8 +239,7 @@ class WorldTrainer(BaseTrainer):
 
     def load(self) -> None:
         # VAE
-        self.decoder = self.decoder.cuda().eval()
-        self.encoder_decoder = WanEncoderDecoder(self.decoder, self.train_cfg.vae_batch_size)
+        self.encoder_decoder = self.encoder_decoder.cuda().eval()
         # Prompt Encoder
         self.prompt_encoder = self.prompt_encoder.cuda().eval()
 
@@ -225,18 +282,19 @@ class WorldTrainer(BaseTrainer):
         batch = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
         if "rgb" in batch:
             assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
-            batch["x"] = self.encoder_decoder.encode(batch.pop("rgb"))
+            ####
+            # Crop for WAN
+            rgb = batch.pop("rgb")
+            H, W = rgb.shape[-2], rgb.shape[-1]
+            Hc, Wc = (H // 32) * 32, (W // 32) * 32
+            t, le = (H - Hc) // 2, (W - Wc) // 2
+            rgb = rgb[..., t:t + Hc, le:le + Wc]
+            ####
+            batch["x"] = self.encoder_decoder.encode(rgb)
         if "mouse" in batch or "buttons" in batch:
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
-
-        ####
-        # Hack: REMOVE
-        # Subsample controller inputs (WAN-specific)
-        if batch["controller_inputs"].size(1) != batch["x"].size(1):
-            batch["controller_inputs"] = batch["controller_inputs"][:, ::4, :]
-        ####
 
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
@@ -390,7 +448,7 @@ class WorldTrainer(BaseTrainer):
                 x[:, vid.size(1):] if x is not None else None for x in (latent_vid, controller_inputs)
             )
 
-        video_out = self.encoder_decoder.decode(latent_vid.float()) if self.encoder_decoder is not None else None
+        video_out = self.encoder_decoder.decode(latent_vid) if self.encoder_decoder is not None else None
 
         # ---- Optionally Save Latent Artifacts ----
         if getattr(self.train_cfg, "eval_sample_dir", None):

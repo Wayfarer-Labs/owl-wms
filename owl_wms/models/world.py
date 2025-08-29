@@ -174,7 +174,7 @@ class WorldModel(nn.Module):
             eo.rearrange(x, 'b n c h w -> b c n h w').contiguous()
         )
         _, _, n, h, w = x.shape
-        assert (self.config.height, self.config.width) == (h, w)
+        assert (self.config.height, self.config.width) == (h, w), f"{h}, {w}"
 
         # transformer fwd
         x = eo.rearrange(x, 'b d n h w -> b (n h w) d')

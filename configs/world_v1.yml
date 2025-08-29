@@ -1,23 +1,29 @@
 model:
   model_id: game_rft
 
-  channels: 16  # WAN
+  channels: 32  # DC-AE-f32
 
   n_layers: 16
   n_heads: 16
   d_model: 2048
 
-  n_frames: 1024
+  n_frames: 4096
 
   #  tokens_per_frame: 390
   #  height: 15
   #  width: 26
   #  patch_size: [1, 4, 4]
 
-  tokens_per_frame: 880
-  height: 22
-  width: 40
-  patch_size: [1, 2, 2]
+  #  tokens_per_frame: 880
+  #  height: 22
+  #  width: 40
+  #  patch_size: [1, 2, 2]
+
+  tokens_per_frame: 220
+  height: 11
+  width: 20
+  patch_size: [1, 1, 1]
+
 
   has_audio: false
 
@@ -33,7 +39,7 @@ model:
   rope_ats_delta: 2.0
 
   local_window: 16
-  global_window: 256
+  global_window: 128
 
 train:
   trainer_id: world
@@ -52,7 +58,7 @@ train:
 
   data_id: sequence_packing
   data_kwargs:
-    window_length: 256
+    window_length: 128
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["rgb", "mouse", "buttons"]
 
@@ -92,8 +98,8 @@ train:
     cfg_scale: 1.0
     noise_prev: 0.2
     only_return_generated: false
-  num_seed_frames: 16
-  num_generated_frames: 600
+  num_seed_frames: 60
+  num_generated_frames: 3600
 
   vae_batch_size: 4
   n_samples: 4
