@@ -19,7 +19,7 @@ model:
   #  width: 40
   #  patch_size: [1, 2, 2]
 
-  tokens_per_frame: 220
+  tokens_per_frame: 240
   height: 12
   width: 20
   patch_size: [1, 1, 1]
