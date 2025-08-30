@@ -202,8 +202,6 @@ class SD3VAE:
         return self
 
 
-import torch
-
 class OstrisVAE:
     def __init__(
         self,
@@ -517,6 +515,9 @@ class WorldTrainer(BaseTrainer):
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
+
+        # TEST: remove controller inputs
+        batch["controller_inputs"] = None
 
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
