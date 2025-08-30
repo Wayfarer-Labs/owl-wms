@@ -202,6 +202,106 @@ class SD3VAE:
         return self
 
 
+import torch
+
+class OstrisVAE:
+    def __init__(
+        self,
+        model_id: str = "ostris/vae-kl-f8-d16",  # Ostris VAE repo (KL, f8, 16-ch)
+        dtype: torch.dtype = torch.float32,
+        *_, **__
+    ):
+        """
+        Loads the Ostris VAE (AutoencoderKL) and exposes the same interface/behavior
+        as your DCAE/SD3VAE wrappers:
+          - encode() takes (B,T,3,H,W) -> returns (B,T,C,h,w) *unscaled* latents
+          - decode() takes (B,T,C,h,w) -> returns (B,T,3,H,W) in [-1,1]
+        Requirements: H % 8 == 0 and W % 8 == 0.
+        """
+        from diffusers import AutoencoderKL
+
+        self.device = torch.device("cpu")
+        self.dtype = dtype
+
+        # Ostris is a standalone VAE repo (no subfolder). Keep a small fallback just in case.
+        try:
+            self.ae = AutoencoderKL.from_pretrained(model_id, torch_dtype=self.dtype)
+        except Exception:
+            self.ae = AutoencoderKL.from_pretrained(model_id, subfolder="vae", torch_dtype=self.dtype)
+
+        self.ae = self.ae.to(self.device).eval()
+        freeze(self.ae)  # matches your pattern
+
+        # We don't apply this; kept for symmetry with your DCAE/SD3VAE.
+        self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
+
+    @torch.no_grad()
+    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
+        """
+        Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
+        Output: (B,T,C,h,w)  *unscaled* VAE latents (no scaling_factor applied)
+        """
+        assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, \
+            f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
+
+        B, T, _, H, W = x_rgb.shape
+        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device).to(torch.float32)
+
+        # Normalize to [-1, 1]
+        if x4.max() > 1.0:      # likely uint8
+            x4 = x4 / 255.0     # -> [0,1]
+        if x4.min() < 0.0:      # already [-1,1]
+            x4 = x4.clamp_(-1, 1)
+        else:                   # [0,1] -> [-1,1]
+            x4 = x4.mul(2).sub(1).clamp_(-1, 1)
+
+        latents = []
+        for xb in x4.split(frames_per_chunk, dim=0):
+            enc = self.ae.encode(xb.to(self.dtype))
+            # Deterministic latents to match your SD3 wrapper behavior
+            z = enc.latent_dist.mode()          # (N,C,h,w), *unscaled*
+            latents.append(z)
+        z = torch.cat(latents, dim=0).to(self.dtype)    # (B*T,C,h,w)
+        return z.reshape(B, T, *z.shape[1:])            # (B,T,C,h,w)
+
+    @torch.no_grad()
+    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
+        """
+        Input : (B,T,C,h,w)  *unscaled* VAE latents
+        Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)
+        """
+        assert z_vae.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_vae.shape)}"
+        B, T, C, h, w = z_vae.shape
+
+        z4 = z_vae.reshape(B * T, C, h, w).to(self.device).to(torch.float32)
+
+        outs = []
+        for zb in z4.split(items_per_chunk, dim=0):
+            x = self.ae.decode(zb.to(self.dtype)).sample   # (N,3,Hout,Wout) in [-1,1]
+            outs.append(x)
+        x4 = torch.cat(outs, dim=0)
+
+        assert x4.ndim == 4 and x4.shape[1] == 3, \
+            f"decode(): AE returned {tuple(x4.shape)}, expected (N,3,H,W)"
+
+        Hout, Wout = x4.shape[-2], x4.shape[-1]
+        return x4.reshape(B, T, 3, Hout, Wout).contiguous()
+
+    def cuda(self):
+        self.device = torch.device("cuda")
+        self.ae.to(self.device)
+        return self
+
+    def to(self, device):
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        self.ae.to(self.device)
+        return self
+
+    def eval(self):
+        self.ae.eval()
+        return self
+
+
 class WanEncoderDecoder:
     """
     Minimal encode/decode wrapper for Diffusers' AutoencoderKLWan.
@@ -333,7 +433,7 @@ class WorldTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        self.encoder_decoder = SD3VAE()
+        self.encoder_decoder = OstrisVAE()
         self.prompt_encoder = PromptEncoder()
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
