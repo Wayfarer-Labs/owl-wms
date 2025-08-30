@@ -516,9 +516,6 @@ class WorldTrainer(BaseTrainer):
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
 
-        # TEST: remove controller inputs
-        batch["controller_inputs"] = None
-
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))

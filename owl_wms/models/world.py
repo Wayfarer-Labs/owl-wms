@@ -53,10 +53,10 @@ class ControllerInputEmbedding(nn.Module):
 
 class WorldDiTBlock(nn.Module):
     def __init__(self, config, layer_idx):
-        # TODO: `config.enable_text`
         super().__init__()
         self.attn = owl_nn.Attn(config, layer_idx)
-        self.cross_attn = owl_nn.CrossAttention(config)
+        # self.cross_attn = owl_nn.CrossAttention(config)
+        self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
         self.mlp = owl_nn.MLP(config)
 
         dim = config.d_model
@@ -64,7 +64,7 @@ class WorldDiTBlock(nn.Module):
         self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
         self.adaln2, self.gate2 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
 
-    def forward(self, x, cond, prompt_emb, block_mask, kv_cache=None):
+    def forward(self, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
         0) Causal Frame Attention
         1) Frame->Text Cross Attention
@@ -75,13 +75,17 @@ class WorldDiTBlock(nn.Module):
         x = self.attn(x, block_mask, kv_cache)
         x = self.gate0(x, cond) + residual
 
-        # TODO: put back
+        # TODO: combine prompt and ctrl cross attn with separate k, v, etc
         """
         residual = x
         x = self.adaln1(x, cond)
         x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
         x = self.gate1(x, cond) + residual
         """
+        residual = x
+        x = self.adaln1(x, cond)
+        x = self.cross_attn_same_frame(x, context=ctrl_emb)
+        x = self.gate1(x, cond) + residual
 
         residual = x
         x = self.adaln2(x, cond)
@@ -98,7 +102,7 @@ class WorldDiT(nn.Module):
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
-    def forward(self, x, cond, prompt_emb, doc_id=None, kv_cache=None):
+    def forward(self, x, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
         enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
 
         # generate block masks for each layer
@@ -110,9 +114,9 @@ class WorldDiT(nn.Module):
         )
         for block, block_mask in zip(self.blocks, block_masks):
             if enable_ckpt:
-                x = owl_nn.checkpoint(block, x, cond, prompt_emb, block_mask, kv_cache)
+                x = owl_nn.checkpoint(block, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
             else:
-                x = block(x, cond, prompt_emb, block_mask, kv_cache)
+                x = block(x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
         return x
 
 
@@ -142,9 +146,9 @@ class WorldModel(nn.Module):
         self.proj_in = nn.Conv3d(config.channels, config.d_model, kernel_size=P, stride=P, bias=False)
         self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels, kernel_size=P, stride=P, bias=True)
 
-    def get_conditioning_vectors(self, ts_emb, ctrl_emb):
+    def get_conditioning_vectors(self, ts_emb):
         # placeholder until we have Dit-Air and move ctrl_emb to cross attn
-        return ts_emb + (ctrl_emb if ctrl_emb is not None else 0)
+        return ts_emb
 
     def forward(
         self,
@@ -166,19 +170,18 @@ class WorldModel(nn.Module):
 
         # embed
         ts_emb = self.timestep_emb(ts)  # [B, N, d]
+        cond = self.get_conditioning_vectors(ts_emb)
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
-        cond = self.get_conditioning_vectors(ts_emb, ctrl_emb)
 
         # patchify
-        x = self.proj_in(
-            eo.rearrange(x, 'b n c h w -> b c n h w').contiguous()
-        )
+        x = eo.rearrange(x, 'b n c h w -> b c n h w').contiguous()
+        x = self.proj_in(x)
         _, _, n, h, w = x.shape
         assert (self.config.height, self.config.width) == (h, w), f"{h}, {w}"
 
         # transformer fwd
         x = eo.rearrange(x, 'b d n h w -> b (n h w) d')
-        x = self.transformer(x, cond, prompt_emb, doc_id, kv_cache)  # TODO: pass ctrl_emb instead of including in cond
+        x = self.transformer(x, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
         x = eo.rearrange(x, 'b (n h w) d -> b d n h w', n=n, h=h, w=w).contiguous()
 
         # unpatchify

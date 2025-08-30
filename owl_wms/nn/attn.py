@@ -143,6 +143,35 @@ class CrossAttention(nn.Module):
         return self.o(out)
 
 
+# HACK - clean up
+class CrossAttentionSameFrame(nn.Module):
+    def __init__(self, config, context_dim=None):
+        super().__init__()
+        assert config.d_model % config.n_heads == 0
+        self.n_heads = config.n_heads
+        self.q = nn.Linear(config.d_model, config.d_model)
+        self.kv = nn.Linear(context_dim or config.d_model, config.d_model * 2)
+        self.o = nn.Linear(config.d_model, config.d_model)
+
+    def forward(self, x, context, context_pad_mask=None):
+        q = eo.rearrange(self.q(x), 'b n (h d) -> b h n d', h=self.n_heads)
+        k, v = eo.rearrange(self.kv(context), "b m (two h d) -> two b h m d", two=2, h=self.n_heads)
+        # Per-frame mask: each query token only attends to its frame's controller token
+        B, _, Lq, _ = q.shape
+        M = k.size(2)
+        assert Lq % M == 0, "query length must be an integer multiple of #context frames"
+        tpf = Lq // M  # tokens per frame
+        q_frame = torch.arange(Lq, device=x.device) // tpf                      # [Lq]
+        m_idx = torch.arange(M, device=x.device)[None, :]                       # [1, M]
+        frame_mask = (q_frame[:, None] != m_idx).unsqueeze(0).unsqueeze(0)      # [1,1,Lq,M] (True=masked)
+        attn_mask = frame_mask.expand(B, 1, Lq, M)                               # [B,1,Lq,M]
+        attn_mask = attn_mask | context_pad_mask[:, None, None, :]
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
+        return self.o(out)
+
+
+
 class DiTBlock(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
