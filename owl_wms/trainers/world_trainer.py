@@ -257,7 +257,7 @@ class OstrisVAE:
         for xb in x4.split(frames_per_chunk, dim=0):
             enc = self.ae.encode(xb.to(self.dtype))
             # Deterministic latents to match your SD3 wrapper behavior
-            z = enc.latent_dist.mode()          # (N,C,h,w), *unscaled*
+            z = enc.latent_dist.mode() * self.scale
             latents.append(z)
         z = torch.cat(latents, dim=0).to(self.dtype)    # (B*T,C,h,w)
         return z.reshape(B, T, *z.shape[1:])            # (B,T,C,h,w)
@@ -275,7 +275,7 @@ class OstrisVAE:
 
         outs = []
         for zb in z4.split(items_per_chunk, dim=0):
-            x = self.ae.decode(zb.to(self.dtype)).sample   # (N,3,Hout,Wout) in [-1,1]
+            x = self.ae.decode(zb.to(self.dtype) / self.scale).sample   # (N,3,Hout,Wout) in [-1,1]
             outs.append(x)
         x4 = torch.cat(outs, dim=0)
 
