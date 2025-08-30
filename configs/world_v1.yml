@@ -25,9 +25,9 @@ model:
   #  patch_size: [1, 1, 1]
 
   tokens_per_frame: 60
-  height: 6
-  width: 10
-  patch_size: [1, 1, 1]
+  height: 12
+  width: 20
+  patch_size: [1, 4, 4]
 
 
   has_audio: false
