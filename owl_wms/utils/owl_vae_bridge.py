@@ -642,12 +642,12 @@ def make_batched_decode_fn(decoder, batch_size: int = 8, use_tensorrt: bool = Tr
     except Exception:
         pass
 
-    # Prepare a compiled PyTorch fallback decoder (max_autotune) up front.
+    # Prepare a compiled PyTorch fallback decoder (max-autotune) up front.
     # If compilation is unavailable or fails, we will transparently use the
     # original decoder implementation.
     try:
-        compiled_decoder = torch.compile(decoder, mode="max_autotune", dynamic=False, fullgraph=True)
-        logging.info("Prepared compiled PyTorch fallback decoder (mode=max_autotune, dynamic=False, fullgraph=True)")
+        compiled_decoder = torch.compile(decoder, mode="max-autotune", dynamic=False, fullgraph=True)
+        logging.info("Prepared compiled PyTorch fallback decoder (mode=max-autotune, dynamic=False, fullgraph=True)")
     except Exception as e:
         logging.debug(f"torch.compile unavailable or failed; using eager decoder fallback: {e}")
 
