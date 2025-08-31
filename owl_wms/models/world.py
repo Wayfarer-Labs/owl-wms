@@ -170,8 +170,8 @@ class WorldModel(nn.Module):
 
         # embed
         ts_emb = self.timestep_emb(ts)  # [B, N, d]
-        cond = self.get_conditioning_vectors(ts_emb)
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
+        cond = self.get_conditioning_vectors(ts_emb) + ctrl_emb
 
         # patchify
         x = eo.rearrange(x, 'b n c h w -> b c n h w').contiguous()
