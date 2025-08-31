@@ -56,12 +56,12 @@ class WorldDiTBlock(nn.Module):
         super().__init__()
         self.attn = owl_nn.Attn(config, layer_idx)
         # self.cross_attn = owl_nn.CrossAttention(config)
-        # self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
+        self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
         self.mlp = owl_nn.MLP(config)
 
         dim = config.d_model
         self.adaln0, self.gate0 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
-        # self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
+        self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
         self.adaln2, self.gate2 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
 
     def forward(self, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
@@ -82,10 +82,10 @@ class WorldDiTBlock(nn.Module):
         x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
         x = self.gate1(x, cond) + residual
         """
-        #residual = x
-        #x = self.adaln1(x, cond)
-        #x = self.cross_attn_same_frame(x, context=ctrl_emb)
-        #x = self.gate1(x, cond) + residual
+        residual = x
+        x = self.adaln1(x, cond)
+        x = self.cross_attn_same_frame(x, context=ctrl_emb)
+        x = self.gate1(x, cond) + residual
 
         residual = x
         x = self.adaln2(x, cond)
@@ -169,9 +169,8 @@ class WorldModel(nn.Module):
         B, N, C, H, W = x.shape
 
         # embed
-        ts_emb = self.timestep_emb(ts)  # [B, N, d]
+        cond = self.get_conditioning_vectors(self.timestep_emb(ts))  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
-        cond = self.get_conditioning_vectors(ts_emb) + ctrl_emb
 
         # patchify
         x = eo.rearrange(x, 'b n c h w -> b c n h w').contiguous()
