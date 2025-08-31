@@ -61,7 +61,7 @@ class WorldDiTBlock(nn.Module):
 
         dim = config.d_model
         self.adaln0, self.gate0 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
-        self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
+        # self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
         self.adaln2, self.gate2 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
 
     def forward(self, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
@@ -82,10 +82,10 @@ class WorldDiTBlock(nn.Module):
         x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
         x = self.gate1(x, cond) + residual
         """
-        residual = x
-        x = self.adaln1(x, cond)
-        x = self.cross_attn_same_frame(x, context=ctrl_emb)
-        x = self.gate1(x, cond) + residual
+        #residual = x
+        #x = self.adaln1(x, cond)
+        #x = self.cross_attn_same_frame(x, context=ctrl_emb)
+        #x = self.gate1(x, cond) + residual
 
         residual = x
         x = self.adaln2(x, cond)
