@@ -56,7 +56,7 @@ class WorldDiTBlock(nn.Module):
         super().__init__()
         self.attn = owl_nn.Attn(config, layer_idx)
         # self.cross_attn = owl_nn.CrossAttention(config)
-        self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
+        # self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
         self.mlp = owl_nn.MLP(config)
 
         dim = config.d_model
