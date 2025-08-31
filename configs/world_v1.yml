@@ -48,6 +48,7 @@ model:
 
   ####
   gradient_checkpointing: true
+  use_attn_gate: true
   ####
 
 train:

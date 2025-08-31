@@ -99,6 +99,12 @@ class Attn(nn.Module):
         self.out = nn.Linear(config.d_model, config.d_model)
         self.rope = get_rope_cls(getattr(config, "rope_impl", "ortho"))(config)
 
+        self.use_attn_gate = getattr(config, "use_attn_gate", False)
+        if self.use_attn_gate:
+            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=True)
+            nn.init.zeros_(self.gate_proj.weight)
+            nn.init.constant_(self.gate_proj.bias, -2.0)  # start mostly "closed"
+
     def forward(self, x, block_mask, kv_cache=None):
         qkv = self.qkv(x)
         q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.n_heads)
@@ -114,14 +120,18 @@ class Attn(nn.Module):
             old_k, old_v = kv_cache.get(self.layer_idx)
             k = torch.cat([old_k, k], dim=2)
             v = torch.cat([old_v, v], dim=2)
-
         # update cache
         if kv_cache is not None and kv_cache.should_update:
             kv_cache.update(k, v, self.layer_idx)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
 
+        if self.use_attn_gate:
+            gate = torch.sigmoid(self.gate_proj(x))
+            gate = eo.rearrange(gate, "b t (h d) -> b h t d", h=self.n_heads)
+            attn_out = attn_out * gate
+
+        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
         return self.out(attn_out)
 
 
