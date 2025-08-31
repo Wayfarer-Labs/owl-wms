@@ -44,7 +44,7 @@ model:
   rope_ats_delta: 2.0
 
   local_window: 16
-  global_window: 256
+  global_window: 128
 
   ####
   gradient_checkpointing: true

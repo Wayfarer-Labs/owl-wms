@@ -55,8 +55,7 @@ class WorldDiTBlock(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = owl_nn.Attn(config, layer_idx)
-        # self.cross_attn = owl_nn.CrossAttention(config)
-        self.cross_attn_same_frame = owl_nn.CrossAttentionSameFrame(config)
+        self.cross_attn = owl_nn.CrossAttention(config)
         self.mlp = owl_nn.MLP(config)
 
         dim = config.d_model
@@ -75,17 +74,19 @@ class WorldDiTBlock(nn.Module):
         x = self.attn(x, block_mask, kv_cache)
         x = self.gate0(x, cond) + residual
 
-        # TODO: combine prompt and ctrl cross attn with separate k, v, etc
         """
-        residual = x
-        x = self.adaln1(x, cond)
-        x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
-        x = self.gate1(x, cond) + residual
+        if prompt_emb is not None:
+            residual = x
+            x = self.adaln1(x, cond)
+            x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
+            x = self.gate1(x, cond) + residual
+
+        if ctrl_emb is not None:
+            residual = x
+            x = self.adaln1(x, cond)
+            x = self.cross_attn_same_frame(x, context=ctrl_emb)
+            x = self.gate1(x, cond) + residual
         """
-        residual = x
-        x = self.adaln1(x, cond)
-        x = self.cross_attn_same_frame(x, context=ctrl_emb)
-        x = self.gate1(x, cond) + residual
 
         residual = x
         x = self.adaln2(x, cond)
