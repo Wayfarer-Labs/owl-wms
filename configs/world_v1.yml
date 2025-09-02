@@ -104,7 +104,7 @@ train:
   output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
   resume_ckpt: null
 
-  sample_interval: 5000
+  sample_interval: 2000
   save_interval: 5000
 
   sampler_id: av_caching

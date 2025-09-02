@@ -9,11 +9,15 @@ model:
 
   n_frames: 1024
 
-  tokens_per_frame: 240
-  height: 12
-  width: 20
-  patch_size: [1, 4, 4]
+  #  tokens_per_frame: 240
+  #  height: 12
+  #  width: 20
+  #  patch_size: [1, 4, 4]
 
+  tokens_per_frame: 60
+  height: 6
+  width: 10
+  patch_size: [1, 8, 8]
 
   has_audio: false
 
@@ -83,7 +87,7 @@ train:
   output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
   resume_ckpt: null
 
-  sample_interval: 5000
+  sample_interval: 2000
   save_interval: 5000
 
   sampler_id: av_caching
