@@ -205,7 +205,7 @@ class SD3VAE:
 class OstrisVAE:
     def __init__(
         self,
-        model_id: str = "ostris/vae-kl-f8-d16",  # Ostris VAE repo (KL, f8, 16-ch)
+        model_id: str = "stabilityai/sdxl-vae",  # Ostris VAE repo (KL, f8, 16-ch)
         dtype: torch.dtype = torch.float32,
         *_, **__
     ):
