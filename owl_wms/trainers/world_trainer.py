@@ -135,7 +135,7 @@ class KLVAE:
         self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
 
     @torch.no_grad()
-    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 256) -> torch.Tensor:
+    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 64) -> torch.Tensor:
         """
         Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
         Output: (B,T,C,h,w)  *unscaled* VAE latents (no scaling_factor applied)
@@ -164,7 +164,7 @@ class KLVAE:
         return z.reshape(B, T, *z.shape[1:])            # (B,T,C,h,w)
 
     @torch.no_grad()
-    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 256) -> torch.Tensor:
+    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 64) -> torch.Tensor:
         """
         Input : (B,T,C,h,w)  *unscaled* VAE latents
         Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)

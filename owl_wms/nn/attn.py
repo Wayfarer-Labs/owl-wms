@@ -70,7 +70,7 @@ class AttnMaskScheduler:
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
     def __call__(self, seq_len, doc_id, kv_cache, device):
-        q_offset = kv_cache.length_at(0) if kv_cache is not None else 0
+        q_offset = kv_cache.offset[0] if kv_cache is not None else 0
         n_tokens = seq_len + q_offset
         kwargs = dict(
             n_tokens=n_tokens,
@@ -111,24 +111,16 @@ class Attn(nn.Module):
         q, k = rms_norm(q), rms_norm(k)
 
         # rotate new queries and keys (shared kv cache between modalities)
-        offset = kv_cache.length_at(self.layer_idx) if kv_cache is not None else 0
-        q = self.rope(q, offset=offset)
-        k = self.rope(k, offset=offset)
+        offset = kv_cache.offset[self.layer_idx] if kv_cache is not None else 0
+        q, k = self.rope(q, offset=offset), self.rope(k, offset=offset)
 
-        # prepend cached values
-        if offset > 0:
-            old_k, old_v = kv_cache.get(self.layer_idx)
-            k = torch.cat([old_k, k], dim=2)
-            v = torch.cat([old_v, v], dim=2)
-        # update cache
-        if kv_cache is not None and kv_cache.should_update:
-            kv_cache.update(k, v, self.layer_idx)
+        if kv_cache is not None:
+            k, v = kv_cache.upsert(k, v, self.layer_idx)
 
-        attn_out = flex_attention(q, k, v, block_mask=block_mask)
+        attn_out = flex_attention(q, k, v, block_mask=block_mask)  # , score_mod=score_mod)
 
         if self.use_attn_gate:
-            gate = torch.sigmoid(self.gate_proj(x))
-            gate = eo.rearrange(gate, "b t (h d) -> b h t d", h=self.n_heads)
+            gate = eo.rearrange(self.gate_proj(x).sigmoid(), "b t (h d) -> b h t d", h=self.n_heads)
             attn_out = attn_out * gate
 
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)

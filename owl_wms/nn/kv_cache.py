@@ -1,4 +1,7 @@
+from torch import Tensor
+
 import torch
+from torch import nn
 from ..configs import TransformerConfig
 
 
@@ -89,3 +92,36 @@ class SingleKVCache:
     @property
     def shape(self):
         return self.cache[0][0].shape
+
+
+class StaticKVCache(nn.Module):
+    def __init__(self, config, batch_size, dtype):
+        super().__init__()
+
+        # Exclude last N tokens from caching
+        self.n_uncached = config.tokens_per_frame
+
+        B = batch_size
+        H = config.n_heads
+        L = config.n_frames * config.tokens_per_frame
+        Dh = config.d_model // config.n_heads
+        NL = config.n_layers
+
+        self.k = nn.Buffer(torch.empty(NL, B, H, L, Dh, dtype=dtype), persistent=False)
+        self.v = nn.Buffer(torch.empty(NL, B, H, L, Dh, dtype=dtype), persistent=False)
+        self.offset = nn.Buffer(torch.zeros(NL, dtype=torch.long), persistent=False)
+
+    @torch.inference_mode()
+    def upsert(self, k: Tensor, v: Tensor, layer: int):
+        T = k.size(2)
+        start = self.offset[layer]
+        end = start + T
+
+        torch._assert(end <= self.k.size(3), "KV cache overflow")
+        torch._assert(T >= self.n_uncached, "chunk shorter than n_uncached")
+
+        self.k[layer, :, :, start:end, :].copy_(k)
+        self.v[layer, :, :, start:end, :].copy_(v)
+        self.offset[layer].fill_(end - self.n_uncached)
+
+        return self.k[layer, :, :, :end, :], self.v[layer, :, :, :end, :]  # TODO: make static kv

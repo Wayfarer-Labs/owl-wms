@@ -5,7 +5,7 @@ from tensordict import TensorDict
 import torch
 from tqdm import tqdm
 
-from ..nn.kv_cache import KVCache
+from ..nn.kv_cache import StaticKVCache
 
 from .schedulers import get_sd3_euler
 
@@ -24,50 +24,41 @@ class AVCachingSampler:
         self.n_steps = n_steps
         self.noise_prev = noise_prev
 
-    @torch.no_grad()
-    def __call__(self, model, x, prompt: Optional[TensorDict], controller_input: Optional[Tensor], num_frames=60):
+    @torch.inference_mode()
+    def __call__(self, model, x, prompt_emb: Optional[TensorDict], controller_input: Optional[Tensor], num_frames=60):
         """Generate `num_frames` new frames and return updated tensors."""
-        batch_size, init_len = x.size(0), x.size(1)
+        init_len = x.size(1)
 
         dt = get_sd3_euler(self.n_steps).to(device=x.device, dtype=x.dtype)
 
-        kv_cache = KVCache(model.config)
-        kv_cache.reset(batch_size)
+        kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).cuda()
 
         latents = [x]
 
         # History for the first frame generation step = full clean clip
-        prev_x = x
         prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
-            start = min(init_len + idx, controller_input.size(1) - 1) if controller_input is not None else init_len + idx
+            start = init_len + idx
             curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
 
             x = self.denoise_frame(
-                model, prompt, kv_cache,
-                prev_x, prev_ctrl, curr_ctrl,
+                model, prompt_emb, kv_cache,
+                x, prev_ctrl, curr_ctrl,
                 dt=dt,
             )
 
             latents.append(x)
-
-            # all history kv cached except for newly generated from - set the previous as the new state
-            prev_x = x
             prev_ctrl = curr_ctrl
 
         return torch.cat(latents, dim=1)
 
-    @staticmethod
-    def zlerp(x, alpha):
-        z = torch.randn_like(x)
-        return x * (1. - alpha) + z * alpha
-
+    @torch.compile
     def denoise_frame(
         self,
         model,
-        prompt,
-        kv_cache: KVCache,
+        prompt_emb,
+        kv_cache: StaticKVCache,
         prev_video: torch.Tensor,
         prev_ctrl: torch.Tensor,
         curr_ctrl: torch.Tensor,
@@ -77,33 +68,25 @@ class AVCachingSampler:
         batch_size = prev_video.size(0)
 
         # Partially re-noise history
-        prev_vid = self.zlerp(prev_video, self.noise_prev)
+        prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), self.noise_prev)
         t_prev = prev_video.new_full((batch_size, prev_vid.size(1)), self.noise_prev)
 
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
         t_new = t_prev.new_ones(batch_size, 1)
 
-        # update kv cache with previous uncached frames
-        kv_cache.enable_cache_updates()
-        eps_v = model(
-            torch.cat([prev_vid, new_vid], dim=1),
-            torch.cat([t_prev, t_new], dim=1),
-            prompt,
-            torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None,
-            kv_cache=kv_cache,
-        )
-        kv_cache.disable_cache_updates()
-        kv_cache.truncate(1, front=True)  # new "still-being-denoised" frame from kv cache
+        for step in range(self.n_steps):
+            # step 0: include uncached tokens
+            # step >= 1: tokens cached, only include being-denoised tokens
+            if step == 0:
+                vid = torch.cat([prev_vid, new_vid], dim=1)
+                tim = torch.cat([t_prev, t_new], dim=1)
+                ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
+            else:
+                vid, tim, ctrl = new_vid, t_new, curr_ctrl
 
-        # Euler update for step‑0 (affects only the *last* frame)
-        new_vid -= eps_v[:, -1:] * dt[0]
-        t_new -= dt[0]
-
-        # Remaining diffusion steps with cached history, denoising denoising only new frame
-        for step in range(1, self.n_steps):
-            eps_vid = model(new_vid, t_new, prompt, curr_ctrl, kv_cache=kv_cache)
-            new_vid -= eps_vid * dt[step]
+            eps = model(vid, tim, prompt_emb, ctrl, kv_cache=kv_cache)
+            new_vid -= eps[:, -1:] * dt[step]  # only update the new frame
             t_new -= dt[step]
 
         # Clean frame will be cached automatically in the *next* step‑0
