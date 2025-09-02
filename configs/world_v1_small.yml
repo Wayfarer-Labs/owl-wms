@@ -1,0 +1,106 @@
+model:
+  model_id: game_rft
+
+  channels: 4
+
+  n_layers: 16
+  n_heads: 16
+  d_model: 1024
+
+  n_frames: 1024
+
+  tokens_per_frame: 240
+  height: 12
+  width: 20
+  patch_size: [1, 4, 4]
+
+
+  has_audio: false
+
+  n_controller_inputs: 13
+
+  cfg_prob: 0.1
+
+  causal: true
+  uncond: true
+  backbone: dit
+
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  local_window: 16
+  global_window: 512
+
+  ####
+  use_attn_gate: true
+  ####
+
+train:
+  trainer_id: world
+
+  #  data_id: wan_sample
+  #  data_kwargs:
+  #    window_length: 21
+  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
+  #    batch_columns: ["x", "prompt"]
+  #
+  #  sample_data_id: wan_sample
+  #  sample_data_kwargs:
+  #    window_length: 10  # size of single ground truth start tokens
+  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
+  #    batch_columns: ["x", "prompt"]
+
+  data_id: sequence_packing
+  data_kwargs:
+    window_length: 512
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["rgb", "mouse", "buttons"]
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    window_length: 1024  # size of single ground truth start tokens
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["rgb", "mouse", "buttons"]
+
+  target_batch_size: 8
+  batch_size: 1
+
+  epochs: 10000
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [proj_in, proj_out, timestep_emb, ctrl_emb, gate, adaln]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/video_world_model_v1
+  output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
+  resume_ckpt: null
+
+  sample_interval: 5000
+  save_interval: 5000
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    noise_prev: 0.2
+    only_return_generated: false
+  num_seed_frames: 60
+  num_generated_frames: 900
+
+  vae_batch_size: 4
+  n_samples: 4
+  eval_sample_dir: null
+
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: video_models  # owl
+  run_name: world_model_v1
