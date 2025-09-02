@@ -201,8 +201,7 @@ class SD3VAE:
         self.ae.eval()
         return self
 
-
-class OstrisVAE:
+class KLVAE:
     def __init__(
         self,
         model_id: str = "stabilityai/sdxl-vae",  # Ostris VAE repo (KL, f8, 16-ch)
@@ -229,6 +228,10 @@ class OstrisVAE:
 
         self.ae = self.ae.to(self.device).eval()
         freeze(self.ae)  # matches your pattern
+
+        self.ae.to(memory_format=torch.channels_last)
+        self.ae.decode = torch.compile(self.ae.decode)
+        self.ae.encode = torch.compile(self.ae.encode)
 
         # We don't apply this; kept for symmetry with your DCAE/SD3VAE.
         self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
@@ -431,7 +434,7 @@ class WorldTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        self.encoder_decoder = OstrisVAE()
+        self.encoder_decoder = KLVAE()
         self.prompt_encoder = PromptEncoder()
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
