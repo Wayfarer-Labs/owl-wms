@@ -99,108 +99,6 @@ class DCAE:
         return self
 
 
-class SD3VAE:
-    def __init__(
-        self,
-        model_id: str = "stabilityai/stable-diffusion-3-medium-diffusers",  # HF Diffusers SD3 repo
-        dtype: torch.dtype = torch.float32,
-        *_, **__
-    ):
-        """
-        Loads the SD3 VAE (AutoencoderKL) and exposes the same interface/behavior
-        as your DCAE wrapper:
-          - encode() takes (B,T,3,H,W) -> returns (B,T,C,h,w) *unscaled* latents
-          - decode() takes (B,T,C,h,w) -> returns (B,T,3,H,W) in [-1,1]
-        """
-        from diffusers import AutoencoderKL
-
-        self.device = torch.device("cpu")
-        self.dtype = dtype
-
-        # Try SD3 pipeline repo (VAE lives in subfolder="vae"); fall back to VAE-only repos.
-        try:
-            self.ae = AutoencoderKL.from_pretrained(
-                model_id, subfolder="vae", torch_dtype=self.dtype
-            )
-        except Exception:
-            # If you pass a VAE-only repo (e.g., "stabilityai/sd3-vae"), this path will be used.
-            self.ae = AutoencoderKL.from_pretrained(
-                model_id, torch_dtype=self.dtype
-            )
-
-        self.ae = self.ae.to(self.device).eval()
-        freeze(self.ae)
-
-        # Standard VAE scaling factor (e.g., ~0.18215 for SD-family VAEs)
-        self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
-
-    @torch.no_grad()
-    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
-        """
-        Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
-        Output: (B,T,C,h,w)  *unscaled* VAE latents (no scaling_factor applied)
-        """
-        assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, \
-            f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
-
-        B, T, _, H, W = x_rgb.shape
-        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device).to(torch.float32)
-
-        # Normalize to [-1, 1]
-        if x4.max() > 1.0:      # likely uint8
-            x4 = x4 / 255.0     # -> [0,1]
-        if x4.min() < 0.0:      # already [-1,1]
-            x4 = x4.clamp_(-1, 1)
-        else:                   # [0,1] -> [-1,1]
-            x4 = x4.mul(2).sub(1).clamp_(-1, 1)
-
-        latents = []
-        for xb in x4.split(frames_per_chunk, dim=0):
-            # AutoencoderKL produces a Gaussian; use the mean (mode) for deterministic latents.
-            enc = self.ae.encode(xb.to(self.dtype))
-            z = enc.latent_dist.mode()  # (N,C,h,w)  *unscaled*
-            latents.append(z)
-        z = torch.cat(latents, dim=0).to(self.dtype)                    # (B*T,C,h,w)
-        return z.reshape(B, T, *z.shape[1:])                            # (B,T,C,h,w)
-
-    @torch.no_grad()
-    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
-        """
-        Input : (B,T,C,h,w)  *unscaled* VAE latents
-        Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)
-        """
-        assert z_vae.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_vae.shape)}"
-        B, T, C, h, w = z_vae.shape
-
-        z4 = z_vae.reshape(B * T, C, h, w).to(self.device).to(torch.float32)
-
-        outs = []
-        for zb in z4.split(items_per_chunk, dim=0):
-            # AutoencoderKL.decode() expects *unscaled* latents; returns [-1,1]
-            x = self.ae.decode(zb.to(self.dtype)).sample  # (N,3,Hout,Wout)
-            outs.append(x)
-        x4 = torch.cat(outs, dim=0)
-
-        assert x4.ndim == 4 and x4.shape[1] == 3, \
-            f"decode(): AE returned {tuple(x4.shape)}, expected (N,3,H,W)"
-
-        Hout, Wout = x4.shape[-2], x4.shape[-1]
-        return x4.reshape(B, T, 3, Hout, Wout).contiguous()
-
-    def cuda(self):
-        self.device = torch.device("cuda")
-        self.ae.to(self.device)
-        return self
-
-    def to(self, device):
-        self.device = device if isinstance(device, torch.device) else torch.device(device)
-        self.ae.to(self.device)
-        return self
-
-    def eval(self):
-        self.ae.eval()
-        return self
-
 class KLVAE:
     def __init__(
         self,
@@ -237,7 +135,7 @@ class KLVAE:
         self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
 
     @torch.no_grad()
-    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
+    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 256) -> torch.Tensor:
         """
         Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
         Output: (B,T,C,h,w)  *unscaled* VAE latents (no scaling_factor applied)
@@ -266,7 +164,7 @@ class KLVAE:
         return z.reshape(B, T, *z.shape[1:])            # (B,T,C,h,w)
 
     @torch.no_grad()
-    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
+    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 256) -> torch.Tensor:
         """
         Input : (B,T,C,h,w)  *unscaled* VAE latents
         Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)
