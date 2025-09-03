@@ -292,8 +292,8 @@ class WorldTrainer(BaseTrainer):
                 self._gather_concat_cpu,
                 torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
             )
-
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
+
         dist.barrier()
 
         return eval_wandb_dict
