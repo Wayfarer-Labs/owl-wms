@@ -1,7 +1,7 @@
 model:
   model_id: game_rft
 
-  channels: 4
+  channels: 128
 
   n_layers: 16
   n_heads: 16
@@ -9,15 +9,9 @@ model:
 
   n_frames: 1024
 
-  #  tokens_per_frame: 240
-  #  height: 12
-  #  width: 20
-  #  patch_size: [1, 4, 4]
-
-  tokens_per_frame: 60
-  height: 6
-  width: 10
-  patch_size: [1, 8, 8]
+  tokens_per_frame: 64
+  height: 8
+  width: 8
 
   has_audio: false
 
@@ -56,15 +50,17 @@ train:
 
   data_id: sequence_packing
   data_kwargs:
-    window_length: 512
+    seq_len: 512
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["rgb", "mouse", "buttons"]
+    batch_columns: ["depthlatent", "mouse", "buttons"]
+    latent_column: "depthlatent"
 
   sample_data_id: cod
   sample_data_kwargs:
-    window_length: 1024  # size of single ground truth start tokens
+    seq_len: 1024  # size of single ground truth start tokens
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["rgb", "mouse", "buttons"]
+    batch_columns: ["depthlatent", "mouse", "buttons"]
+    latent_column: "depthlatent"
 
   target_batch_size: 8
   batch_size: 1
@@ -99,10 +95,15 @@ train:
   num_seed_frames: 60
   num_generated_frames: 900
 
+  vae_id: null
   vae_batch_size: 4
+
+  vae_scale: 0.63
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/cod_yt_v2/base.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_yt_v2/cod_yt_v2_515k_ema_decoder.pt
+
   n_samples: 4
   eval_sample_dir: null
-
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp

@@ -17,298 +17,8 @@ from ..models.world import WorldModel, PromptEncoder
 from ..sampling import get_sampler_cls
 from ..data import get_loader
 from ..utils.logging import LogHelper, to_wandb_samples
+from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..muon import init_muon
-
-
-class DCAE:
-    def __init__(self, model_id: str = "mit-han-lab/dc-ae-f64c128-mix-1.0-diffusers", dtype=torch.float32, *_, **__):
-        from diffusers import AutoencoderDC
-        self.device = torch.device("cpu")
-        self.dtype = dtype
-
-        self.ae = AutoencoderDC.from_pretrained(model_id, torch_dtype=self.dtype).to(self.device).eval()
-        freeze(self.ae)
-
-        self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
-
-    @torch.no_grad()
-    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 4) -> torch.Tensor:
-        """
-        Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
-        Output: (B,T,C,h,w)  *unscaled* VAE latents (as per docs)
-        """
-        assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, \
-            f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
-
-        B, T, _, H, W = x_rgb.shape
-        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device).to(torch.float32)
-
-        # Normalize to [-1, 1]
-        if x4.max() > 1.0:      # likely uint8
-            x4 = x4 / 255.0     # -> [0,1]
-        if x4.min() < 0.0:      # already [-1,1]
-            x4 = x4.clamp_(-1, 1)
-        else:                   # [0,1] -> [-1,1]
-            x4 = x4.mul(2).sub(1).clamp_(-1, 1)
-
-        latents = []
-        for xb in x4.split(frames_per_chunk, dim=0):
-            # Return *unscaled* VAE latents
-            z = self.ae.encode(xb.to(self.dtype), return_dict=True).latent
-            latents.append(z)
-        z = torch.cat(latents, dim=0).to(self.dtype)                    # (B*T,C,h,w), unscaled
-        return z.reshape(B, T, *z.shape[1:])                            # (B,T,C,h,w)
-
-    @torch.no_grad()
-    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 4) -> torch.Tensor:
-        """
-        Input : (B,T,C,h,w)  *unscaled* VAE latents
-        Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)
-        """
-        assert z_vae.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_vae.shape)}"
-        B, T, C, h, w = z_vae.shape
-
-        z4 = z_vae.reshape(B * T, C, h, w).to(self.device).to(torch.float32)
-
-        outs = []
-        for zb in z4.split(items_per_chunk, dim=0):
-            # Decoder returns [-1,1]
-            x = self.ae.decode(zb.to(self.dtype)).sample  # (N,3,Hout,Wout) in [-1,1]
-            outs.append(x)
-        x4 = torch.cat(outs, dim=0)
-
-        assert x4.ndim == 4 and x4.shape[1] == 3, \
-            f"decode(): AE returned {tuple(x4.shape)}, expected (N,3,H,W)"
-
-        Hout, Wout = x4.shape[-2], x4.shape[-1]
-        # (B*T,3,H,W) -> (B,T,3,H,W), still in [-1,1]
-        return x4.reshape(B, T, 3, Hout, Wout).contiguous()
-
-    def cuda(self):
-        self.device = torch.device("cuda")
-        self.ae.to(self.device)
-        return self
-
-    def to(self, device):
-        self.device = device if isinstance(device, torch.device) else torch.device(device)
-        self.ae.to(self.device)
-        return self
-
-    def eval(self):
-        self.ae.eval()
-        return self
-
-
-class KLVAE:
-    def __init__(
-        self,
-        model_id: str = "stabilityai/sdxl-vae",  # Ostris VAE repo (KL, f8, 16-ch)
-        dtype: torch.dtype = torch.float32,
-        *_, **__
-    ):
-        """
-        Loads the Ostris VAE (AutoencoderKL) and exposes the same interface/behavior
-        as your DCAE/SD3VAE wrappers:
-          - encode() takes (B,T,3,H,W) -> returns (B,T,C,h,w) *unscaled* latents
-          - decode() takes (B,T,C,h,w) -> returns (B,T,3,H,W) in [-1,1]
-        Requirements: H % 8 == 0 and W % 8 == 0.
-        """
-        from diffusers import AutoencoderKL
-
-        self.device = torch.device("cpu")
-        self.dtype = dtype
-
-        # Ostris is a standalone VAE repo (no subfolder). Keep a small fallback just in case.
-        try:
-            self.ae = AutoencoderKL.from_pretrained(model_id, torch_dtype=self.dtype)
-        except Exception:
-            self.ae = AutoencoderKL.from_pretrained(model_id, subfolder="vae", torch_dtype=self.dtype)
-
-        self.ae = self.ae.to(self.device).eval()
-        freeze(self.ae)  # matches your pattern
-
-        self.ae.to(memory_format=torch.channels_last)
-        self.ae.decode = torch.compile(self.ae.decode)
-        self.ae.encode = torch.compile(self.ae.encode)
-
-        # We don't apply this; kept for symmetry with your DCAE/SD3VAE.
-        self.scale = float(getattr(self.ae.config, "scaling_factor", 1.0))
-
-    @torch.no_grad()
-    def encode(self, x_rgb: torch.Tensor, frames_per_chunk: int = 64) -> torch.Tensor:
-        """
-        Input:  (B,T,3,H,W)  uint8 [0,255] or float in [0,1] or [-1,1]
-        Output: (B,T,C,h,w)  *unscaled* VAE latents (no scaling_factor applied)
-        """
-        assert x_rgb.ndim == 5 and x_rgb.shape[2] == 3, \
-            f"encode expects (B,T,3,H,W), got {tuple(x_rgb.shape)}"
-
-        B, T, _, H, W = x_rgb.shape
-        x4 = x_rgb.reshape(B * T, 3, H, W).to(self.device).to(torch.float32)
-
-        # Normalize to [-1, 1]
-        if x4.max() > 1.0:      # likely uint8
-            x4 = x4 / 255.0     # -> [0,1]
-        if x4.min() < 0.0:      # already [-1,1]
-            x4 = x4.clamp_(-1, 1)
-        else:                   # [0,1] -> [-1,1]
-            x4 = x4.mul(2).sub(1).clamp_(-1, 1)
-
-        latents = []
-        for xb in x4.split(frames_per_chunk, dim=0):
-            enc = self.ae.encode(xb.to(self.dtype))
-            # Deterministic latents to match your SD3 wrapper behavior
-            z = enc.latent_dist.mode() * self.scale
-            latents.append(z)
-        z = torch.cat(latents, dim=0).to(self.dtype)    # (B*T,C,h,w)
-        return z.reshape(B, T, *z.shape[1:])            # (B,T,C,h,w)
-
-    @torch.no_grad()
-    def decode(self, z_vae: torch.Tensor, items_per_chunk: int = 64) -> torch.Tensor:
-        """
-        Input : (B,T,C,h,w)  *unscaled* VAE latents
-        Output: (B,T,3,H,W)  pixels in [-1,1]  (channels-first; matches encoder input)
-        """
-        assert z_vae.ndim == 5, f"decode expects (B,T,C,h,w), got {tuple(z_vae.shape)}"
-        B, T, C, h, w = z_vae.shape
-
-        z4 = z_vae.reshape(B * T, C, h, w).to(self.device).to(torch.float32)
-
-        outs = []
-        for zb in z4.split(items_per_chunk, dim=0):
-            x = self.ae.decode(zb.to(self.dtype) / self.scale).sample   # (N,3,Hout,Wout) in [-1,1]
-            outs.append(x)
-        x4 = torch.cat(outs, dim=0)
-
-        assert x4.ndim == 4 and x4.shape[1] == 3, \
-            f"decode(): AE returned {tuple(x4.shape)}, expected (N,3,H,W)"
-
-        Hout, Wout = x4.shape[-2], x4.shape[-1]
-        return x4.reshape(B, T, 3, Hout, Wout).contiguous()
-
-    def cuda(self):
-        self.device = torch.device("cuda")
-        self.ae.to(self.device)
-        return self
-
-    def to(self, device):
-        self.device = device if isinstance(device, torch.device) else torch.device(device)
-        self.ae.to(self.device)
-        return self
-
-    def eval(self):
-        self.ae.eval()
-        return self
-
-
-class WanEncoderDecoder:
-    """
-    Minimal encode/decode wrapper for Diffusers' AutoencoderKLWan.
-
-    encode(rgb)  : [T,3,H,W] | [B,3,T,H,W] | [B,T,3,H,W] -> [B,T,C,H,W]  (model space)
-    decode(z)    : [B,T,C,H,W] | [B,C,T,H,W] -> [B,Tpix,3,H,W]           (pixels)
-                    where Tpix = 1 + 4 * (T - 1)
-    """
-    def __init__(self, vae, batch_size: int = 2, dtype=torch.float32):
-        vae.decoder = torch.compile(vae.decoder)
-        vae.encoder = torch.compile(vae.encoder)
-        self.vae = vae.eval()
-
-        self.bs  = int(batch_size)
-        self.dt  = dtype
-        cfg = vae.config
-        self.sf  = float(getattr(cfg, "scaling_factor", 1.0))
-        self.m   = getattr(cfg, "latents_mean", None)
-        self.s   = getattr(cfg, "latents_std",  None)
-        self.C   = int(getattr(cfg, "z_dim", getattr(cfg, "latent_channels", 16)))
-
-    # ---------- helpers ----------
-    def _dev(self):
-        return next(self.vae.parameters()).device
-
-    def _rgb_to_b3thw(self, x: torch.Tensor) -> torch.Tensor:
-        # Accept [T,3,H,W], [B,3,T,H,W], [B,T,3,H,W]  ->  [B,3,T,H,W]
-        if x.ndim == 4:                     # [T,3,H,W]
-            if x.shape[1] != 3: raise ValueError(f"Expected [T,3,H,W], got {tuple(x.shape)}")
-            return x.permute(1, 0, 2, 3).unsqueeze(0)
-        if x.ndim == 5 and x.shape[1] == 3: # [B,3,T,H,W]
-            return x
-        if x.ndim == 5 and x.shape[2] == 3: # [B,T,3,H,W]
-            return x.permute(0, 2, 1, 3, 4).contiguous()
-        raise ValueError(f"RGB must be [T,3,H,W] or [B,3,T,H,W] or [B,T,3,H,W]; got {tuple(x.shape)}")
-
-    def _to_model_space(self, z_vae: torch.Tensor) -> torch.Tensor:
-        if self.m is not None and self.s is not None:
-            mean = torch.as_tensor(self.m, device=z_vae.device, dtype=z_vae.dtype).view(1, -1, 1, 1, 1)
-            std  = torch.as_tensor(self.s, device=z_vae.device, dtype=z_vae.dtype).view(1, -1, 1, 1, 1)
-            return (z_vae - mean) * (self.sf / std)
-        return z_vae * self.sf
-
-    def _to_vae_space(self, z_model: torch.Tensor) -> torch.Tensor:
-        if self.m is not None and self.s is not None:
-            mean = torch.as_tensor(self.m, device=z_model.device, dtype=z_model.dtype).view(1, -1, 1, 1, 1)
-            std  = torch.as_tensor(self.s, device=z_model.device, dtype=z_model.dtype).view(1, -1, 1, 1, 1)
-            return (z_model / self.sf) * std + mean
-        return z_model / self.sf
-
-    def _pad_to_4k_plus_1(self, z_bcthw: torch.Tensor) -> tuple[torch.Tensor, int]:
-        # WAN VAE expects latent T such that output frames = 1 + 4*(T-1)
-        T = z_bcthw.shape[2]
-        target = ((T - 1 + 3) // 4) * 4 + 1
-        if target == T:
-            return z_bcthw, T
-        pad = target - T
-        z_pad = torch.cat([z_bcthw, z_bcthw[:, :, -1:].expand(-1, -1, pad, -1, -1)], dim=2)
-        return z_pad, T
-
-    @torch.no_grad()
-    def encode(self, rgb: torch.Tensor) -> torch.Tensor:
-        """
-        RGB -> model-space latents, returning [B,T,C,H,W]
-        """
-        x = self._rgb_to_b3thw(rgb)
-        # Optional normalization if dataset is uint8 [0,255]
-        if x.dtype == torch.uint8:
-            x = x.to(torch.float32).div_(127.5).sub_(1.0)
-        x = x.to(self._dev(), dtype=self.dt)
-        parts = []
-        for x_chunk in x.split(self.bs, dim=0):
-            z_vae = self.vae.encode(x_chunk, return_dict=True).latent_dist.sample()  # [b,C,T,H,W]
-            parts.append(self._to_model_space(z_vae))
-        z = torch.cat(parts, dim=0)  # [B,C,T,H,W]
-        return z.permute(0, 2, 1, 3, 4).contiguous()  # [B,T,C,H,W]
-
-    @torch.no_grad()
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Model-space latents -> RGB, returning [B,Tpix,3,H,W]
-        """
-        # Normalize to [B,C,T,H,W] for VAE
-        if z.ndim != 5:
-            raise ValueError(f"Latents must be 5D, got {tuple(z.shape)}")
-        # Deterministic: accept [B,T,C,H,W] or [B,C,T,H,W] -> [B,C,T,H,W]
-        if z.shape[1] == self.C:
-            z_bcthw = z
-        elif z.shape[2] == self.C:
-            z_bcthw = z.permute(0, 2, 1, 3, 4).contiguous()
-        else:
-            raise ValueError(f"Neither dim1 nor dim2 equals latent C={self.C}; got {tuple(z.shape)}")
-        z_bcthw = z_bcthw.to(self._dev(), dtype=self.dt)
-
-        # Pad to valid temporal length, convert to VAE space, decode
-        z_bcthw, orig_T = self._pad_to_4k_plus_1(z_bcthw)
-        parts = []
-        for z_chunk in z_bcthw.split(self.bs, dim=0):
-            z_in = self._to_vae_space(z_chunk.to(torch.float32))  # VAE in fp32
-            pix = self.vae.decode(z_in, return_dict=True).sample  # [b,3,Tpix,H,W]
-            parts.append(pix)
-        y = torch.cat(parts, dim=0)  # [B,3,Tpix,H,W]
-
-        # Trim to frames implied by original latent length and return [B,Tpix,3,H,W]
-        want_Tpix = 1 + 4 * (orig_T - 1)
-        if y.shape[2] >= want_Tpix:
-            y = y[:, :, :want_Tpix]
-        return y.permute(0, 2, 3, 4, 1).contiguous()  # (B,Tpix,H,W,3)
 
 
 class WorldTrainer(BaseTrainer):
@@ -332,7 +42,13 @@ class WorldTrainer(BaseTrainer):
             n_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model has {n_params:,} parameters")
 
-        self.encoder_decoder = KLVAE()
+        self.decoder = get_decoder_only(
+            self.train_cfg.vae_id,
+            self.train_cfg.vae_cfg_path,
+            self.train_cfg.vae_ckpt_path
+        )
+        freeze(self.decoder)
+
         self.prompt_encoder = PromptEncoder()
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
@@ -356,7 +72,9 @@ class WorldTrainer(BaseTrainer):
 
     def load(self) -> None:
         # VAE
-        self.encoder_decoder = self.encoder_decoder.cuda().eval()
+        self.decoder = self.decoder.cuda().eval().bfloat16()
+        self.decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
+
         # Prompt Encoder
         self.prompt_encoder = self.prompt_encoder.cuda().eval()
 
@@ -397,21 +115,7 @@ class WorldTrainer(BaseTrainer):
     def prep_batch(self, batch):
         """Move to cuda, and if necessary use encoder to convert rgb to latent (x)"""
         batch = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        if "rgb" in batch:
-            assert "x" not in batch, "passed rgb to convert, but already have batch item `x` (latents)"
-            ####
-            # Pad to multiples of F (centered) instead of cropping
-            f = 64
-            rgb = batch.pop("rgb")
-            assert rgb.shape[2] == 3
-            H, W = rgb.shape[-2], rgb.shape[-1]
-            Hp = ((H + 31) // f) * f
-            Wp = ((W + 31) // f) * f
-            pt = (Hp - H) // 2; pb = Hp - H - pt
-            pl = (Wp - W) // 2; pr = Wp - W - pl
-            rgb = F.pad(rgb, (pl, pr, pt, pb))  # (W_left, W_right, H_top, H_bottom)
-            ####
-            batch["x"] = self.encoder_decoder.encode(rgb)
+        assert "rgb" not in batch, "rgb not supported, pass latents"
         if "mouse" in batch or "buttons" in batch:
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
@@ -421,7 +125,7 @@ class WorldTrainer(BaseTrainer):
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
 
-        batch["x"] = batch["x"].bfloat16()
+        batch["x"] = (batch["x"] / self.train_cfg.vae_scale).bfloat16()
 
         return batch
 
@@ -552,8 +256,7 @@ class WorldTrainer(BaseTrainer):
         ema_model = self.get_module(ema=True)
 
         # ---- Generate Samples ----
-        _eval_batch = next(sample_loader)
-        eval_batch = self.prep_batch(_eval_batch)
+        eval_batch = self.prep_batch(next(sample_loader))
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         if self.train_cfg.num_seed_frames:
@@ -569,7 +272,7 @@ class WorldTrainer(BaseTrainer):
                 x[:, vid.size(1):] if x is not None else None for x in (latent_vid, controller_inputs)
             )
 
-        video_out = self.encoder_decoder.decode(latent_vid) if self.encoder_decoder is not None else None
+        video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
 
         # ---- Optionally Save Latent Artifacts ----
         if getattr(self.train_cfg, "eval_sample_dir", None):
@@ -582,15 +285,15 @@ class WorldTrainer(BaseTrainer):
         # ---- Generate Media Artifacts ----
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
-        ####
-        mouse, btn = map(self._gather_concat_cpu, (_eval_batch["mouse"].cuda(), _eval_batch["buttons"].cuda()))
-        ####
+        # TODO: clean this hack
+        mouse, btn = None, None
+        if eval_batch["controller_inputs"] is not None:
+            mouse, btn = map(
+                self._gather_concat_cpu,
+                torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
+            )
 
-        if self.rank == 0:
-            eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60)
-        else:
-            eval_wandb_dict = None
-
+        eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
         dist.barrier()
 
         return eval_wandb_dict

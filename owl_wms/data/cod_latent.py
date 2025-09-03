@@ -69,7 +69,7 @@ class WindowedViewDataset(Dataset):
         }
 
 
-def collate_fn(batch, batch_columns: list):
+def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
     # TODO: fix hack, buttons should be preprocessed as float
     stacked = {
@@ -77,15 +77,17 @@ def collate_fn(batch, batch_columns: list):
         for k, t in stacked.items()
         if k in batch_columns
     }
+    if latent_column:
+        stacked["x"] = stacked.pop(latent_column)
     assert len(stacked) == len(batch_columns)
     return stacked
 
 
-def get_loader(batch_size, dataset_path, window_length, batch_columns):
+def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=None):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    ds = WindowedViewDataset(dataset_path, window_length)
+    ds = WindowedViewDataset(dataset_path, seq_len)
 
     if world_size > 1:
         sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -96,7 +98,7 @@ def get_loader(batch_size, dataset_path, window_length, batch_columns):
     return DataLoader(
         ds,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, batch_columns=batch_columns),
+        collate_fn=partial(collate_fn, batch_columns=batch_columns, latent_column=latent_column),
         num_workers=2,
         drop_last=True,
         pin_memory=True,
