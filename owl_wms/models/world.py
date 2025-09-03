@@ -174,16 +174,15 @@ class WorldModel(nn.Module):
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         # patchify
-        x = eo.rearrange(x, 'b n c h w -> b c n h w').contiguous(memory_format=torch.channels_last_3d)
-        x = self.proj_in(x)
+        x = self.proj_in(eo.rearrange(x, 'b n c h w -> b c n h w'))
         _, _, n, h, w = x.shape
         assert (self.config.height, self.config.width) == (h, w), f"{h}, {w}"
 
         # transformer fwd
         x = eo.rearrange(x, 'b d n h w -> b (n h w) d')
         x = self.transformer(x, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
-        x = eo.rearrange(x, 'b (n h w) d -> b d n h w', n=n, h=h, w=w).contiguous(memory_format=torch.channels_last_3d)
+        x = eo.rearrange(x, 'b (n h w) d -> b d n h w', n=n, h=h, w=w)
 
         # unpatchify
-        x = self.proj_out(x, cond)
+        x = self.proj_out(x, cond, out_hw=(h, w))
         return eo.rearrange(x, 'b c n h w -> b n c h w')
