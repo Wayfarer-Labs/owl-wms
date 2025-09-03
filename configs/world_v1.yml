@@ -30,7 +30,7 @@ model:
   global_window: 512
 
   ####
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   use_attn_gate: true
   ####
 
