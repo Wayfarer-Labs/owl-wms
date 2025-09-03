@@ -121,6 +121,22 @@ class WorldDiT(nn.Module):
         return x
 
 
+class FinalLayer2(nn.Module):
+    def __init__(self, d_model, channels,patch_size=1):
+        super().__init__()
+
+        self.norm = owl_nn.AdaLN(d_model)
+        self.act = nn.SiLU()
+        self.proj = nn.Linear(d_model, channels*patch_size*patch_size)
+
+    def forward(self, x, cond):
+        x = self.norm(x, cond)
+        x = self.act(x)
+        x = self.proj(x)
+
+        return x
+
+
 class WorldModel(nn.Module):
     """
     WORLD: Wayfarer Operator-driven Rectified-flow Long-context Diffuser
@@ -142,14 +158,12 @@ class WorldModel(nn.Module):
 
         self.transformer = WorldDiT(config)
 
-        P = getattr(config, "patch_size", [1, 1, 1])
-        assert P[0] == 1, "Temporal patching not supported; use (1,*,*)."
-        self.proj_in = nn.Conv3d(config.channels, config.d_model, kernel_size=P, stride=P, bias=False)
-        self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels, kernel_size=P, stride=P, bias=True)
+        self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
+        self.proj_out = FinalLayer2(config.d_model, config.channels)
 
-    def get_conditioning_vectors(self, ts_emb):
-        # placeholder until we have Dit-Air and move ctrl_emb to cross attn
-        return ts_emb
+    def get_timestep_conditioning(self, ts):
+        # placeholder until we have Dit-Air
+        return self.timestep_emb(ts)
 
     def forward(
         self,
@@ -162,27 +176,26 @@ class WorldModel(nn.Module):
     ):
         """
         x: [B, N, C, H, W],
-        denoising_ts: [B, N]
-        prompt_emb: [???, ]
+        ts: [B, N]
+        prompt_emb: [B, Nt, D]
         controller_inputs: [B, N, I]
-        doc_id: [???, ]
+        doc_id: [B, N*H*W]
         """
         B, N, C, H, W = x.shape
 
         # embed
-        cond = self.get_conditioning_vectors(self.timestep_emb(ts))  # [B, N, d]
+        cond = self.get_timestep_conditioning(ts)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
-
+        b, n, c, h, w = x.shape
         # patchify
-        x = self.proj_in(eo.rearrange(x, 'b n c h w -> b c n h w'))
-        _, _, n, h, w = x.shape
-        assert (self.config.height, self.config.width) == (h, w), f"{h}, {w}"
+        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
+        x = self.proj_in(x)
 
         # transformer fwd
-        x = eo.rearrange(x, 'b d n h w -> b (n h w) d')
         x = self.transformer(x, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
-        x = eo.rearrange(x, 'b (n h w) d -> b d n h w', n=n, h=h, w=w)
 
         # unpatchify
-        x = self.proj_out(x, cond, out_hw=(h, w))
-        return eo.rearrange(x, 'b c n h w -> b n c h w')
+        x = self.proj_out(x, cond)
+        x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
+
+        return x

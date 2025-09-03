@@ -103,7 +103,7 @@ class Attn(nn.Module):
         if self.use_attn_gate:
             self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=True)
             nn.init.zeros_(self.gate_proj.weight)
-            nn.init.constant_(self.gate_proj.bias, -2.0)  # start mostly "closed"
+            nn.init.zeros_(self.gate_proj.bias)
 
     def forward(self, x, block_mask, kv_cache=None):
         qkv = self.qkv(x)
