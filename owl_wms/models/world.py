@@ -173,7 +173,7 @@ class WorldModel(nn.Module):
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         ####
-        if ctrl_emb:
+        if ctrl_emb is not None:
             cond = cond + ctrl_emb
         ####
 
