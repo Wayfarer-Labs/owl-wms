@@ -83,8 +83,9 @@ class WorldTrainer(BaseTrainer):
         self.model = self.model.cuda()
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
+        self.model = torch.compile(self.model)
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=100, update_every=1)
+        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
 
         assert self.train_cfg.opt.lower() == "muon"
         self.opt = init_muon(self.model, rank=self.rank, world_size=self.world_size, **self.train_cfg.opt_kwargs)
@@ -115,7 +116,9 @@ class WorldTrainer(BaseTrainer):
     def prep_batch(self, batch):
         """Move to cuda, and if necessary use encoder to convert rgb to latent (x)"""
         batch = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
         assert "rgb" not in batch, "rgb not supported, pass latents"
+
         if "mouse" in batch or "buttons" in batch:
             assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
@@ -198,8 +201,6 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum / self.accum_steps_per_device
 
-    # NOTE: self.model isn't compiled, fwd_step is
-    @torch.compile
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(**batch)
 
