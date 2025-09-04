@@ -191,18 +191,18 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
-            raw_loss = self.fwd_step(batch)
-            (raw_loss / self.accum_steps_per_device).backward()
-            loss_sum += raw_loss.item()
+            loss = self.fwd_step(batch)
+            loss.backward()
+            loss_sum += loss.item()
 
         # optimizer step
         self.opt.step()
         self.opt.zero_grad(set_to_none=True)
 
-        return loss_sum / self.accum_steps_per_device
+        return loss_sum
 
     def fwd_step(self, batch):
-        return self.conditional_flow_matching_loss(**batch)
+        return self.conditional_flow_matching_loss(**batch) / self.accum_steps_per_device
 
     def conditional_flow_matching_loss(self, x, **kw):
         """
