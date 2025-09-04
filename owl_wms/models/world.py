@@ -172,6 +172,11 @@ class WorldModel(nn.Module):
         cond = self.get_timestep_conditioning(ts)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
+        ####
+        if ctrl_emb:
+            cond = cond + ctrl_emb
+        ####
+
         # patchify, fwd, unpatchify
         x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
         x = self.proj_in(x)
