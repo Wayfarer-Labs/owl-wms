@@ -111,7 +111,7 @@ class Attn(nn.Module):
         q, k = rms_norm(q), rms_norm(k)
 
         # rotate new queries and keys (shared kv cache between modalities)
-        offset = kv_cache.offset[self.layer_idx] if kv_cache is not None else 0
+        offset = kv_cache.offset[self.layer_idx].clone() if kv_cache is not None else 0
         q, k = self.rope(q, offset=offset), self.rope(k, offset=offset)
 
         if kv_cache is not None:
