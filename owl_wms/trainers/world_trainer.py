@@ -201,6 +201,7 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
+    @torch.compile
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(**batch) / self.accum_steps_per_device
 
