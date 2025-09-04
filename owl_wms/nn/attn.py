@@ -69,7 +69,7 @@ class AttnMaskScheduler:
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
     def __call__(self, seq_len, doc_id, kv_cache, device):
-        q_offset = kv_cache.offset[0] if kv_cache is not None else 0
+        q_offset = kv_cache.offset[0].clone() if kv_cache is not None else 0
         ####
         if kv_cache is not None:
             same = (kv_cache.offset == kv_cache.offset[0]).all()
