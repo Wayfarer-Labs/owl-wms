@@ -83,7 +83,6 @@ class WorldTrainer(BaseTrainer):
         self.model = self.model.cuda()
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
-        self.model = torch.compile(self.model)
 
         self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
 
@@ -201,10 +200,10 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
+    @torch.compile
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(**batch) / self.accum_steps_per_device
 
-    @torch.compile
     def conditional_flow_matching_loss(self, x, **kw):
         """
         x0: [B, N, C, H, W] clean latents (timestep 0.0)
