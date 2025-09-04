@@ -53,8 +53,9 @@ class WorldTrainer(BaseTrainer):
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        accum_steps = self.train_cfg.target_batch_size // self.train_cfg.batch_size // self.world_size
-        self.accum_steps = max(1, accum_steps)
+        self.total_accum_steps = self.train_cfg.total_accum_steps
+        assert self.total_accum_steps % self.world_size == 0
+        self.accum_steps_per_device = self.total_accum_steps // self.world_size
 
     @staticmethod
     def get_raw_model(model):
@@ -132,7 +133,6 @@ class WorldTrainer(BaseTrainer):
     def train_loader(self):
         return get_loader(
             self.train_cfg.data_id,
-            self.train_cfg.batch_size,
             **self.train_cfg.data_kwargs
         )
 
@@ -140,7 +140,7 @@ class WorldTrainer(BaseTrainer):
         n_samples = (self.train_cfg.n_samples + self.world_size - 1) // self.world_size  # round up to next world_size
         return get_loader(
             self.train_cfg.sample_data_id,
-            n_samples,
+            batch_size=n_samples,
             **self.train_cfg.sample_data_kwargs
         )
 
@@ -166,8 +166,8 @@ class WorldTrainer(BaseTrainer):
 
         for epoch in range(self.train_cfg.epochs):
             for mini_batches in tqdm.tqdm(
-                    itertools.batched(train_loader, n=self.accum_steps),
-                    total=len(train_loader) // self.accum_steps,
+                    itertools.batched(train_loader, n=self.accum_steps_per_device),
+                    total=len(train_loader) // self.accum_steps_per_device,
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
@@ -189,15 +189,15 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
-            loss = self.fwd_step(batch) / self.accum_steps
-            loss.backward()
-            loss_sum += loss.item()
+            raw_loss = self.fwd_step(batch)
+            (raw_loss / self.accum_steps_per_device).backward()
+            loss_sum += raw_loss.item()
 
         # optimizer step
         self.opt.step()
         self.opt.zero_grad(set_to_none=True)
 
-        return loss_sum / self.accum_steps
+        return loss_sum / self.accum_steps_per_device
 
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(**batch)

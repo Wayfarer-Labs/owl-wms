@@ -37,24 +37,25 @@ model:
 train:
   trainer_id: world
 
-  #  data_id: wan_sample
-  #  data_kwargs:
-  #    window_length: 21
-  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
-  #    batch_columns: ["x", "prompt"]
-  #
-  #  sample_data_id: wan_sample
-  #  sample_data_kwargs:
-  #    window_length: 10  # size of single ground truth start tokens
-  #    dataset_path: /mnt/data/lapp0/datasets/wan_generated/
-  #    batch_columns: ["x", "prompt"]
+  total_accum_steps: 8
 
-  data_id: sequence_packing
+  data_id: multi
   data_kwargs:
-    seq_len: 512
-    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["depthlatent", "mouse", "buttons"]
-    latent_column: "depthlatent"
+    batch_size: 1
+    loaders:
+      - data_id: sequence_packing
+        data_kwargs:
+          seq_len: 512
+          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+          batch_columns: ["depthlatent", "mouse", "buttons"]
+          latent_column: "depthlatent"
+      - data_id: cod
+        data_kwargs:
+          seq_len: 512
+          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+          batch_columns: ["depthlatent", "mouse", "buttons"]
+          latent_column: "depthlatent"
+
 
   sample_data_id: cod
   sample_data_kwargs:
@@ -62,9 +63,6 @@ train:
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["depthlatent", "mouse", "buttons"]
     latent_column: "depthlatent"
-
-  target_batch_size: 8
-  batch_size: 1
 
   epochs: 10000
 

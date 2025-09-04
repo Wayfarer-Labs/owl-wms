@@ -1,5 +1,8 @@
 def get_loader(data_id, batch_size, **data_kwargs):
-    if data_id == "wan_pair_distill":
+    if data_id == "multi":
+        from . import multi
+        return multi.get_loader(batch_size, **data_kwargs)
+    elif data_id == "wan_pair_distill":
         from . import wan_distillation_loader
         return wan_distillation_loader.get_pair_loader(batch_size, **data_kwargs)
     elif data_id == "wan_sample":
