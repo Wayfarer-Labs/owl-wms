@@ -294,6 +294,14 @@ class WorldTrainer(BaseTrainer):
             )
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
 
+        # ---- Eval Loss ----
+        eval_loss = self.conditional_flow_matching_loss(**eval_batch)
+        if self.world_size > 1:
+            dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
+            eval_loss /= self.world_size
+        if self.rank == 0:
+            eval_wandb_dict["eval_loss"] = eval_loss.item()
+
         dist.barrier()
 
         return eval_wandb_dict
