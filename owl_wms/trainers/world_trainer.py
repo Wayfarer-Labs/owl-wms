@@ -85,6 +85,7 @@ class WorldTrainer(BaseTrainer):
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
         self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+        self.ema.update = torch.compile(self.ema.update)
 
         assert self.train_cfg.opt.lower() == "muon"
         self.opt = init_muon(self.model, rank=self.rank, world_size=self.world_size, **self.train_cfg.opt_kwargs)
