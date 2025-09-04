@@ -34,6 +34,7 @@ def get_block_mask(
     assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
     if not is_causal:
         assert q_offset == 0, "kv caching not supported with bidirectional"
+    torch._assert((q_offset % tokens_per_frame) == 0, "q_offset must be frame-aligned")
 
     frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
     n_frames = n_tokens // tokens_per_frame
@@ -71,6 +72,11 @@ class AttnMaskScheduler:
 
     def __call__(self, seq_len, doc_id, kv_cache, device):
         q_offset = kv_cache.offset[0] if kv_cache is not None else 0
+        ####
+        if kv_cache is not None:
+            same = (kv_cache.offset == kv_cache.offset[0]).all()
+            torch._assert(bool(same), f"Per-layer KV offsets diverged: {kv_cache.offset.tolist()}")
+        ####
         n_tokens = seq_len + q_offset
         kwargs = dict(
             n_tokens=n_tokens,
