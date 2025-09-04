@@ -47,18 +47,16 @@ def get_block_mask(
         frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
 
         if is_causal:
-            causal_mask = frame_kv <= frame_q
+            window_mask = (frame_kv <= frame_q) & (frame_q - frame_kv < window_len)  # causal window
         else:
-            causal_mask = True
+            window_mask = torch.abs(frame_q - frame_kv) < window_len  # bidirectional window
 
         if doc_id is not None:
             same_doc_mask = doc_id[b, frame_q] == doc_id[b, frame_kv]
         else:
             same_doc_mask = True
 
-        window_mask = torch.abs(frame_q - frame_kv) < window_len
-
-        return causal_mask & window_mask & same_doc_mask
+        return window_mask & same_doc_mask
 
     q_len = n_tokens - q_offset
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
@@ -101,8 +99,8 @@ class Attn(nn.Module):
         self.layer_idx = layer_idx
         self.n_heads = config.n_heads
 
-        self.qkv = nn.Linear(config.d_model, 3 * config.d_model)
-        self.out = nn.Linear(config.d_model, config.d_model)
+        self.qkv = nn.Linear(config.d_model, 3 * config.d_model, bias=False)
+        self.out = nn.Linear(config.d_model, config.d_model, bias=False)
         self.rope = get_rope_cls(getattr(config, "rope_impl", "ortho"))(config)
 
         self.use_attn_gate = getattr(config, "use_attn_gate", False)
@@ -122,10 +120,12 @@ class Attn(nn.Module):
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
+            ####
             torch._assert(k.size(2) == offset + q.size(2), f"KV_LEN != start + Q_LEN, {k.size(2)}, {offset}, {q.size(2)}")
             torch._assert((offset % self.config.tokens_per_frame) == 0, "start not frame-aligned")
+            ####
 
-        attn_out = flex_attention(q, k, v, block_mask=block_mask)  # , score_mod=score_mod)
+        attn_out = flex_attention(q, k, v, block_mask=block_mask)
 
         if self.use_attn_gate:
             gate = eo.rearrange(self.gate_proj(x).sigmoid(), "b t (h d) -> b h t d", h=self.n_heads)
@@ -308,26 +308,15 @@ class UViT(nn.Module):
 # === VIT Specific Layers ===
 
 class FinalLayer(nn.Module):
-    def __init__(self, d_model, channels, **conv_kw):
+    def __init__(self, d_model, channels, patch_size=1):
         super().__init__()
-
         self.norm = AdaLN(d_model)
         self.act = nn.SiLU()
-        self.proj = nn.ConvTranspose3d(d_model, channels, **conv_kw)
+        self.proj = nn.Linear(d_model, channels * patch_size * patch_size)
 
-    def forward(self, x, cond, out_hw=None):
-        """
-        x: (B, D, N, s, s)    cond: (B, N, D)  # per-frame conditioning
-        """
-        B, D, N, H2, W2 = x.shape
+    def forward(self, x, cond):
+        x = self.norm(x, cond)
+        x = self.act(x)
+        x = self.proj(x)
 
-        # token-wise AdaLN + SiLU (broadcast cond over spatial s×s)
-        x_tok = eo.rearrange(x, 'b d n h w -> b (n h w) d')
-        cond_tok = eo.repeat(cond, 'b n d -> b (n h w) d', h=H2, w=W2)
-        x_tok = self.act(self.norm(x_tok, cond_tok))
-        x = eo.rearrange(x_tok, 'b (n h w) d -> b d n h w', n=N, h=H2, w=W2)
-        if out_hw is None:
-            return self.proj(x)  # -> (B, C, N, s*ps[1], s*ps[2])
-        else:
-            H, W = out_hw
-            return self.proj(x, output_size=(N, H, W))
+        return x

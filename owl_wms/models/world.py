@@ -121,22 +121,6 @@ class WorldDiT(nn.Module):
         return x
 
 
-class FinalLayer2(nn.Module):
-    def __init__(self, d_model, channels,patch_size=1):
-        super().__init__()
-
-        self.norm = owl_nn.AdaLN(d_model)
-        self.act = nn.SiLU()
-        self.proj = nn.Linear(d_model, channels*patch_size*patch_size)
-
-    def forward(self, x, cond):
-        x = self.norm(x, cond)
-        x = self.act(x)
-        x = self.proj(x)
-
-        return x
-
-
 class WorldModel(nn.Module):
     """
     WORLD: Wayfarer Operator-driven Rectified-flow Long-context Diffuser
@@ -159,7 +143,7 @@ class WorldModel(nn.Module):
         self.transformer = WorldDiT(config)
 
         self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
-        self.proj_out = FinalLayer2(config.d_model, config.channels)
+        self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels)
 
     def get_timestep_conditioning(self, ts):
         # placeholder until we have Dit-Air
@@ -177,11 +161,12 @@ class WorldModel(nn.Module):
         """
         x: [B, N, C, H, W],
         ts: [B, N]
-        prompt_emb: [B, Nt, D]
+        prompt_emb: [B, P, D]
         controller_inputs: [B, N, I]
-        doc_id: [B, N*H*W]
+        doc_id: [B, N]
         """
         B, N, C, H, W = x.shape
+        assert (H, W) == (self.config.height, self.config.width)
 
         # embed
         cond = self.get_timestep_conditioning(ts)  # [B, N, d]

@@ -31,13 +31,12 @@ class AVCachingSampler:
 
         dt = get_sd3_euler(self.n_steps).to(device=x.device, dtype=x.dtype)
 
-        kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).cuda()
-
-        latents = [x]
+        kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).to(x.device)
 
         # History for the first frame generation step = full clean clip
         prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
 
+        latents = [x]
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = init_len + idx
             curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
