@@ -202,9 +202,9 @@ class WorldTrainer(BaseTrainer):
 
     @torch.compile
     def fwd_step(self, batch):
-        return self.conditional_flow_matching_loss(**batch) / self.accum_steps_per_device
+        return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    def conditional_flow_matching_loss(self, x, **kw):
+    def conditional_flow_matching_loss(self, model, x, **kw):
         """
         x0: [B, N, C, H, W] clean latents (timestep 0.0)
         """
@@ -218,7 +218,7 @@ class WorldTrainer(BaseTrainer):
             v_target = x1 - x0
 
         with self.autocast_ctx:
-            v_pred = self.model(x_t, ts, **kw)
+            v_pred = model(x_t, ts, **kw)
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
@@ -230,8 +230,6 @@ class WorldTrainer(BaseTrainer):
         # eval / sample step
         if self.total_step_counter % self.train_cfg.sample_interval == 0 and self.total_step_counter > 0:
             eval_wandb_dict = self.eval_step(sample_loader, sampler)
-            gc.collect()
-            torch.cuda.empty_cache()
             if self.rank == 0:
                 wandb_dict.update(eval_wandb_dict)
 
@@ -296,7 +294,7 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
 
         # ---- Eval Loss ----
-        eval_loss = self.fwd_step(eval_batch)
+        eval_loss = self.conditional_flow_matching_loss(ema_model, **eval_batch)
         if self.world_size > 1:
             dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
             eval_loss /= self.world_size
