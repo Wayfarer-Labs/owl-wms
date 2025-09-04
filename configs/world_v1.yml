@@ -39,22 +39,31 @@ train:
 
   total_accum_steps: 8
 
-  data_id: multi
+
+  data_id: sequence_packing
   data_kwargs:
     batch_size: 1
-    loaders:
-      - data_id: sequence_packing
-        data_kwargs:
-          seq_len: 512
-          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-          batch_columns: ["depthlatent", "mouse", "buttons"]
-          latent_column: "depthlatent"
-      - data_id: sequence_packing
-        data_kwargs:
-          seq_len: 512
-          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-          batch_columns: ["depthlatent", "mouse", "buttons"]
-          latent_column: "depthlatent"
+    seq_len: 512
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["depthlatent", "mouse", "buttons"]
+    latent_column: "depthlatent"
+
+  #  data_id: multi
+  #  data_kwargs:
+  #    batch_size: 1
+  #    loaders:
+  #      - data_id: sequence_packing
+  #        data_kwargs:
+  #          seq_len: 512
+  #          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+  #          batch_columns: ["depthlatent", "mouse", "buttons"]
+  #          latent_column: "depthlatent"
+  #      - data_id: sequence_packing
+  #        data_kwargs:
+  #          seq_len: 512
+  #          dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+  #          batch_columns: ["depthlatent", "mouse", "buttons"]
+  #          latent_column: "depthlatent"
 
 
   sample_data_id: cod
