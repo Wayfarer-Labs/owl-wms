@@ -116,7 +116,7 @@ class Attn(nn.Module):
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
-            torch._assert(k.size(2) == offset + q.size(2), "KV_LEN != start + Q_LEN")
+            torch._assert(k.size(2) == offset + q.size(2), f"KV_LEN != start + Q_LEN, {k.size(2)}, {offset}, {q.size(2)}")
             torch._assert((offset % self.config.tokens_per_frame) == 0, "start not frame-aligned")
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)  # , score_mod=score_mod)
