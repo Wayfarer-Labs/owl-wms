@@ -234,7 +234,7 @@ class WorldTrainer(BaseTrainer):
                 wandb_dict.update(eval_wandb_dict)
 
         if self.rank == 0:
-            wandb.log(wandb_dict)
+            wandb.log(wandb_dict, step=self.total_step_counter)
 
     def _gather_concat_cpu(self, t: torch.Tensor, dim: int = 0):
         """Gather *t* from every rank onto rank 0 and return concatenated copy."""
