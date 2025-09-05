@@ -66,25 +66,24 @@ class WorldTrainer(BaseTrainer):
             return
         super().save({
             'model': self.get_raw_model(self.model).state_dict(),
-            'ema_model': self.get_raw_model(self.ema.ema_model).state_dict(),
+            'ema': self.ema.state_dict(),
             'opt': self.opt.state_dict(),
             'steps': self.total_step_counter
         })
 
     def load(self) -> None:
-        # VAE
+        # Static immutable models
         self.decoder = self.decoder.cuda().eval().bfloat16()
         self.decode_fn = make_batched_decode_fn(self.decoder, self.train_cfg.vae_batch_size)
-
-        # Prompt Encoder
         self.prompt_encoder = self.prompt_encoder.cuda().eval()
 
-        # Online model, EMO, Optimizer
+        # Online model, EMA, Optimizer
         self.model = self.model.cuda()
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
-        self.ema = EMA(self.model, beta=0.999, update_after_step=0, update_every=1)
+        raw = self.get_raw_model(self.model)
+        self.ema = EMA(raw, beta=0.999, update_after_step=0, update_every=1, include_online_model=False)
 
         assert self.train_cfg.opt.lower() == "muon"
         self.opt = init_muon(self.model, rank=self.rank, world_size=self.world_size, **self.train_cfg.opt_kwargs)
@@ -94,13 +93,9 @@ class WorldTrainer(BaseTrainer):
             state = super().load(ckpt)
 
             self.get_raw_model(self.model).load_state_dict(state["model"], strict=True)
+            self.ema.load_state_dict(state["ema"], strict=True)
             self.opt.load_state_dict(state["opt"])
             self.total_step_counter = int(state.get("steps", 0))
-
-            # load ema
-            self.get_raw_model(self.ema.ema_model).load_state_dict(state["ema_model"], strict=True)
-            self.ema.initted.copy_(torch.tensor(True, device=self.ema.initted.device))
-            self.ema.step.copy_(torch.tensor(self.total_step_counter, device=self.ema.step.device))
 
             del state  # free memory
 
@@ -259,6 +254,7 @@ class WorldTrainer(BaseTrainer):
 
     def eval_step(self, sample_loader, sampler):
         ema_model = self.get_module(ema=True)
+        ema_model.eval()
 
         # ---- Generate Samples ----
         eval_batch = self.prep_batch(next(sample_loader))
