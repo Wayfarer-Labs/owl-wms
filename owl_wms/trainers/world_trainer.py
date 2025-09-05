@@ -93,15 +93,14 @@ class WorldTrainer(BaseTrainer):
         if ckpt:
             state = super().load(ckpt)
 
+            self.get_raw_model(self.model).load_state_dict(state["model"], strict=True)
+            self.opt.load_state_dict(state["opt"])
+            self.total_step_counter = int(state.get("steps", 0))
+
             # load ema
             self.get_raw_model(self.ema.ema_model).load_state_dict(state["ema_model"], strict=True)
             self.ema.initted.copy_(torch.tensor(True, device=self.ema.initted.device))
             self.ema.step.copy_(torch.tensor(self.total_step_counter, device=self.ema.step.device))
-
-            # load everything else
-            self.get_raw_model(self.model).load_state_dict(state["model"], strict=True)
-            self.opt.load_state_dict(state["opt"])
-            self.total_step_counter = int(state.get("steps", 0))
 
             del state  # free memory
 
