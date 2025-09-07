@@ -1,0 +1,61 @@
+model:
+  model_id: dcae
+  sample_size: [360,640]
+  channels: 3
+  latent_size: 8
+  latent_channels: 128
+
+  ch_0: 96
+  ch_max: 1536
+
+  encoder_blocks_per_stage: [1, 1, 1, 1, 1, 1]
+  decoder_blocks_per_stage: [1, 1, 1, 1, 1, 1]
+
+  use_middle_block: false
+
+train:
+  trainer_id: distill_dec
+  data_id: s3_cod_features
+  data_kwargs:
+    bucket_name: cod-yt-frames-1080p
+    prefix: depth-and-rgb
+    include_depth: true
+    target_size: [360, 640]
+    
+  target_batch_size: 256
+  batch_size: 32
+
+  epochs: 100
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 2.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.95]
+    eps: 1.0e-15
+
+  lpips_type: convnext
+  loss_weights:
+    l2: 1.0
+    lpips: 12.0
+    gan: 0.0
+    feature_matching: 0.0
+
+  scheduler: LinearWarmup
+  scheduler_kwargs:
+    warmup_steps: 1500
+    min_lr: 1.0e-5
+
+  checkpoint_dir: checkpoints/cod_yt_v2_dec_dist
+  teacher_ckpt: checkpoints/cod_yt_v2/step_515000.pt
+  teacher_cfg: configs/cod_yt_v2/base.yml
+
+  sample_interval: 500
+  save_interval: 5000
+
+  latent_scale: 1.0
+
+wandb:
+  name: ${env:WANDB_USER_NAME}
+  project: new_vaes
+  run_name: cod_yt_v2_dec_dist

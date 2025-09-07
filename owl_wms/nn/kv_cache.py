@@ -1,5 +1,11 @@
 import torch
 from ..configs import TransformerConfig
+from ..quant.fp8_kv import (
+    quantize_per_head,
+    dequantize_per_head,
+    quantize_per_head_timewise,
+    dequantize_per_head_timewise,
+)
 
 
 def KVCache(config : TransformerConfig):
@@ -208,3 +214,118 @@ class StaticCache:
     @property
     def shape(self):
         return self.k_cache[0].shape
+
+
+class QuantizedStaticCache:
+    def __init__(
+        self,
+        config: TransformerConfig,
+        max_length = 120,
+        batch_size = 1,
+        device = 'cuda',
+        dtype = torch.bfloat16,
+        fmt_k: str = 'e5m2',
+        fmt_v: str = 'e4m3',
+        ema_momentum: float = 0.99,
+    ):
+        self.config = config
+
+        self.device = device
+        self.dtype = dtype
+        self.should_update = False
+
+        self.max_length = max_length
+        self.batch_size = batch_size
+        self.tokens_per_frame = config.tokens_per_frame
+
+        # Match StaticCache semantics: allocate tokens = frames * tokens_per_frame
+        # Caller passes frames (init_len from pipeline); convert to tokens.
+        T = max_length * config.tokens_per_frame
+        H = config.n_heads
+        D = config.d_model // H
+
+        # int8 storage for KV
+        self.k_i8 = [torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) for _ in range(config.n_layers)]
+        self.v_i8 = [torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) for _ in range(config.n_layers)]
+
+        # scales per token (timewise) for stability in early steps: [B,H,T]
+        self.scale_k = [torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) for _ in range(config.n_layers)]
+        self.scale_v = [torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) for _ in range(config.n_layers)]
+
+        self.offsets = [0] * config.n_layers
+        self.fmt_k = fmt_k
+        self.fmt_v = fmt_v
+        self.ema_momentum = ema_momentum
+
+    def enable_cache_updates(self):
+        self.should_update = True
+
+    def disable_cache_updates(self):
+        self.should_update = False
+
+    def to(self, device = 'cuda', dtype = torch.bfloat16):
+        self.device = device
+        self.dtype = dtype
+        return self
+
+    def reset(self, batch_size = 1):
+        # logical offsets reset; underlying slabs reused
+        self.offsets = [0] * self.config.n_layers
+
+    def get(self, layer_ind, new_k = None, new_v = None):
+        # Return BF16 dequantized KV for the current window; if new_* provided, append logically.
+        k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
+        v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+        if new_k is not None:
+            k = torch.cat([k, new_k], dim=2)
+            v = torch.cat([v, new_v], dim=2)
+        return k, v
+
+    def update(self, new_k, new_v, layer_ind):
+        # Quantize and write newest positions into ring (roll window by new_len tokens)
+        new_len = new_k.shape[2]
+        B = new_k.shape[0]
+
+        # Update K
+        qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
+        qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
+
+        # Handle initial fill (when T is zero-length or smaller than new_len)
+        T_cur = self.k_i8[layer_ind].shape[2]
+        if T_cur == 0 or new_len >= T_cur:
+            # Directly write (truncate to buffer size if needed)
+            write_len = min(new_len, T_cur) if T_cur > 0 else 0
+            if write_len > 0:
+                self.k_i8[layer_ind][:, :, -write_len:, :] = qk[:, :, -write_len:, :]
+                self.v_i8[layer_ind][:, :, -write_len:, :] = qv[:, :, -write_len:, :]
+        else:
+            # Roll and write (batch assumed 1)
+            self.k_i8[layer_ind] = torch.roll(self.k_i8[layer_ind], shifts=-new_len, dims=2)
+            self.v_i8[layer_ind] = torch.roll(self.v_i8[layer_ind], shifts=-new_len, dims=2)
+            self.k_i8[layer_ind][:, :, -new_len:, :] = qk
+            self.v_i8[layer_ind][:, :, -new_len:, :] = qv
+
+        # Update scales/amax per head
+        # Write scales aligned with the written token slice
+        if T_cur > 0 and new_len < T_cur:
+            self.scale_k[layer_ind] = torch.roll(self.scale_k[layer_ind], shifts=-new_len, dims=2)
+            self.scale_v[layer_ind] = torch.roll(self.scale_v[layer_ind], shifts=-new_len, dims=2)
+            self.scale_k[layer_ind][:, :, -new_len:] = sk
+            self.scale_v[layer_ind][:, :, -new_len:] = sv
+
+        self.offsets[layer_ind] += new_len
+
+    def eject(self):
+        # Maintain same API; no-op since ring behavior already ejects oldest tokens.
+        return
+
+    def length_at(self, idx):
+        # Full logical window length in tokens
+        return self.k_i8[idx].shape[2]
+
+    def get_offset(self, idx=0):
+        return self.offsets[idx]
+
+    @property
+    def shape(self):
+        return self.k_i8[0].shape

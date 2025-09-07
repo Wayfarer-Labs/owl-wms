@@ -1,0 +1,102 @@
+model:
+  model_id: game_rft
+  sample_size: 8
+  channels: 128
+
+  n_layers: 16
+  n_heads: 24
+  d_model: 1536
+
+  tokens_per_frame: 64
+  n_buttons: 11
+  n_mouse_axes: 2
+
+  cfg_prob: 0.0
+  n_frames: 1536
+
+  causal: true
+  uncond: false
+  backbone: dit
+  has_audio: false
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  local_window: 16
+  global_window: null  # full window
+
+train:
+  trainer_id: causvid_vid
+  data_id: cod
+  data_kwargs:
+    window_length: 240
+    dataset_path: /mnt/data/lapp0/BlackOpsColdWar/train_npy
+    batch_columns: ["depth_latent", "mouse", "buttons"]
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    window_length: 240  # size of single ground truth start tokens
+    dataset_path: /mnt/data/lapp0/BlackOpsColdWar/train_npy
+    batch_columns: ["depth_latent", "mouse", "buttons"]
+
+  target_batch_size: 64
+  batch_size: 4
+
+  epochs: 10000
+
+  opt: AdamW
+  opt_kwargs:
+    lr: 2.0e-6
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  d_opt_kwargs:
+    lr: 4.0e-7
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    eps: 1.0e-8
+    
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/video_dit_v4_dmd
+  output_path: /mnt/data/owl-wms/checkpoints/dit_v4_dmd
+  resume_ckpt: null
+
+  teacher_cfg: configs/dit_v4.yml
+  teacher_ckpt: /mnt/data/lapp0/checkpoints/89220499/checkpoints/step_170000.pt
+  student_ckpt: /mnt/data/lapp0/checkpoints/89220499/checkpoints/step_170000.pt
+
+  sample_interval: 200
+  save_interval: 1000
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 2
+    #window_length: 16
+    cfg_scale: 1.0
+    num_frames: 120
+    noise_prev: 0.2
+    custom_schedule: [1.0, 0.5]
+
+  n_samples: 4
+  eval_sample_dir: null
+
+  vae_id: null
+  vae_batch_size: 1
+
+  vae_scale: 0.63
+  #vae_cfg_path: owl-vaes/configs/cod_yt_v2/base.yml
+  #vae_ckpt_path: cod_yt_v2_515k_ema_decoder.pt
+  vae_cfg_path: ./dec_dist.yml
+  vae_ckpt_path: ./dec_dist_60k.pt
+  
+  update_ratio: 5
+  ts_shift: 8
+  rollout_steps: 4
+  log_predictions: false
+  regression_weight: 0.0
+
+wandb:
+  name: shahbuland  # lapp0-andrew-lapp
+  project: video_models  # owl
+  run_name: causvid_dit_v4

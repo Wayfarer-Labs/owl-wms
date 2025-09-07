@@ -1,7 +1,7 @@
 from owl_wms.configs import Config
 from owl_wms.data import get_loader
 from owl_wms import from_pretrained
-from owl_wms.nn.kv_cache import KVCache, StaticCache
+from owl_wms.nn.kv_cache import KVCache, StaticCache, QuantizedStaticCache
 from owl_wms.nn.rope import cast_rope_buffers_to_fp32
 from owl_wms.nn.attn import get_block_mask
 
@@ -89,7 +89,12 @@ class CausvidPipeline:
         init_len = self.history_buffer.size(1)
         
         # Initialize KV cache
-        self.cache = StaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
+        use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
+        if use_fp8_kv:
+            # max_length is number of frames (same as StaticCache usage)
+            self.cache = QuantizedStaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
+        else:
+            self.cache = StaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
         #self.cache = KVCache(self.model.config)
         #self.cache.reset(batch_size)
         
