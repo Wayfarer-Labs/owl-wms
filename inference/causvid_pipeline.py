@@ -63,8 +63,11 @@ class CausvidPipeline:
 
         self.alpha = 0.25
 
-        self.model = torch.compile(self.model)#, mode = 'max-autotune', dynamic = False, fullgraph = True)
-        self.frame_decoder = torch.compile(self.frame_decoder, mode = 'max-autotune', dynamic = False, fullgraph = True)
+        # Optional compile toggle
+        self.compile_enabled = bool(int(os.environ.get("OWL_COMPILE", "1")))
+        if self.compile_enabled:
+            self.model = torch.compile(self.model)#, mode = 'max-autotune', dynamic = False, fullgraph = True)
+            self.frame_decoder = torch.compile(self.frame_decoder, mode = 'max-autotune', dynamic = False, fullgraph = True)
         
         self.device = 'cuda'
         
@@ -74,6 +77,16 @@ class CausvidPipeline:
         self.profile_kv_first = int(os.environ.get("OWL_PROFILE_KV_FIRST", "3"))
         self._profile_kv_count = 0
         self.use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
+        # One-time backend sanity
+        if self.profile_kv:
+            try:
+                sk = getattr(torch.backends.cuda, "sdp_kernel", None)
+                if sk is not None:
+                    print("[Kernels] sdp_kernel namespace present; SDPA backends configurable")
+                else:
+                    print("[Kernels] sdp_kernel namespace not present; using default SDPA backends")
+            except Exception:
+                print("[Kernels] backend query unavailable; proceeding without kernel print")
         self._initial_history_buffer = None
         self._initial_mouse_buffer = None
         self._initial_button_buffer = None
@@ -259,6 +272,8 @@ class CausvidPipeline:
         if self.profile_kv:
             torch.cuda.reset_peak_memory_stats()
             t_kv0 = time.time()
+            e_attn0 = torch.cuda.Event(enable_timing=True); e_attn1 = torch.cuda.Event(enable_timing=True)
+            e_attn0.record()
         pred_v = self.model(
             curr_x,
             curr_t,
@@ -267,8 +282,9 @@ class CausvidPipeline:
             kv_cache=self.cache
         )
         if self.profile_kv:
-            torch.cuda.synchronize()
+            e_attn1.record(); torch.cuda.synchronize()
             step1_s = time.time() - t_kv0
+            attn1_ms = e_attn0.elapsed_time(e_attn1)
             mem1_mb = torch.cuda.max_memory_reserved() / (1024**2)
         
         curr_x = curr_x - 0.75 * pred_v
@@ -279,6 +295,8 @@ class CausvidPipeline:
         if self.profile_kv:
             torch.cuda.reset_peak_memory_stats()
             t_kv1 = time.time()
+            e_attn2 = torch.cuda.Event(enable_timing=True); e_attn3 = torch.cuda.Event(enable_timing=True)
+            e_attn2.record()
         pred_v = self.model(
             curr_x,
             curr_t,
@@ -288,14 +306,21 @@ class CausvidPipeline:
         )
         self.cache.disable_cache_updates()
         if self.profile_kv:
-            torch.cuda.synchronize()
+            e_attn3.record(); torch.cuda.synchronize()
             step2_s = time.time() - t_kv1
+            attn2_ms = e_attn2.elapsed_time(e_attn3)
             mem2_mb = torch.cuda.max_memory_reserved() / (1024**2)
             # Throttle printing: first N frames, then every M frames
             self._profile_kv_count += 1
             should_print = (self._profile_kv_count <= self.profile_kv_first) or (self._profile_kv_count % self.profile_kv_every == 0)
             if should_print:
-                print(f"[KV-Profile] step1_s={step1_s:.3f}s, step2_s={step2_s:.3f}s, max_reserved={max(mem1_mb, mem2_mb):.1f}MB")
+                # Cache-level quant/dequant accumulated timings
+                q_ms = getattr(self.cache, 'quant_ms', 0.0)
+                dq_ms = getattr(self.cache, 'dequant_ms', 0.0)
+                attn_total = getattr(self.cache, 'attn_ms', 0.0)
+                mlp_total = getattr(self.cache, 'mlp_ms', 0.0)
+                print(f"[KV-Profile] step1_s={step1_s:.3f}s (attn1={attn1_ms:.2f}ms), step2_s={step2_s:.3f}s (attn2={attn2_ms:.2f}ms), q_ms={q_ms:.2f}, dq_ms={dq_ms:.2f}, max_reserved={max(mem1_mb, mem2_mb):.1f}MB")
+                print(f"[KV-Profile] accum: attn_total_ms={attn_total:.2f}, mlp_total_ms={mlp_total:.2f}")
 
         new_frame = curr_x - 0.25 * pred_v
 
@@ -303,10 +328,21 @@ class CausvidPipeline:
         torch.cuda.synchronize()
         elapsed_time = start_event.elapsed_time(end_event) / 1000.0  # Convert ms to seconds
 
-        # Decode frame for display
+        # Decode frame for display (profile if enabled)
+        if self.profile_kv:
+            e_dec0 = torch.cuda.Event(enable_timing=True); e_dec1 = torch.cuda.Event(enable_timing=True)
+            e_dec0.record()
         x_to_dec = new_frame[0] * self.image_scale
         frame = self.frame_decoder(x_to_dec).squeeze()  # [c,h,w]
+        if self.profile_kv:
+            e_dec1.record(); torch.cuda.synchronize()
+            dec_ms = e_dec0.elapsed_time(e_dec1)
         frame = to_bgr_uint8(frame)
+        if self.profile_kv:
+            # Throttle using the same counter
+            should_print = (self._profile_kv_count <= self.profile_kv_first) or (self._profile_kv_count % self.profile_kv_every == 0)
+            if should_print:
+                print(f"[KV-Profile] decoder_ms={dec_ms:.2f}ms")
         
         return frame, elapsed_time
     

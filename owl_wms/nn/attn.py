@@ -81,6 +81,7 @@ class Attn(nn.Module):
 
         qkv = self.qkv(x)
         q, k, v = einops.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.n_heads)
+        q = q.contiguous(); k = k.contiguous(); v = v.contiguous()
         q, k = rms_norm(q), rms_norm(k)
 
         # rotate new queries and keys (shared kv cache between modalities)
@@ -138,13 +139,32 @@ class DiTBlock(nn.Module):
     def forward(self, x, cond, block_mask, kv_cache=None):
         residual = x
         x = self.adaln1(x, cond)
-        x = self.attn(x, block_mask, kv_cache)
+        # Profile attention if kv_cache exposes profiling helpers
+        if kv_cache is not None and hasattr(kv_cache, "_can_profile") and kv_cache._can_profile():
+            e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+            e0.record()
+            x = self.attn(x, block_mask, kv_cache)
+            e1.record(); torch.cuda.synchronize()
+            if not hasattr(kv_cache, "attn_ms"):
+                kv_cache.attn_ms = 0.0
+            kv_cache.attn_ms += e0.elapsed_time(e1)
+        else:
+            x = self.attn(x, block_mask, kv_cache)
         x = self.gate1(x, cond)
         x = residual + x
 
         residual = x
         x = self.adaln2(x, cond)
-        x = self.mlp(x)
+        if kv_cache is not None and hasattr(kv_cache, "_can_profile") and kv_cache._can_profile():
+            e2 = torch.cuda.Event(enable_timing=True); e3 = torch.cuda.Event(enable_timing=True)
+            e2.record()
+            x = self.mlp(x)
+            e3.record(); torch.cuda.synchronize()
+            if not hasattr(kv_cache, "mlp_ms"):
+                kv_cache.mlp_ms = 0.0
+            kv_cache.mlp_ms += e2.elapsed_time(e3)
+        else:
+            x = self.mlp(x)
         x = self.gate2(x, cond)
         x = residual + x
 

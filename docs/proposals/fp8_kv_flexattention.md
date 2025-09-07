@@ -432,6 +432,68 @@ OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_LATE_LAYERS=8 python -m inferen
   - Defer stabilizers (percentile/per-channel K scales) since quality is acceptable and not degrading to noise.
   - Focus next on perf profiling to identify true bottlenecks (model compute vs decoder vs layout).
 
+## Optional stabilizers (quality) and flags
+
+Use only if the “stand still” drift is objectionable. Keep K in BF16; apply to V only unless noted.
+
+- Percentile scaling (V only): replace per‑token amax with percentile to reduce outlier sensitivity
+  - Flag: `OWL_V_PERCENTILE=99` (or `99.5`)
+  - Effect: `scale = percentile(|V|, P) / 127` per head/token
+
+- Late‑layers‑only V FP8 (already supported): reduce early‑layer error accumulation
+  - Flag: `OWL_KV_LATE_LAYERS=N` (e.g., `8`), keep `OWL_K_FP8=0`
+
+- Per‑channel scales for V: finer granularity per [H,D] instead of per [H]
+  - Flag: `OWL_V_PER_CHANNEL=1`
+
+- Temporal smoothing on scales: avoid sudden scale drops frame‑to‑frame
+  - Flag: `OWL_SCALE_SMOOTH=0.9`
+  - Effect: `scale_t = max(scale_t, α · scale_{t−1})`
+
+Recommended order:
+1) Percentile scaling on V (keep K BF16)
+2) Late‑layers‑only V FP8 (tune N)
+3) Per‑channel V scales
+4) Optional temporal smoothing
+
+## Profiling findings (attention vs decoder vs KV)
+
+- Attention dominates step time after warmup: attn1/attn2 ≈ 5–11 ms per call.
+- KV quant/dequant overhead is negligible (q_ms≈0, dq_ms≈0), confirming the KV path is not the bottleneck.
+- Reserved memory ~3.2 GB stable post-warmup with FP8-KV; allocator retention explains lack of apparent drop in some runs.
+- Next focus: ensure best attention kernels (SDPA/Flash/Flex) are selected; measure decoder cost.
+
+### New findings (latest runs)
+- Cold-start compile dominates first 1–2 prints; ignore those.
+- Warm loop (V‑only FP8, K BF16):
+  - Attention per call ≈ 5–12 ms; two calls per frame.
+  - Decoder ≈ 8–9 ms per frame.
+  - KV quant/dequant ≈ 0 ms (negligible), reserved VRAM ≈ 3.2 GB.
+- Quality: Slight quality delta vs full BF16; when standing still, drift is more visible than baseline (does not collapse to noise).
+
+Implication: We are compute‑bound by transformer attention/MLP and decoder; KV IO is not limiting. FP8‑KV remains a memory/bandwidth win with small quality cost.
+
+### Planned actions (without changing diffusion steps/scheduler)
+- Add decoder timing to the profile output (done).
+- Verify FlexAttention/SDPA fastpaths consistently; ensure [B,H,T,D] contiguity and avoid extra cat/roll.
+- Add optional MLP timing if needed.
+
+### Latest profiler snapshot (compile OFF)
+- Command:
+  - `OWL_COMPILE=0 OWL_PROFILE_KV=1 OWL_PROFILE_KV_FIRST=2 OWL_PROFILE_KV_EVERY=50 OWL_FP8_KV=1 OWL_K_FP8=0 python -m inference.game_cv`
+- Notable lines captured:
+  - `prefill_s=5.643s, max_reserved=8142.0MB`
+  - `step1_s=2.000s (attn1=2182.06ms), step2_s=0.044s (attn2=48.39ms), q_ms=21.09, dq_ms=7.99`
+  - `accum: attn_total_ms=6629.54, mlp_total_ms=94.25`
+  - `decoder_ms=115.12ms`
+  - Warm loop (sample):
+    - `step1_s=0.039s (attn1=42.83ms), step2_s=0.041s (attn2=44.80ms), q_ms=24.04, dq_ms=13.05`
+    - `accum: attn_total_ms=6680.12, mlp_total_ms=101.77`
+    - `decoder_ms=26.58ms`
+    - Later: `q_ms=352.48, dq_ms=536.87` (expected higher without compile; confirms compile masks Q/DQ overhead in prior runs)
+- Takeaways:
+  - Without compile, attention and MLP costs are measurable and dominate; decoder ~25–30ms (uncompiled). With compile ON, decoder ~8–9ms and q/dq ~0ms, matching earlier findings that runtime is compute‑bound by attention+decoder, not KV.
+
 - FP8-KV achieves memory reduction but quality degrades faster vs BF16 and FPS did not improve yet. Focus shifts to K-only FP8 or late-layer FP8, plus profiling to expose non-KV bottlenecks.
 
 - DRAM bytes per decode step scale roughly with `O(n_layers * H * T * D)` for two K/V reads; halving bytes for K and V yields ~2× KV traffic reduction.

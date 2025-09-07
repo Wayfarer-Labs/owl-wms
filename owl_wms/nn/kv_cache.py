@@ -172,9 +172,9 @@ class StaticCache:
             old_k[:,:,-new_k.shape[2]:] = new_k
             old_v[:,:,-new_v.shape[2]:] = new_v
 
-            return old_k, old_v
+            return old_k.contiguous(), old_v.contiguous()
         else:
-            return self.k_cache[layer_ind], self.v_cache[layer_ind]
+            return self.k_cache[layer_ind].contiguous(), self.v_cache[layer_ind].contiguous()
 
     def update(self, new_k, new_v, layer_ind):
         new_len = new_k.shape[2]
@@ -288,6 +288,22 @@ class QuantizedStaticCache:
         self.fmt_v = fmt_v
         self.ema_momentum = ema_momentum
 
+        # Profiling (quant/dequant) when enabled via OWL_PROFILE_KV
+        import os as _os
+        self._profile = bool(int(_os.environ.get("OWL_PROFILE_KV", "0")))
+        self.quant_ms = 0.0
+        self.dequant_ms = 0.0
+
+        # Helper to avoid profiling inside torch.compile graphs
+        try:
+            import torch._dynamo as _dynamo
+            self._is_compiling = _dynamo.is_compiling
+        except Exception:
+            self._is_compiling = lambda: False
+
+    def _can_profile(self) -> bool:
+        return self._profile and not self._is_compiling()
+
     def enable_cache_updates(self):
         self.should_update = True
 
@@ -306,11 +322,21 @@ class QuantizedStaticCache:
     def get(self, layer_ind, new_k = None, new_v = None):
         # Return BF16 K/V for current window (dequant if FP8)
         if self.k_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
             k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
         else:
             k = self.k_bf16[layer_ind]
         if self.v_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
             v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
         else:
             v = self.v_bf16[layer_ind]
         if new_k is not None:
@@ -324,13 +350,23 @@ class QuantizedStaticCache:
 
         # Select buffers per tensor kind (K/V) depending on FP8 enablement
         if self.k_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
             qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
             k_buf = self.k_i8[layer_ind]
         else:
             k_slice = new_k
             k_buf = self.k_bf16[layer_ind]
         if self.v_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
             qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
             v_buf = self.v_i8[layer_ind]
         else:
             v_slice = new_v
