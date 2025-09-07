@@ -253,7 +253,7 @@ class WorldTrainer(BaseTrainer):
             dist.gather(tc, dst=0, group=self.pg_cpu)
 
     def eval_step(self, sample_loader, sampler):
-        ema_model = self.get_module(ema=True)
+        ema_model = self.ema.ema_model
         ema_model.eval()
 
         # ---- Generate Samples ----
