@@ -1,4 +1,5 @@
 import torch
+import os
 from ..configs import TransformerConfig
 from ..quant.fp8_kv import (
     quantize_per_head,
@@ -243,14 +244,44 @@ class QuantizedStaticCache:
         T = max_length * config.tokens_per_frame
         H = config.n_heads
         D = config.d_model // H
+        L = config.n_layers
 
-        # int8 storage for KV
-        self.k_i8 = [torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) for _ in range(config.n_layers)]
-        self.v_i8 = [torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) for _ in range(config.n_layers)]
+        # Layer-wise enablement: allow FP8 only for late layers; and optionally keep K in BF16
+        late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", "0"))
+        start_fp8 = max(0, L - late_layers) if late_layers > 0 else 0
+        k_fp8_global = bool(int(os.environ.get("OWL_K_FP8", "1")))
+        self.k_use_fp8 = [(k_fp8_global and (li >= start_fp8)) for li in range(L)]
+        self.v_use_fp8 = [(li >= start_fp8) for li in range(L)]
 
-        # scales per token (timewise) for stability in early steps: [B,H,T]
-        self.scale_k = [torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) for _ in range(config.n_layers)]
-        self.scale_v = [torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) for _ in range(config.n_layers)]
+        # int8 storage for layers where FP8 is used; None otherwise
+        self.k_i8 = [
+            (torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) if self.k_use_fp8[li] else None)
+            for li in range(L)
+        ]
+        self.v_i8 = [
+            (torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) if self.v_use_fp8[li] else None)
+            for li in range(L)
+        ]
+
+        # BF16 storage for layers not using FP8; None otherwise
+        self.k_bf16 = [
+            (torch.empty(batch_size, H, T, D, device=device, dtype=torch.bfloat16) if not self.k_use_fp8[li] else None)
+            for li in range(L)
+        ]
+        self.v_bf16 = [
+            (torch.empty(batch_size, H, T, D, device=device, dtype=torch.bfloat16) if not self.v_use_fp8[li] else None)
+            for li in range(L)
+        ]
+
+        # scales per token (timewise) for layers using FP8: [B,H,T]; None otherwise
+        self.scale_k = [
+            (torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) if self.k_use_fp8[li] else None)
+            for li in range(L)
+        ]
+        self.scale_v = [
+            (torch.ones(batch_size, H, T, device=device, dtype=torch.bfloat16) if self.v_use_fp8[li] else None)
+            for li in range(L)
+        ]
 
         self.offsets = [0] * config.n_layers
         self.fmt_k = fmt_k
@@ -273,9 +304,15 @@ class QuantizedStaticCache:
         self.offsets = [0] * self.config.n_layers
 
     def get(self, layer_ind, new_k = None, new_v = None):
-        # Return BF16 dequantized KV for the current window; if new_* provided, append logically.
-        k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
-        v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+        # Return BF16 K/V for current window (dequant if FP8)
+        if self.k_use_fp8[layer_ind]:
+            k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
+        else:
+            k = self.k_bf16[layer_ind]
+        if self.v_use_fp8[layer_ind]:
+            v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+        else:
+            v = self.v_bf16[layer_ind]
         if new_k is not None:
             k = torch.cat([k, new_k], dim=2)
             v = torch.cat([v, new_v], dim=2)
@@ -284,34 +321,60 @@ class QuantizedStaticCache:
     def update(self, new_k, new_v, layer_ind):
         # Quantize and write newest positions into ring (roll window by new_len tokens)
         new_len = new_k.shape[2]
-        B = new_k.shape[0]
 
-        # Update K
-        qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
-        qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
-
-        # Handle initial fill (when T is zero-length or smaller than new_len)
-        T_cur = self.k_i8[layer_ind].shape[2]
-        if T_cur == 0 or new_len >= T_cur:
-            # Directly write (truncate to buffer size if needed)
-            write_len = min(new_len, T_cur) if T_cur > 0 else 0
-            if write_len > 0:
-                self.k_i8[layer_ind][:, :, -write_len:, :] = qk[:, :, -write_len:, :]
-                self.v_i8[layer_ind][:, :, -write_len:, :] = qv[:, :, -write_len:, :]
+        # Select buffers per tensor kind (K/V) depending on FP8 enablement
+        if self.k_use_fp8[layer_ind]:
+            qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
+            k_buf = self.k_i8[layer_ind]
         else:
-            # Roll and write (batch assumed 1)
-            self.k_i8[layer_ind] = torch.roll(self.k_i8[layer_ind], shifts=-new_len, dims=2)
-            self.v_i8[layer_ind] = torch.roll(self.v_i8[layer_ind], shifts=-new_len, dims=2)
-            self.k_i8[layer_ind][:, :, -new_len:, :] = qk
-            self.v_i8[layer_ind][:, :, -new_len:, :] = qv
+            k_slice = new_k
+            k_buf = self.k_bf16[layer_ind]
+        if self.v_use_fp8[layer_ind]:
+            qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
+            v_buf = self.v_i8[layer_ind]
+        else:
+            v_slice = new_v
+            v_buf = self.v_bf16[layer_ind]
 
-        # Update scales/amax per head
-        # Write scales aligned with the written token slice
-        if T_cur > 0 and new_len < T_cur:
-            self.scale_k[layer_ind] = torch.roll(self.scale_k[layer_ind], shifts=-new_len, dims=2)
-            self.scale_v[layer_ind] = torch.roll(self.scale_v[layer_ind], shifts=-new_len, dims=2)
-            self.scale_k[layer_ind][:, :, -new_len:] = sk
-            self.scale_v[layer_ind][:, :, -new_len:] = sv
+        # Write K
+        T_cur_k = k_buf.shape[2]
+        if T_cur_k == 0 or new_len >= T_cur_k:
+            write_len_k = min(new_len, T_cur_k) if T_cur_k > 0 else 0
+            if write_len_k > 0:
+                if self.k_use_fp8[layer_ind]:
+                    k_buf[:, :, -write_len_k:, :] = qk[:, :, -write_len_k:, :]
+                    self.scale_k[layer_ind][:, :, -write_len_k:] = sk[:, :, -write_len_k:]
+                else:
+                    k_buf[:, :, -write_len_k:, :] = k_slice[:, :, -write_len_k:, :]
+        else:
+            if self.k_use_fp8[layer_ind]:
+                self.k_i8[layer_ind] = torch.roll(k_buf, shifts=-new_len, dims=2)
+                self.k_i8[layer_ind][:, :, -new_len:, :] = qk
+                self.scale_k[layer_ind] = torch.roll(self.scale_k[layer_ind], shifts=-new_len, dims=2)
+                self.scale_k[layer_ind][:, :, -new_len:] = sk
+            else:
+                self.k_bf16[layer_ind] = torch.roll(k_buf, shifts=-new_len, dims=2)
+                self.k_bf16[layer_ind][:, :, -new_len:, :] = k_slice
+
+        # Write V
+        T_cur_v = v_buf.shape[2]
+        if T_cur_v == 0 or new_len >= T_cur_v:
+            write_len_v = min(new_len, T_cur_v) if T_cur_v > 0 else 0
+            if write_len_v > 0:
+                if self.v_use_fp8[layer_ind]:
+                    v_buf[:, :, -write_len_v:, :] = qv[:, :, -write_len_v:, :]
+                    self.scale_v[layer_ind][:, :, -write_len_v:] = sv[:, :, -write_len_v:]
+                else:
+                    v_buf[:, :, -write_len_v:, :] = v_slice[:, :, -write_len_v:, :]
+        else:
+            if self.v_use_fp8[layer_ind]:
+                self.v_i8[layer_ind] = torch.roll(v_buf, shifts=-new_len, dims=2)
+                self.v_i8[layer_ind][:, :, -new_len:, :] = qv
+                self.scale_v[layer_ind] = torch.roll(self.scale_v[layer_ind], shifts=-new_len, dims=2)
+                self.scale_v[layer_ind][:, :, -new_len:] = sv
+            else:
+                self.v_bf16[layer_ind] = torch.roll(v_buf, shifts=-new_len, dims=2)
+                self.v_bf16[layer_ind][:, :, -new_len:, :] = v_slice
 
         self.offsets[layer_ind] += new_len
 

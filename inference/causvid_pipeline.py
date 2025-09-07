@@ -69,6 +69,11 @@ class CausvidPipeline:
         self.device = 'cuda'
         
         self.cache = None
+        self.profile_kv = bool(int(os.environ.get("OWL_PROFILE_KV", "0")))
+        self.profile_kv_every = int(os.environ.get("OWL_PROFILE_KV_EVERY", "30"))
+        self.profile_kv_first = int(os.environ.get("OWL_PROFILE_KV_FIRST", "3"))
+        self._profile_kv_count = 0
+        self.use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
         self._initial_history_buffer = None
         self._initial_mouse_buffer = None
         self._initial_button_buffer = None
@@ -89,8 +94,7 @@ class CausvidPipeline:
         init_len = self.history_buffer.size(1)
         
         # Initialize KV cache
-        use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
-        if use_fp8_kv:
+        if self.use_fp8_kv:
             # max_length is number of frames (same as StaticCache usage)
             self.cache = QuantizedStaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
         else:
@@ -104,6 +108,9 @@ class CausvidPipeline:
         
         # Cache the context
         self.cache.enable_cache_updates()
+        if self.profile_kv:
+            torch.cuda.reset_peak_memory_stats()
+            t0 = time.time()
         _ = self.model(
             prev_x_noisy,
             prev_t,
@@ -111,6 +118,11 @@ class CausvidPipeline:
             self.button_buffer,
             kv_cache=self.cache
         )
+        if self.profile_kv:
+            torch.cuda.synchronize()
+            prefill_s = time.time() - t0
+            mem_mb = torch.cuda.max_memory_reserved() / (1024**2)
+            print(f"[KV-Profile] prefill_s={prefill_s:.3f}s, max_reserved={mem_mb:.1f}MB, fp8_kv={self.use_fp8_kv}")
         self.cache.disable_cache_updates()
         self.model.transformer.enable_decoding()
 
@@ -244,6 +256,9 @@ class CausvidPipeline:
         start_event.record()
         
         # First sampling step
+        if self.profile_kv:
+            torch.cuda.reset_peak_memory_stats()
+            t_kv0 = time.time()
         pred_v = self.model(
             curr_x,
             curr_t,
@@ -251,12 +266,19 @@ class CausvidPipeline:
             new_btn_input,
             kv_cache=self.cache
         )
+        if self.profile_kv:
+            torch.cuda.synchronize()
+            step1_s = time.time() - t_kv0
+            mem1_mb = torch.cuda.max_memory_reserved() / (1024**2)
         
         curr_x = curr_x - 0.75 * pred_v
         curr_t = curr_t - 0.75
 
         # Second sampling step does cache update as well
         self.cache.enable_cache_updates()
+        if self.profile_kv:
+            torch.cuda.reset_peak_memory_stats()
+            t_kv1 = time.time()
         pred_v = self.model(
             curr_x,
             curr_t,
@@ -265,6 +287,15 @@ class CausvidPipeline:
             kv_cache=self.cache
         )
         self.cache.disable_cache_updates()
+        if self.profile_kv:
+            torch.cuda.synchronize()
+            step2_s = time.time() - t_kv1
+            mem2_mb = torch.cuda.max_memory_reserved() / (1024**2)
+            # Throttle printing: first N frames, then every M frames
+            self._profile_kv_count += 1
+            should_print = (self._profile_kv_count <= self.profile_kv_first) or (self._profile_kv_count % self.profile_kv_every == 0)
+            if should_print:
+                print(f"[KV-Profile] step1_s={step1_s:.3f}s, step2_s={step2_s:.3f}s, max_reserved={max(mem1_mb, mem2_mb):.1f}MB")
 
         new_frame = curr_x - 0.25 * pred_v
 

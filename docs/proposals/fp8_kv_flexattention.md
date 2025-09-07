@@ -335,16 +335,16 @@ Current observations (post-fix)
 - Visual quality: Looks correct ~80% of the time but decoheres faster than BF16 baseline over longer rollouts.
 - Throughput: No measurable FPS improvement in the pipeline, despite halving KV DRAM bytes in theory.
 
-Strengths
+## Strengths
 - Memory footprint for KV is halved; GPU memory headroom improved.
 - Visual quality largely preserved short-term with per-token scaling.
 - Integration overhead is modest: FlexAttention path unchanged; all quant logic isolated in cache.
 
-Weaknesses / Open questions
+## Weaknesses / Open questions
 - Decoherence over time: residual drift indicates quantization noise (likely in Keys) accumulates across steps.
 - No FPS gain observed: bandwidth reduction didn’t translate to lower step time; suggests compute or other memory (non-KV) dominates, or dequant/layout overhead masked gains.
 
-Hypotheses and next steps
+## Hypotheses and next steps
 1) Decoherence root causes
    - Keys sensitivity: K quant noise perturbs attention logits more than V. Even per-token scales may be too coarse for some layers.
    - Early layers sensitivity: early attention layers amplify quant noise more.
@@ -368,12 +368,70 @@ Hypotheses and next steps
    - Pre-dequant into persistent contiguous scratch vs on-the-fly; measure difference.
    - Head/tile sizes: ensure `[B,H,T,D]` contiguous; avoid repeated cat/roll in hot loop.
 
-Action items
+## Action items
 - A1: Add K-BF16/V-FP8 variant and late-layers-only toggle; compare decoherence horizon.
 - A2: Add percentile scaling option for K; compare.
 - A3: Profile per-step time components; verify FlexAttention path and layout costs.
 
-Conclusion (interim)
+## Conclusion (interim)
+
+## Mitigation knobs we added
+- K-only FP8 toggle: `OWL_K_FP8=0` keeps Keys in BF16 while Values use FP8 (timewise). Reduces decoherence risk.
+- Late-layers-only FP8: `OWL_KV_LATE_LAYERS=N` enables FP8 only for the last N layers (Keys/Values independently controlled via `OWL_K_FP8`).
+
+### Example runs
+```bash
+# Baseline profiling (BF16 KV)
+OWL_PROFILE_KV=1 OWL_FP8_KV=0 python -m inference.game_cv
+
+# FP8-KV profiling (full), K also FP8
+OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=1 python -m inference.game_cv
+
+# FP8-KV with K in BF16 (recommended for stability)
+OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=0 python -m inference.game_cv
+
+# FP8-KV on last 8 layers only, K in BF16
+OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_LATE_LAYERS=8 python -m inference.game_cv
+```
+
+## Results: Phase A baseline (K BF16, V FP8 timewise)
+
+- Command used:
+  - `OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=0 python -m inference.game_cv`
+- Visual quality:
+  - Good; decoherence substantially reduced versus full FP8 (K+V). Subjectively stable.
+- Throughput:
+  - No obvious FPS improvement versus BF16 baseline; decode appears compute-bound and/or allocator retains scratch memory.
+- Memory:
+  - KV reserved memory reduced relative to BF16 cache; comparable to prior FP8-KV runs (~3.1 GB reserved after warmup). Will archive exact KV-Profile lines in the next run.
+- Next steps:
+  - Archive profiler lines (`[KV-Profile] ...`) for this setting.
+  - Proceed to Phase B: enable K-FP8 on late layers only and evaluate stability.
+
+## Results: Phase B (K FP8 on late layers only)
+
+- Command used:
+  - `OWL_PROFILE_KV=1 OWL_FP8_KV=1 OWL_K_FP8=1 OWL_KV_LATE_LAYERS=8 python -m inference.game_cv`
+- Visual quality:
+  - Worked; acceptable quality per visual inspection. No immediate catastrophic decoherence. Appears comparable to Phase A on short horizons.
+- Throughput:
+  - No significant FPS change vs Phase A or baseline; still compute-bound.
+- Memory:
+  - Similar reserved memory to Phase A (expected: K-BF16 in early layers, K-FP8 late). Archive KV-Profile lines in future runs for precise deltas.
+- Decision:
+  - Phase B is viable. We can either keep N=8 as a safe default or sweep N (e.g., 4/8/12) to find the best quality/footprint trade-off.
+
+## Sweep summary and decision
+
+- Settings tested:
+  - V-only FP8 (K BF16): best visual quality, stable. Reserved VRAM ~3.1–3.3 GB after warmup; pipeline FPS unchanged vs baseline.
+  - K FP8 on last 4/8/12 layers: visually comparable to V-only FP8; baseline (V-only) still slightly better.
+- Decision:
+  - Default to V-only FP8 (Keys BF16) across all layers.
+  - Keep K-FP8 late-layers as an advanced knob; default `OWL_KV_LATE_LAYERS=0`.
+  - Defer stabilizers (percentile/per-channel K scales) since quality is acceptable and not degrading to noise.
+  - Focus next on perf profiling to identify true bottlenecks (model compute vs decoder vs layout).
+
 - FP8-KV achieves memory reduction but quality degrades faster vs BF16 and FPS did not improve yet. Focus shifts to K-only FP8 or late-layer FP8, plus profiling to expose non-KV bottlenecks.
 
 - DRAM bytes per decode step scale roughly with `O(n_layers * H * T * D)` for two K/V reads; halving bytes for K and V yields ~2× KV traffic reduction.
