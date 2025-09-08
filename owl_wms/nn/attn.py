@@ -1,3 +1,4 @@
+import os
 import torch
 import einops
 from torch import nn
@@ -113,7 +114,16 @@ class Attn(nn.Module):
             v = v[:,:,-self.local_offset:]
 
         if block_mask is None:
-            attn_out = flex_attention(q, k, v)
+            # Optional SDPA fastpath on decode
+            if bool(int(os.environ.get("OWL_ATTN_SDPA_DECODE", "0"))):
+                attn_out = F.scaled_dot_product_attention(
+                    q.view(B * self.n_heads, L, -1),
+                    k.view(B * self.n_heads, -1, k.shape[-1]),
+                    v.view(B * self.n_heads, -1, v.shape[-1]),
+                    is_causal=True,
+                ).view(B, self.n_heads, L, -1)
+            else:
+                attn_out = flex_attention(q, k, v)
         else:
             attn_out = flex_attention(q, k, v, block_mask=block_mask)
 

@@ -49,7 +49,9 @@ Implementation sketch
 Config wiring
 - `owl_wms/configs.py` now exposes `InferenceConfig` fields for MX and FP8‑KV with defaults matching our best run so far:
   - `mxfp_enable: true`, `mxfp_bits: 8`, `mxfp_scope: "all"`, `mxfp_kernel: "cutlass"`
+  - `mxfp_late_layers: 0` (0 = all layers; >0 = last N layers only)
   - `fp8_kv: true`, `k_fp8: false`, `kv_late_layers: 12`
+  - `attn_sdpa_decode: false` (optional SDPA fastpath on decode)
 - `inference/causvid_pipeline.py` adopts these defaults at startup if env vars are unset, then applies MX transforms before compile.
 
 Minimal code example (MXFP8, CUTLASS)
@@ -304,5 +306,63 @@ Next phase: MXFP8 all linears + FP8‑KV (V‑only)
 OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
 OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_LATE_LAYERS=12 python -m inference.game_cv
 ```
+
+Results: Combined MXFP8 (all linears) + FP8‑KV (V‑only)
+- Sample log excerpts:
+  - Cold phase:
+    - `Latency pipeline: ~33.9 s`, decoder warmup lines present
+    - `[KV-Profile] step1_s=15.750s (attn1=14635.66ms), step2_s=15.442s (attn2=16309.86ms), q_ms=0.00, dq_ms=0.00, max_reserved=3348.0MB`
+  - Steady‑state (representative):
+    - `FPS (pipeline): 55–70`, `Latency pipeline: ~12–26 ms`
+    - `attn1≈6–13 ms`, `attn2≈6–13 ms`
+    - `decoder_ms≈8.4–8.9 ms`
+    - `q_ms=0.00, dq_ms=0.00`, `max_reserved≈3266–3268 MB`
+
+Interpretation
+- Combined path is stable; no runtime issues observed.
+- KV reserved memory holds around ~3.27 GB; consistent with FP8‑KV memory expectations.
+- Quant/dequant shows ~0 ms in logs (likely compiled/inlined); overhead is negligible relative to attention/decoder.
+- Throughput varies by scene; pipeline FPS commonly 55–70. Compute remains dominated by attention and decoder.
+- Quality: prior note indicates no visible degradation; combined path appears acceptable pending formal A/B.
+
+Quality observations (so far)
+- Visuals have looked great with no notable quality drops across:
+  - MXFP8 (MLP‑only)
+  - MXFP8 (all linears)
+  - MXFP4 (MLP‑only, fresh compile)
+  - Combined MXFP8 + FP8‑KV: pending full A/B logging
+
+Results: MXFP4 MLP‑only, late layers = 8 (no FP8‑KV)
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=mlp OWL_MXFP_LATE_LAYERS=8 OWL_MXFP_LIST=1 OWL_FP8_KV=0 python -m inference.game_cv
+```
+- Observations (sample log excerpts):
+  - Cold compile/autotune: `Latency pipeline: ~30–31 s` lines observed.
+  - Steady‑state examples:
+    - `FPS (pipeline): ~62–75`, `Latency pipeline: ~10.9–27.6 ms`
+    - No KV profiling lines (as expected, FP8‑KV disabled).
+- Interpretation: MXFP4 on MLP late layers is stable with good throughput; proceed to attention projections cautiously.
+
+Pending: MXFP4 attention projections, late layers = 8 (no FP8‑KV)
+- Command:
+```bash
+OWL_COMPILE=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=attn OWL_MXFP_LATE_LAYERS=8 OWL_MXFP_LIST=1 OWL_FP8_KV=0 python -m inference.game_cv
+```
+- To record: pipeline FPS/latency, any visual changes vs MLP‑only, and stability across scenes; if quality holds, consider widening late‑layers N.
+
+Results: MXFP4 attention projections, late layers = 8 (no FP8‑KV)
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=attn OWL_MXFP_LATE_LAYERS=8 OWL_MXFP_LIST=1 OWL_FP8_KV=0 python -m inference.game_cv
+```
+- Observations (sample log excerpts):
+  - Cold compile/autotune phase: `Latency pipeline: ~30–31 s` lines observed.
+  - Steady‑state examples:
+    - `FPS (pipeline): ~69.8`, `Latency pipeline: ~12.0 ms`
+    - `FPS (pipeline): ~68.3–71.0`, `Latency pipeline: ~11.1–12.0 ms`
+    - Lower FPS windows with higher latency also appear (scene dependent): `~54–66` with `~20–36 ms` latency
+  - No KV profiler lines (expected; FP8‑KV disabled).
+- Interpretation: MXFP4 on attention late layers is stable and comparable to MLP‑only late‑layer MXFP4. Throughput remains scene‑dependent; no regressions observed. Next: consider increasing `mxfp_late_layers` or enabling SDPA decode to target attention cost directly.
 
 

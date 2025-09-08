@@ -88,6 +88,9 @@ class CausvidPipeline:
             _set_default_env("OWL_MXFP_BITS", infer_cfg.mxfp_bits)
             _set_default_env("OWL_MXFP_SCOPE", infer_cfg.mxfp_scope)
             _set_default_env("OWL_MXFP_KERNEL", infer_cfg.mxfp_kernel)
+            _set_default_env("OWL_MXFP_LATE_LAYERS", infer_cfg.mxfp_late_layers)
+            # Attention fastpath
+            _set_default_env("OWL_ATTN_SDPA_DECODE", 1 if getattr(infer_cfg, 'attn_sdpa_decode', False) else 0)
 
         # Optional MXFP8 transforms (apply before compile)
         try:

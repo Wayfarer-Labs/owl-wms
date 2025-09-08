@@ -93,6 +93,10 @@ class InferenceConfig:
     mxfp_bits: Optional[int] = 8              # 8-bit by default
     mxfp_scope: Optional[str] = "all"         # apply to all Linear layers
     mxfp_kernel: Optional[str] = "cutlass"    # prefer CUTLASS kernels
+    mxfp_late_layers: Optional[int] = 0       # 0 = all layers; >0 = last N layers only
+
+    # Attention fastpath
+    attn_sdpa_decode: Optional[bool] = False  # use SDPA on decode (no block_mask)
 
 @dataclass
 class Config:
