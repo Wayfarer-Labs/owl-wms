@@ -325,6 +325,61 @@ Interpretation
 - Throughput varies by scene; pipeline FPS commonly 55–70. Compute remains dominated by attention and decoder.
 - Quality: prior note indicates no visible degradation; combined path appears acceptable pending formal A/B.
 
+Results: MXFP8 KV storage (mxfp), V‑only, K BF16
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
+OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_STORAGE=mxfp OWL_KV_BITS=8 python -m inference.game_cv
+```
+- Observations (sample log excerpts):
+  - Cold phase: `Latency pipeline: ~31.3 s`; prefill lines present.
+  - Steady‑state examples:
+    - `FPS (pipeline): ~48–70`, `Latency pipeline: ~12–27 ms`
+    - `attn1≈6–13 ms`, `attn2≈6–13 ms`; `decoder_ms≈8.4–9.3 ms`
+    - `q_ms=0.00, dq_ms=0.00` (likely compiled/inlined)
+  - Memory:
+    - Early max_reserved ≈ 3.28 GB; later prints showed ≈ 7.6 GB after prefill in some windows.
+- Interpretation: Functional and stable; throughput similar to prior combined runs. Reserved memory spike requires follow‑up (allocator retention vs additional buffers). Next: compare allocated vs reserved, and log per-buffer sizes.
+
+Pending: MXFP4 KV storage (mxfp), V‑only, K BF16
+- Command:
+```bash
+OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
+OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_STORAGE=mxfp OWL_KV_BITS=4 python -m inference.game_cv
+```
+- To record: FPS/latency, q_ms/dq_ms, max_reserved/allocated; verify visuals remain stable.
+
+Results: MXFP8 KV (mxfp, 8‑bit), K FP8 on late layers = 8
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
+OWL_FP8_KV=1 OWL_K_FP8=1 OWL_KV_LATE_LAYERS=8 OWL_KV_STORAGE=mxfp OWL_KV_BITS=8 python -m inference.game_cv
+```
+- Observations (sample log excerpts):
+  - Cold phase: `Latency pipeline: ~31–32 s`; large prefill lines.
+  - Steady‑state examples:
+    - `FPS (pipeline): ~56–64`, `Latency pipeline: ~12–28 ms`
+    - `attn1≈6–13 ms`, `attn2≈6–16 ms`; `decoder_ms≈8.4–9.6 ms`
+    - `q_ms=0.00, dq_ms=0.00`
+  - Memory:
+    - Early `max_reserved≈3.2 GB`, later increases to `~7.3–7.5 GB` post‑prefill (allocator retention of BF16 scratch/buffers).
+- Interpretation: Enabling K FP8 on late layers is numerically stable with similar throughput; reserved memory rises after prefill consistent with allocator growth. Tail‑only dequant and scratch re‑use should mitigate (now implemented).
+
+Results: MXFP4 KV storage (mxfp, 4‑bit), V‑only, K BF16 [stable]
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
+OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_STORAGE=mxfp OWL_KV_BITS=4 python -m inference.game_cv
+```
+- Observations:
+  - q_ms≈1.2 ms reported in some windows; dq_ms≈0 ms; FPS similar to 8‑bit runs.
+  - Allocated≈2.18 GB while reserved≈7.2–7.3 GB (allocator retention). One‑time prints: `window_tokens=3840`, `bf16_window_bytes_per_layer≈22.6 MB`.
+- Interpretation: 4‑bit V‑only KV is visually stable, with minimal q/dq overhead. Reserved memory remains high due to allocator; scratch reuse and tail‑only dequant are in place to mitigate.
+
+Results: MXFP8 KV (mxfp, 8‑bit), K FP8 on late layers = 8 [visual regression]
+- Symptom: output turned black; indicates K quantization mismatch or scale misalignment.
+- Action: Revert to Keys BF16 (K_FP8=0) and keep V‑only FP8 KV; restrict KV to late layers.
+
 Quality observations (so far)
 - Visuals have looked great with no notable quality drops across:
   - MXFP8 (MLP‑only)
@@ -364,5 +419,17 @@ OWL_COMPILE=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=attn OWL_MXFP_LAT
     - Lower FPS windows with higher latency also appear (scene dependent): `~54–66` with `~20–36 ms` latency
   - No KV profiler lines (expected; FP8‑KV disabled).
 - Interpretation: MXFP4 on attention late layers is stable and comparable to MLP‑only late‑layer MXFP4. Throughput remains scene‑dependent; no regressions observed. Next: consider increasing `mxfp_late_layers` or enabling SDPA decode to target attention cost directly.
+
+Results: MXFP4 all linears, late layers = 8 (no FP8‑KV)
+- Command used:
+```bash
+OWL_COMPILE=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=all OWL_MXFP_LATE_LAYERS=8 OWL_MXFP_LIST=1 OWL_FP8_KV=0 python -m inference.game_cv
+```
+- Observations (sample log excerpts):
+  - Cold compile/autotune phase: `Latency pipeline: ~30–31 s`.
+  - Steady‑state examples:
+    - `FPS (pipeline): ~60–76`, `Latency pipeline: ~11.3–30.2 ms`
+    - Variation across scenes similar to prior runs
+- Interpretation: MXFP4 across both MLP and attention on late layers looks stable; performance is in line with late‑layer‑only experiments. Proceed to MXFP KV trials next.
 
 

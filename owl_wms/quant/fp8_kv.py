@@ -81,6 +81,7 @@ def dequantize_per_head(q_i8: torch.Tensor, scale: torch.Tensor) -> torch.Tensor
 def quantize_per_head_timewise(
     x_bf16: torch.Tensor,
     fmt: str = "e4m3",
+    bits: int = 8,
 ):
     """
     Per-head, per-token quantization: scale computed per [B,H,T] by amax over D.
@@ -96,10 +97,13 @@ def quantize_per_head_timewise(
     """
     assert x_bf16.dim() == 4, "Expected [B,H,T,D]"
     amax = x_bf16.abs().amax(dim=3)  # [B,H,T]
-    denom = 127.0
+    # Determine quantization range from bits
+    qmax = (1 << (bits - 1)) - 1  # 127 for 8-bit, 7 for 4-bit
+    qmin = - (1 << (bits - 1))    # -128 for 8-bit, -8 for 4-bit
+    denom = float(qmax)
     scale = (amax / denom).clamp_min(1e-8).to(torch.bfloat16)  # [B,H,T]
     inv = (1.0 / scale).to(x_bf16.dtype).unsqueeze(-1)  # [B,H,T,1]
-    q = (x_bf16 * inv).round().clamp_(-128, 127).to(torch.int8)
+    q = (x_bf16 * inv).round().clamp_(qmin, qmax).to(torch.int8)
     return q, scale
 
 

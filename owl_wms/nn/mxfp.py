@@ -83,6 +83,10 @@ def apply_mx_transforms(model: nn.Module, scope: str = "mlp") -> int:
         if mod.weight.dtype not in (torch.bfloat16, torch.float16, torch.float32):
             return False
         name_l = name.lower()
+        # Extra caution for MXFP4: avoid final output projections by default
+        if bits == 4:
+            if ("final" in name_l and "proj" in name_l) or ("skip_projs" in name_l):
+                return False
         if scope == "mlp":
             if ("mlp" in name_l) or ("fc1" in name_l) or ("fc2" in name_l):
                 if ("qkv" in name_l) or ("to_q" in name_l) or ("to_k" in name_l) or ("to_v" in name_l) or ("out" in name_l):
@@ -97,15 +101,24 @@ def apply_mx_transforms(model: nn.Module, scope: str = "mlp") -> int:
 
     transformed = 0
     transformed_names = []
+    category_counts = {"mlp": 0, "attn": 0, "other": 0}
     for name, mod in model.named_modules():
         if should_transform(name, mod):
             _mx_inference_linear_transform(mod, cfg)
             transformed += 1
             if list_names:
                 transformed_names.append(name)
+            nl = name.lower()
+            if ("mlp" in nl) or ("fc1" in nl) or ("fc2" in nl):
+                category_counts["mlp"] += 1
+            elif ("qkv" in nl) or ("to_q" in nl) or ("to_k" in nl) or ("to_v" in nl) or ("out" in nl):
+                category_counts["attn"] += 1
+            else:
+                category_counts["other"] += 1
 
     if list_names and transformed_names:
         print(f"[MXFP] Transformed {transformed} linears (bits={bits}, kernel={kernel}, scope={scope}, late_layers={late_layers}):")
+        print(f"[MXFP]  counts: mlp={category_counts['mlp']}, attn={category_counts['attn']}, other={category_counts['other']}")
         for n in transformed_names[:20]:
             print(f"[MXFP]  - {n}")
         if len(transformed_names) > 20:

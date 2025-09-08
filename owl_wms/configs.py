@@ -82,6 +82,9 @@ class InferenceConfig:
     fp8_kv: Optional[bool] = True
     k_fp8: Optional[bool] = True              # Keys quantized
     kv_late_layers: Optional[int] = 12         # apply on last N layers
+    kv_storage: Optional[str] = "mxfp"        # 'i8_scale' or 'mxfp'
+    kv_bits: Optional[int] = 8                 # 8 or 4 when kv_storage='mxfp'
+    kv_tail_only: Optional[bool] = True        # tail-only dequant on local layers
 
     # TensorRT decoder
     trt_decoder: Optional[bool] = True

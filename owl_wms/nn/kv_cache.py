@@ -227,6 +227,8 @@ class QuantizedStaticCache:
         dtype = torch.bfloat16,
         fmt_k: str = 'e5m2',
         fmt_v: str = 'e4m3',
+        kv_storage: str | None = None,   # None|'i8_scale'|'mxfp'
+        kv_bits: int = 8,                # 8 or 4 when kv_storage='mxfp'
         ema_momentum: float = 0.99,
         kv_late_layers: int | None = None,
         k_fp8: bool | None = None,
@@ -255,7 +257,7 @@ class QuantizedStaticCache:
         self.k_use_fp8 = [(k_fp8_global and (li >= start_fp8)) for li in range(L)]
         self.v_use_fp8 = [(li >= start_fp8) for li in range(L)]
 
-        # int8 storage for layers where FP8 is used; None otherwise
+        # int8 storage for layers where FP8/MXFP is used; None otherwise
         self.k_i8 = [
             (torch.empty(batch_size, H, T, D, device=device, dtype=torch.int8) if self.k_use_fp8[li] else None)
             for li in range(L)
@@ -288,6 +290,8 @@ class QuantizedStaticCache:
         self.offsets = [0] * config.n_layers
         self.fmt_k = fmt_k
         self.fmt_v = fmt_v
+        self.kv_storage = kv_storage or os.environ.get("OWL_KV_STORAGE", "i8_scale")
+        self.kv_bits = int(os.environ.get("OWL_KV_BITS", str(kv_bits)))
         self.ema_momentum = ema_momentum
 
         # Profiling (quant/dequant) when enabled via OWL_PROFILE_KV
@@ -305,6 +309,10 @@ class QuantizedStaticCache:
 
     def _can_profile(self) -> bool:
         return self._profile and not self._is_compiling()
+
+    def set_local_layers(self, local_layers: list[bool], local_tail_len_tokens: int):
+        # No-op in legacy mode; keeping signature for compatibility
+        return
 
     def enable_cache_updates(self):
         self.should_update = True
@@ -355,7 +363,10 @@ class QuantizedStaticCache:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
                 e0.record()
-            qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
+            if self.kv_storage == "mxfp":
+                qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k, bits=self.kv_bits)
+            else:
+                qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
             k_buf = self.k_i8[layer_ind]
@@ -366,7 +377,10 @@ class QuantizedStaticCache:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
                 e0.record()
-            qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
+            if self.kv_storage == "mxfp":
+                qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v, bits=self.kv_bits)
+            else:
+                qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
             v_buf = self.v_i8[layer_ind]

@@ -79,6 +79,9 @@ class CausvidPipeline:
             _set_default_env("OWL_FP8_KV", 1 if infer_cfg.fp8_kv else 0)
             _set_default_env("OWL_K_FP8", 1 if infer_cfg.k_fp8 else 0)
             _set_default_env("OWL_KV_LATE_LAYERS", infer_cfg.kv_late_layers)
+            _set_default_env("OWL_KV_STORAGE", infer_cfg.kv_storage)
+            _set_default_env("OWL_KV_BITS", infer_cfg.kv_bits)
+            _set_default_env("OWL_KV_TAIL_ONLY", 1 if getattr(infer_cfg, 'kv_tail_only', True) else 0)
             # TRT
             _set_default_env("OWL_TRT_DECODER", 1 if infer_cfg.trt_decoder else 0)
             _set_default_env("OWL_TRT_DECODER_FORCE", 1 if infer_cfg.trt_decoder_force else 0)
@@ -192,6 +195,8 @@ class CausvidPipeline:
             print(f"[KV-Profile] prefill_s={prefill_s:.3f}s, max_reserved={mem_mb:.1f}MB, fp8_kv={self.use_fp8_kv}")
         self.cache.disable_cache_updates()
         self.model.transformer.enable_decoding()
+
+        # Legacy path: no special tail-only wiring
 
         # Do garbage collection
         gc.collect()
