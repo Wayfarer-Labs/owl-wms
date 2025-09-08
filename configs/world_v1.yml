@@ -89,7 +89,7 @@ train:
 
   checkpoint_dir: checkpoints/video_world_model_v1
   output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
-  resume_ckpt: null # /mnt/data/lapp0/checkpoints/tmp/step_10000.pt
+  resume_ckpt: /mnt/data/lapp0/checkpoints/tmp/step_25000.pt  # null
 
   sample_interval: 2000
   save_interval: 5000
