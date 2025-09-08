@@ -17,7 +17,7 @@ def _get_env_flag(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def apply_mx_transforms_mlp_only(model: nn.Module) -> int:
+def apply_mx_transforms(model: nn.Module, scope: str = "mlp") -> int:
     """
     Apply MXFP transforms to MLP Linear layers only.
 
@@ -39,6 +39,7 @@ def apply_mx_transforms_mlp_only(model: nn.Module) -> int:
     bits = int(_get_env_flag("OWL_MXFP_BITS", "8"))
     kernel = _get_env_flag("OWL_MXFP_KERNEL", "cutlass").lower()
     list_names = bool(int(_get_env_flag("OWL_MXFP_LIST", "0")))
+    scope = _get_env_flag("OWL_MXFP_SCOPE", scope).lower()
 
     if bits not in (4, 8):
         bits = 8
@@ -46,24 +47,28 @@ def apply_mx_transforms_mlp_only(model: nn.Module) -> int:
     kernel_choice = MXGemmKernelChoice.CUTLASS if kernel == "cutlass" else MXGemmKernelChoice.TRITON
     cfg = MXFPInferenceConfig(gemm_kernel_choice=kernel_choice, bits=bits)
 
-    def is_mlp_linear(name: str, mod: nn.Module) -> bool:
+    def should_transform(name: str, mod: nn.Module) -> bool:
         if not isinstance(mod, nn.Linear):
             return False
         if mod.weight.dtype not in (torch.bfloat16, torch.float16, torch.float32):
             return False
         name_l = name.lower()
-        # Our MLPs use names fc1/fc2 inside owl_wms.nn.mlp.MLP
-        if ("mlp" in name_l) or ("fc1" in name_l) or ("fc2" in name_l):
-            # exclude obvious attention projections if they also contain fc names
-            if ("q" in name_l) or ("k" in name_l) or ("v" in name_l) or ("out_proj" in name_l):
-                return False
-            return True
-        return False
+        if scope == "mlp":
+            if ("mlp" in name_l) or ("fc1" in name_l) or ("fc2" in name_l):
+                if ("qkv" in name_l) or ("to_q" in name_l) or ("to_k" in name_l) or ("to_v" in name_l) or ("out" in name_l):
+                    return False
+                return True
+            return False
+        if scope == "attn":
+            # qkv packed or separate projections, and output proj
+            return ("qkv" in name_l) or ("to_q" in name_l) or ("to_k" in name_l) or ("to_v" in name_l) or ("out" in name_l)
+        # scope == "all"
+        return True
 
     transformed = 0
     transformed_names = []
     for name, mod in model.named_modules():
-        if is_mlp_linear(name, mod):
+        if should_transform(name, mod):
             _mx_inference_linear_transform(mod, cfg)
             transformed += 1
             if list_names:
@@ -77,5 +82,9 @@ def apply_mx_transforms_mlp_only(model: nn.Module) -> int:
             print(f"[MXFP]  ... and {len(transformed_names)-20} more")
 
     return transformed
+
+
+def apply_mx_transforms_mlp_only(model: nn.Module) -> int:
+    return apply_mx_transforms(model, scope="mlp")
 
 

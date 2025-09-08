@@ -3,7 +3,7 @@ from owl_wms.data import get_loader
 from owl_wms import from_pretrained
 from owl_wms.nn.kv_cache import KVCache, StaticCache, QuantizedStaticCache
 from owl_wms.nn.rope import cast_rope_buffers_to_fp32
-from owl_wms.nn.mxfp import apply_mx_transforms_mlp_only
+from owl_wms.nn.mxfp import apply_mx_transforms
 from owl_wms.nn.attn import get_block_mask
 
 import torch.nn.functional as F
@@ -38,6 +38,7 @@ class CausvidPipeline:
         cfg = Config.from_yaml(cfg_path)
         model_cfg = cfg.model
         train_cfg = cfg.train
+        infer_cfg = cfg.inference if hasattr(cfg, "inference") and cfg.inference is not None else None
 
         self.ground_truth = ground_truth
         
@@ -64,11 +65,35 @@ class CausvidPipeline:
 
         self.alpha = 0.25
 
-        # Optional MXFP8 MLP transforms (apply before compile)
+        # Adopt inference config defaults into environment if not already set
+        if infer_cfg is not None:
+            def _set_default_env(key: str, value):
+                if os.environ.get(key) is None and value is not None:
+                    os.environ[key] = str(value)
+            _set_default_env("OWL_COMPILE", 1 if infer_cfg.compile else 0)
+            _set_default_env("OWL_PROFILE_KV", 1 if infer_cfg.profile_kv else 0)
+            _set_default_env("OWL_PROFILE_KV_EVERY", infer_cfg.profile_kv_every)
+            _set_default_env("OWL_PROFILE_KV_FIRST", infer_cfg.profile_kv_first)
+            _set_default_env("OWL_SAMPLING_STEPS", infer_cfg.sampling_steps)
+            # FP8 KV
+            _set_default_env("OWL_FP8_KV", 1 if infer_cfg.fp8_kv else 0)
+            _set_default_env("OWL_K_FP8", 1 if infer_cfg.k_fp8 else 0)
+            _set_default_env("OWL_KV_LATE_LAYERS", infer_cfg.kv_late_layers)
+            # TRT
+            _set_default_env("OWL_TRT_DECODER", 1 if infer_cfg.trt_decoder else 0)
+            _set_default_env("OWL_TRT_DECODER_FORCE", 1 if infer_cfg.trt_decoder_force else 0)
+            _set_default_env("OWL_TRT_DECODER_SLOW_PCT", infer_cfg.trt_decoder_slow_pct)
+            # MXFP
+            _set_default_env("OWL_MXFP_ENABLE", 1 if infer_cfg.mxfp_enable else 0)
+            _set_default_env("OWL_MXFP_BITS", infer_cfg.mxfp_bits)
+            _set_default_env("OWL_MXFP_SCOPE", infer_cfg.mxfp_scope)
+            _set_default_env("OWL_MXFP_KERNEL", infer_cfg.mxfp_kernel)
+
+        # Optional MXFP8 transforms (apply before compile)
         try:
-            transformed = apply_mx_transforms_mlp_only(self.model)
+            transformed = apply_mx_transforms(self.model)
             if transformed > 0:
-                print(f"[MXFP] Applied MLP-only transforms to {transformed} Linear modules")
+                print(f"[MXFP] Applied transforms to {transformed} Linear modules (scope={os.environ.get('OWL_MXFP_SCOPE', 'mlp')})")
         except Exception as e:
             # Non-fatal; proceed without MX transforms
             print(f"[MXFP] Skipping MX transforms due to error: {e}")

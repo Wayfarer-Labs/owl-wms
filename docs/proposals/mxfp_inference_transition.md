@@ -46,6 +46,12 @@ Implementation sketch
   - `OWL_MXFP_KERNEL=cutlass|triton` (default `cutlass`)
   - `OWL_MXFP_LIST=1` (log transformed modules)
 
+Config wiring
+- `owl_wms/configs.py` now exposes `InferenceConfig` fields for MX and FP8‑KV with defaults matching our best run so far:
+  - `mxfp_enable: true`, `mxfp_bits: 8`, `mxfp_scope: "all"`, `mxfp_kernel: "cutlass"`
+  - `fp8_kv: true`, `k_fp8: false`, `kv_late_layers: 12`
+- `inference/causvid_pipeline.py` adopts these defaults at startup if env vars are unset, then applies MX transforms before compile.
+
 Minimal code example (MXFP8, CUTLASS)
 ```python
 import torch
@@ -272,17 +278,31 @@ What success looks like
 - MXFP8 all linears: modest FPS uptick over MLP‑only, quality acceptable.
 - MXFP4 MLP‑only: measurable perf/memory benefit on supported kernels with tolerable quality drop on short rollouts.
 
-
-Results: MXFP8 MLP‑only (CUTLASS)
+Results: MXFP8 all linears (fresh compile)
 - Command used:
 ```bash
-OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_KERNEL=cutlass OWL_MXFP_LIST=1 python -m inference.game_cv
+OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all OWL_MXFP_LIST=1 python -m inference.game_cv
 ```
-- Observations (sample log excerpts):
-  - Warm‑up (cold start):
-    - `FPS (pipeline): 0.1`, `Latency pipeline: ~12.9–13.0 s`
-  - Steady‑state:
-    - `FPS (total): ~41–43`, `FPS (pipeline): ~46`, `Latency pipeline: ~21–23 ms`
-- Status: Run successful; MXFP8 on MLP layers works end‑to‑end. No runtime errors observed. Further A/B vs BF16 pending with attention/decoder/MLP timing breakdown enabled.
+- Observations (sample lines):
+  - Cold compile/autotune latency lines around ~28–29 s.
+  - Steady‑state examples:
+    - `FPS (pipeline): 70–75`, latency ~11–12 ms
+    - `FPS (pipeline): 55–66`, latency ~18–26 ms (scene‑dependent)
+- Note: Gains likely confounded by recompile; re‑A/B with compile held constant.
+
+Results: MXFP4 MLP‑only (fresh compile)
+- Command used:
+```bash
+OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=4 OWL_MXFP_SCOPE=mlp OWL_MXFP_LIST=1 python -m inference.game_cv
+```
+- Note: Fresh compile; treat steady‑state only for comparisons. Re‑run with identical compile settings for a proper A/B.
+
+Next phase: MXFP8 all linears + FP8‑KV (V‑only)
+- Goal: Combine GEMM MXFP8 with V‑only FP8 KV (K in BF16) to check end‑to‑end perf/memory.
+- Command:
+```bash
+OWL_COMPILE=1 OWL_PROFILE_KV=1 OWL_MXFP_ENABLE=1 OWL_MXFP_BITS=8 OWL_MXFP_SCOPE=all \
+OWL_FP8_KV=1 OWL_K_FP8=0 OWL_KV_LATE_LAYERS=12 python -m inference.game_cv
+```
 
 

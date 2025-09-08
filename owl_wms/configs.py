@@ -88,6 +88,12 @@ class InferenceConfig:
     trt_decoder_force: Optional[bool] = False
     trt_decoder_slow_pct: Optional[float] = 10.0
 
+    # MX formats for Linear layers (TorchAO)
+    mxfp_enable: Optional[bool] = True        # best so far: MXFP8 enabled
+    mxfp_bits: Optional[int] = 8              # 8-bit by default
+    mxfp_scope: Optional[str] = "all"         # apply to all Linear layers
+    mxfp_kernel: Optional[str] = "cutlass"    # prefer CUTLASS kernels
+
 @dataclass
 class Config:
     model: TransformerConfig
