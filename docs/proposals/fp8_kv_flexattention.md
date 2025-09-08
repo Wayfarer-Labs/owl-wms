@@ -494,9 +494,69 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 - Takeaways:
   - Without compile, attention and MLP costs are measurable and dominate; decoder ~25–30ms (uncompiled). With compile ON, decoder ~8–9ms and q/dq ~0ms, matching earlier findings that runtime is compute‑bound by attention+decoder, not KV.
 
+## Roadmap: next steps after stabilization (to finish all phases)
+
+1) Stabilization (now)
+- Lock default: V‑only FP8 across all layers; K in BF16.
+- If needed: enable stabilizers in order of lowest risk → percentile (V), late‑layers V FP8, per‑channel V, temporal smoothing. Record settings and quality notes in this file.
+- Freeze default flags once visually acceptable in “stand still” and normal movement.
+
+2) Phase C: Hardening & configuration
+- Make flags first‑class in a config (not only env): `fp8_kv`, `k_fp8`, `kv_late_layers`, `v_percentile`, `v_per_channel`, `scale_smooth_alpha`.
+- Add a one‑shot “report settings” line on startup for reproducibility.
+- Add a seed + deterministic mode to reproduce stabilization results for QA.
+
+3) Performance focus (no scheduler changes)
+- Attention path:
+  - Ensure FlexAttention/SDPA fastpath always used; keep tensors `[B,H,T,D]` contiguous.
+  - Minimize concat/roll before the kernel; reuse buffers.
+  - Keep `torch.compile` ON for model; avoid graph breaks from profiling code.
+- Decoder path:
+  - Time decoder consistently; consider leaving decoder compiled; only optimize if it dominates.
+- Optional: TransformerEngine trial to fuse dequant inside attention (retain BF16 activations).
+
+4) Optional Phase D: TensorRT engines (if needed later)
+- Only if you need additional perf beyond PyTorch: export prefill/decode graphs, keep activations FP16/BF16, KV in 8‑bit, build engines with FlexAttention.
+- Profile vs PyTorch to justify complexity.
+
+5) Validation and release checklist
+- A/B runs: baseline BF16 vs default FP8 settings; log FPS, decoder_ms, attn_ms, memory, and qualitative notes.
+- Save a short “stand still” clip and an active clip for regression checks.
+- Set defaults:
+  - `OWL_FP8_KV=1`, `OWL_K_FP8=0`, `OWL_KV_LATE_LAYERS=0`.
+  - Stabilizers OFF by default; document recommended values (e.g., `OWL_V_PERCENTILE=99.5`) when needed.
+- Document rollback: set `OWL_FP8_KV=0` to disable FP8‑KV entirely.
+
 - FP8-KV achieves memory reduction but quality degrades faster vs BF16 and FPS did not improve yet. Focus shifts to K-only FP8 or late-layer FP8, plus profiling to expose non-KV bottlenecks.
 
 - DRAM bytes per decode step scale roughly with `O(n_layers * H * T * D)` for two K/V reads; halving bytes for K and V yields ~2× KV traffic reduction.
 - Dequant cost: one fused multiply per element is negligible compared to memory fetch; on consumer GPUs bound by bandwidth, net latency usually improves.
+
+### Regression note (post ring-buffer/tail-read attempt)
+- Symptom: output frames went black immediately after the first frame when enabling both ring-buffers and tail-only reads.
+- Status: Reverting to legacy roll-based cache restored visuals. Framerate remained good under legacy path.
+- Likely cause: ring index misalignment with scales or tail-slice logic (per-token scale alignment) in `QuantizedStaticCache`.
+
+### Incremental reintroduction plan
+1) Re-enable ring buffers in BF16 `StaticCache` only (no quant), verify visuals and FPS.
+2) Add tail-only reads for local layers only (global layers keep full window), verify.
+3) Enable ring buffers in `QuantizedStaticCache` with legacy full-window `get()` (no tail), verify.
+4) Enable tail-only reads for local layers in `QuantizedStaticCache`, verify.
+5) Optional: per-layer toggles to bisect (enable on last N layers first).
+
+### Debug flags and logging
+- `OWL_PROFILE_KV=1` with `OWL_PROFILE_KV_FIRST=3`, `OWL_PROFILE_KV_EVERY=50`.
+- `OWL_K_FP8=0` (default; keep Keys in BF16).
+- `OWL_KV_LATE_LAYERS=N` to restrict FP8 to last N layers.
+- Add temporary env toggles (to implement):
+  - `OWL_KV_RING=1` → ring buffer mode (else legacy roll)
+  - `OWL_KV_TAIL_LOCAL_ONLY=1` → apply tail reads only to local layers
+- Log lines to capture on each update/get:
+  - `update_begin/update_done`: `layer`, `new_len`, `wp`, `filled`, `offset`.
+  - `get`: `layer`, `logical_len`, shapes; `get_tail_begin`: `tail_len`, `filled`, `wp`.
+  - Scale NaN fraction: `nan_frac` in debug prints.
+
+### Rollback
+- If any step regresses visuals, disable that step via the above flags and proceed with the next safest variant (e.g., BF16 ring only).
 
 
