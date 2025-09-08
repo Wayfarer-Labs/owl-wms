@@ -20,6 +20,7 @@ def get_rope_cls(cls_name):
 class RoPE(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         freqs = self.get_freqs(config)
 
         if not config.has_audio:
@@ -29,11 +30,20 @@ class RoPE(nn.Module):
         self.cos = nn.Buffer(freqs.cos().contiguous(), persistent=False)
         self.sin = nn.Buffer(freqs.sin().contiguous(), persistent=False)
 
+    def get_angles(self, pos_ids):
+        t, y, x = pos_ids["t_pos"], pos_ids["y_pos"], pos_ids["x_pos"]  # [B,T]
+        H, W = self.config.height, self.config.width
+        torch._assert(y.max() < H and x.max() < W, "pos_ids out of bounds")
+        flat = t * (H * W) + y * W + x                         # [B,T]
+        idx = flat.reshape(-1).to(torch.long)
+        cos = self.cos.index_select(0, idx).view(*flat.shape, -1)
+        sin = self.sin.index_select(0, idx).view(*flat.shape, -1)
+        return cos[:, None], sin[:, None]  # add head dim for broadcast
+
     @torch.autocast("cuda", enabled=False)
-    def forward(self, x, offset: int = 0):
+    def forward(self, x, pos_ids):
         assert self.cos.dtype == torch.float32
-        cos = self.cos[..., offset:offset + x.size(2), :]
-        sin = self.sin[..., offset:offset + x.size(2), :]
+        cos, sin = self.get_angles(pos_ids)
         x0, x1 = x.float().unfold(-1, 2, 2).unbind(-1)
         y0 = x0 * cos - x1 * sin
         y1 = x1 * cos + x0 * sin

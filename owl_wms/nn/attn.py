@@ -23,43 +23,31 @@ def checkpoint(function, *args, **kwargs):
 
 
 def get_block_mask(
-    n_tokens: int,
-    tokens_per_frame: int,
+    t_pos: torch.Tensor,
     window_len: int | None = None,
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
     device="cpu"
 ):
-    assert 0 <= q_offset < n_tokens, "kv cache cannot exceed total tokens"
+    kv_len = t_pos.shape[-1]
+    q_len = kv_len - q_offset
+
+    assert 0 <= q_offset < kv_len, "kv cache cannot exceed total tokens"
     if not is_causal:
         assert q_offset == 0, "kv caching not supported with bidirectional"
-    torch._assert((q_offset % tokens_per_frame) == 0, "q_offset must be frame-aligned")
-
-    frame_id = torch.arange(n_tokens, device=device, dtype=torch.int32) // tokens_per_frame
-    n_frames = n_tokens // tokens_per_frame
-
-    if window_len is None:
-        window_len = n_frames
 
     def mask_mod(b, h, q, kv):
         abs_q = q + q_offset  # offset for kv caching
-        frame_q, frame_kv = frame_id[abs_q], frame_id[kv]
+        t_q, t_kv = t_pos[b, abs_q], t_pos[b, kv]  # timestep of q / kv
 
-        if is_causal:
-            window_mask = (frame_kv <= frame_q) & (frame_q - frame_kv < window_len)  # causal window
-        else:
-            window_mask = torch.abs(frame_q - frame_kv) < window_len  # bidirectional window
+        base_mask = (t_kv <= t_q) if is_causal else True  # causal / bidirectional
+        window_mask = (t_q - t_kv).abs() < window_len if window_len is not None else True  # sliding window
+        same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True
 
-        if doc_id is not None:
-            same_doc_mask = doc_id[b, frame_q] == doc_id[b, frame_kv]
-        else:
-            same_doc_mask = True
+        return base_mask & window_mask & same_doc_mask
 
-        return window_mask & same_doc_mask
-
-    q_len = n_tokens - q_offset
-    return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=n_tokens, device=device)
+    return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
 
 class AttnMaskScheduler:
@@ -68,21 +56,20 @@ class AttnMaskScheduler:
         self.config = config
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
-    def __call__(self, seq_len, doc_id, kv_cache, device):
-        q_offset = kv_cache.offset[0].clone() if kv_cache is not None else 0
-        ####
+    def __call__(self, seq_len, doc_id, kv_cache, device, t_pos):
+        q_offset = kv_cache.kv_offset[0] if kv_cache is not None else 0
+
+        torch._assert(t_pos.shape[-1] == q_offset + seq_len, "t_pos length must equal q_offset + seq_len")
         if kv_cache is not None:
-            same = (kv_cache.offset == kv_cache.offset[0]).all()
-            torch._assert(bool(same), f"Per-layer KV offsets diverged: {kv_cache.offset.tolist()}")
-        ####
-        n_tokens = seq_len + q_offset
+            torch._assert((kv_cache.kv_offset == kv_cache.kv_offset[0]).all(), "Per-layer KV offsets diverged")
+        torch._assert(doc_id is None or doc_id.size(1) == t_pos.size(1), "doc_id must be token-expanded to S tokens")
+
         kwargs = dict(
-            n_tokens=n_tokens,
-            tokens_per_frame=self.config.tokens_per_frame,
+            t_pos=t_pos,
             doc_id=doc_id,
             q_offset=q_offset,
             is_causal=self.config.causal,
-            device=device
+            device=device,
         )
         local_bm = get_block_mask(window_len=self.config.local_window, **kwargs)
         global_bm = get_block_mask(window_len=self.config.global_window, **kwargs)
@@ -109,21 +96,16 @@ class Attn(nn.Module):
             nn.init.zeros_(self.gate_proj.weight)
             nn.init.zeros_(self.gate_proj.bias)
 
-    def forward(self, x, block_mask, kv_cache=None):
+    def forward(self, x, pos_ids, block_mask, kv_cache=None):
         qkv = self.qkv(x)
         q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.n_heads)
         q, k = rms_norm(q), rms_norm(k)
 
         # rotate new queries and keys (shared kv cache between modalities)
-        offset = kv_cache.offset[self.layer_idx].clone() if kv_cache is not None else 0
-        q, k = self.rope(q, offset=offset), self.rope(k, offset=offset)
+        q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
-            ####
-            torch._assert(k.size(2) == offset + q.size(2), f"KV_LEN != start + Q_LEN, {k.size(2)}, {offset}, {q.size(2)}")
-            torch._assert((offset % self.config.tokens_per_frame) == 0, "start not frame-aligned")
-            ####
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
 

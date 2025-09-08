@@ -26,8 +26,8 @@ model:
   rope_impl: motion
   rope_ats_delta: 2.0
 
-  local_window: 16
-  global_window: 512
+  local_window: 16  # 16/60 seconds of ctx
+  global_window: 512  # 512/60 seconds of ctx
 
   ####
   gradient_checkpointing: false

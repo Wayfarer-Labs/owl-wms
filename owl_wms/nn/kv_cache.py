@@ -99,7 +99,7 @@ class StaticKVCache(nn.Module):
         super().__init__()
 
         # Exclude last N tokens from caching
-        self.n_uncached = config.tokens_per_frame
+        self.n_uncached = config.tokens_per_frame  # TODO: remove and change so we cache all but latest t_pos
 
         B = batch_size
         H = config.n_heads
@@ -109,12 +109,18 @@ class StaticKVCache(nn.Module):
 
         self.k = nn.Buffer(torch.empty(NL, B, H, L, Dh, dtype=dtype), persistent=False)
         self.v = nn.Buffer(torch.empty(NL, B, H, L, Dh, dtype=dtype), persistent=False)
-        self.offset = nn.Buffer(torch.zeros(NL, dtype=torch.long), persistent=False)
+        self.kv_offset = nn.Buffer(torch.zeros(NL, dtype=torch.long), persistent=False)
+
+        # shared between layers
+        self.t_pos = nn.Buffer(torch.zeros(B, L, dtype=torch.long), persistent=False)
+        self.t_pos_offset = nn.Buffer(torch.zeros((), dtype=torch.long), persistent=False)
 
     @torch.inference_mode()
     def upsert(self, k: Tensor, v: Tensor, layer: int):
         T = k.size(2)
-        start = self.offset[layer]
+        torch._assert((T % self.n_uncached) == 0, "KV insert must be frame-aligned")
+
+        start = self.kv_offset[layer]
         end = start + T
 
         torch._assert(end <= self.k.size(3), "KV cache overflow")
@@ -122,6 +128,22 @@ class StaticKVCache(nn.Module):
 
         self.k[layer, :, :, start:end, :].copy_(k)
         self.v[layer, :, :, start:end, :].copy_(v)
-        self.offset[layer].fill_(end - self.n_uncached)
+        self.kv_offset[layer].fill_(end - self.n_uncached)
 
         return self.k[layer, :, :, :end, :], self.v[layer, :, :, :end, :]  # TODO: make static kv
+
+    @torch.inference_mode()
+    def upsert_t_pos(self, t_pos):
+        """Insert per-batch frame ids and return the KV-length view."""
+        assert t_pos.ndim == 2
+        assert (self.kv_offset == self.t_pos_offset).all(), "kv_offset should = t_pos_offset before upsert"
+        torch._assert(t_pos.size(0) == self.t_pos.size(0), "Batch mismatch in t_pos")
+
+        start = int(self.t_pos_offset.item())
+        S = t_pos.size(1)
+        end = start + S
+        torch._assert(end <= self.t_pos.size(1), "KV cache overflow (t_pos)")
+
+        self.t_pos[:, start:end].copy_(t_pos)
+        self.t_pos_offset.fill_(end - self.n_uncached)
+        return self.t_pos[:, :end]

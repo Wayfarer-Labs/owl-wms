@@ -63,7 +63,7 @@ class WorldDiTBlock(nn.Module):
         self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
         self.adaln2, self.gate2 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
 
-    def forward(self, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
+    def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
         0) Causal Frame Attention
         1) Frame->Text Cross Attention
@@ -75,7 +75,7 @@ class WorldDiTBlock(nn.Module):
 
         residual = x
         x = self.adaln0(x, cond)
-        x = self.attn(x, block_mask, kv_cache)
+        x = self.attn(x, pos_ids, block_mask, kv_cache)
         x = self.gate0(x, cond) + residual
 
         """
@@ -107,13 +107,23 @@ class WorldDiT(nn.Module):
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
-    def forward(self, x, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
+    def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
+        ####
+        # TODO: REMOVE, just an experiment
+        if ctrl_emb is not None:
+            cond = cond + ctrl_emb
+        ####
+
+        t_pos = pos_ids["t_pos"]
+        if kv_cache is not None:
+            t_pos = kv_cache.upsert_t_pos(t_pos)
 
         # generate block masks for each layer
         block_masks = self.attn_masker(
             seq_len=x.size(1),
             doc_id=doc_id,
             kv_cache=kv_cache,
+            t_pos=t_pos,
             device=x.device
         )
         for block, block_mask in zip(self.blocks, block_masks):
@@ -149,6 +159,47 @@ class WorldModel(nn.Module):
         # placeholder until we have Dit-Air
         return self.timestep_emb(ts)
 
+    def pack_seq(self, x, doc_id):
+        B, N, C, H, W = x.shape
+        assert (H, W) == (self.config.height, self.config.width)  # TODO: remove and allow inferred H, W
+
+        # flatten into [B, S, C] and pos_id's for each S
+        idx = torch.arange(N * H * W, device=x.device, dtype=torch.long)
+        t_pos, y_pos, x_pos = torch.unravel_index(idx, (N, H, W))
+        pos_ids = TensorDict(
+            {
+                "t_pos": t_pos.unsqueeze(0).expand(B, -1),
+                "y_pos": y_pos.unsqueeze(0).expand(B, -1),
+                "x_pos": x_pos.unsqueeze(0).expand(B, -1),
+            },
+            batch_size=[B, N * H * W],
+        )
+        flat_latents = eo.rearrange(x, 'b n c h w -> b (n h w) c')
+        return flat_latents, pos_ids
+
+    def flat_forward(
+        self,
+        x: Tensor,
+        pos_ids: TensorDict,
+        ts: Tensor,
+        prompt_emb: Optional[TensorDict] = None,
+        controller_inputs: Optional[Tensor] = None,
+        doc_id: Optional[Tensor] = None,
+        kv_cache=None
+    ):
+        assert len(x.shape) == 3, "Requires x to be [B, S, C]"
+
+        # embed
+        cond = self.get_timestep_conditioning(ts)  # [B, N, d]
+        ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
+
+        # patchify, fwd, unpatchify
+        x = self.proj_in(x)
+        x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
+        x = self.proj_out(x, cond)
+        return x
+
+    # TODO: delete, only use flat fwd path
     def forward(
         self,
         x: Tensor,
@@ -165,23 +216,17 @@ class WorldModel(nn.Module):
         controller_inputs: [B, N, I]
         doc_id: [B, N]
         """
+        assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
+
         B, N, C, H, W = x.shape
         assert (H, W) == (self.config.height, self.config.width)
 
-        # embed
-        cond = self.get_timestep_conditioning(ts)  # [B, N, d]
-        ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
+        # pack
+        x, pos_ids = self.pack_seq(x, doc_id)
+        if doc_id is not None:
+            doc_id = doc_id.repeat_interleave(H * W, dim=1)
+        ######
 
-        ####
-        if ctrl_emb is not None:
-            cond = cond + ctrl_emb
-        ####
-
-        # patchify, fwd, unpatchify
-        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
-        x = self.proj_in(x)
-        x = self.transformer(x, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
-        x = self.proj_out(x, cond)
+        x = self.flat_forward(x, pos_ids, ts, prompt_emb, controller_inputs, doc_id, kv_cache)
         x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
-
         return x
