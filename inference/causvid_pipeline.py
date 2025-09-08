@@ -77,6 +77,13 @@ class CausvidPipeline:
         self.profile_kv_first = int(os.environ.get("OWL_PROFILE_KV_FIRST", "3"))
         self._profile_kv_count = 0
         self.use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
+        # Optional TensorRT acceleration flags for decoder
+        self.use_trt_decoder = bool(int(os.environ.get("OWL_TRT_DECODER", "0")))
+        self.trt_force = bool(int(os.environ.get("OWL_TRT_DECODER_FORCE", "0")))
+        self.trt_slow_pct = float(os.environ.get("OWL_TRT_DECODER_SLOW_PCT", "10"))
+        self._trt_decoder_built = False
+        self._trt_decoder = None
+        self._trt_benchmark = None  # {'pytorch_ms':..., 'trt_ms':...}
         # One-time backend sanity
         if self.profile_kv:
             try:
@@ -109,7 +116,16 @@ class CausvidPipeline:
         # Initialize KV cache
         if self.use_fp8_kv:
             # max_length is number of frames (same as StaticCache usage)
-            self.cache = QuantizedStaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
+            # Default: K BF16 (k_fp8=0), V FP8 on last 12 layers
+            kv_late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", "12"))
+            k_fp8 = bool(int(os.environ.get("OWL_K_FP8", "0")))
+            self.cache = QuantizedStaticCache(
+                self.model.config,
+                max_length = init_len,
+                batch_size = batch_size,
+                kv_late_layers = kv_late_layers,
+                k_fp8 = k_fp8,
+            )
         else:
             self.cache = StaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
         #self.cache = KVCache(self.model.config)
@@ -333,7 +349,51 @@ class CausvidPipeline:
             e_dec0 = torch.cuda.Event(enable_timing=True); e_dec1 = torch.cuda.Event(enable_timing=True)
             e_dec0.record()
         x_to_dec = new_frame[0] * self.image_scale
-        frame = self.frame_decoder(x_to_dec).squeeze()  # [c,h,w]
+        # Build TensorRT decoder on first use if enabled
+        if self.use_trt_decoder and not self._trt_decoder_built:
+            try:
+                import torch_tensorrt.dynamo as torchtrt
+                example = x_to_dec.contiguous().cuda().half()
+                self._trt_decoder = torchtrt.compile(
+                    self.frame_decoder.half().eval(),
+                    inputs=[example],
+                    enabled_precisions={torch.float16},
+                    workspace_size=1 << 28,
+                )
+                self._trt_decoder_built = True
+                if self.profile_kv:
+                    print("[TensorRT] Decoder engine built (FP16)")
+            except Exception as e:
+                if self.profile_kv:
+                    print(f"[TensorRT] Decoder build failed, falling back to PyTorch: {e}")
+                self._trt_decoder = None
+                self._trt_decoder_built = True
+
+        if self._trt_decoder is not None:
+            if self._trt_benchmark is None and not self.trt_force:
+                try:
+                    x_pt = x_to_dec.contiguous()
+                    x_trt = x_to_dec.contiguous().half()
+                    e_p0 = torch.cuda.Event(enable_timing=True); e_p1 = torch.cuda.Event(enable_timing=True)
+                    e_t0 = torch.cuda.Event(enable_timing=True); e_t1 = torch.cuda.Event(enable_timing=True)
+                    e_p0.record(); _ = self.frame_decoder(x_pt); e_p1.record(); torch.cuda.synchronize(); pt_ms = e_p0.elapsed_time(e_p1)
+                    e_t0.record(); _ = self._trt_decoder(x_trt); e_t1.record(); torch.cuda.synchronize(); trt_ms = e_t0.elapsed_time(e_t1)
+                    self._trt_benchmark = {"pytorch_ms": pt_ms, "trt_ms": trt_ms}
+                    if self.profile_kv:
+                        print(f"[TensorRT] bench: pytorch_ms={pt_ms:.2f}, trt_ms={trt_ms:.2f}")
+                    if trt_ms > pt_ms * (1.0 + self.trt_slow_pct / 100.0):
+                        if self.profile_kv:
+                            print("[TensorRT] Slower than PyTorch, disabling TRT decoder.")
+                        self._trt_decoder = None
+                except Exception as e:
+                    if self.profile_kv:
+                        print(f"[TensorRT] Benchmark failed: {e}")
+            if self._trt_decoder is not None:
+                frame = self._trt_decoder(x_to_dec.contiguous().cuda().half()).squeeze()
+            else:
+                frame = self.frame_decoder(x_to_dec).squeeze()
+        else:
+            frame = self.frame_decoder(x_to_dec).squeeze()  # [c,h,w]
         if self.profile_kv:
             e_dec1.record(); torch.cuda.synchronize()
             dec_ms = e_dec0.elapsed_time(e_dec1)

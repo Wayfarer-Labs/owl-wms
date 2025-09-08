@@ -228,6 +228,8 @@ class QuantizedStaticCache:
         fmt_k: str = 'e5m2',
         fmt_v: str = 'e4m3',
         ema_momentum: float = 0.99,
+        kv_late_layers: int | None = None,
+        k_fp8: bool | None = None,
     ):
         self.config = config
 
@@ -247,9 +249,9 @@ class QuantizedStaticCache:
         L = config.n_layers
 
         # Layer-wise enablement: allow FP8 only for late layers; and optionally keep K in BF16
-        late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", "0"))
+        late_layers = kv_late_layers if kv_late_layers is not None else int(os.environ.get("OWL_KV_LATE_LAYERS", "0"))
         start_fp8 = max(0, L - late_layers) if late_layers > 0 else 0
-        k_fp8_global = bool(int(os.environ.get("OWL_K_FP8", "1")))
+        k_fp8_global = (k_fp8 if k_fp8 is not None else bool(int(os.environ.get("OWL_K_FP8", "1"))))
         self.k_use_fp8 = [(k_fp8_global and (li >= start_fp8)) for li in range(L)]
         self.v_use_fp8 = [(li >= start_fp8) for li in range(L)]
 

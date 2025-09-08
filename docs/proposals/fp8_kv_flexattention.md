@@ -477,6 +477,7 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 - Add decoder timing to the profile output (done).
 - Verify FlexAttention/SDPA fastpaths consistently; ensure [B,H,T,D] contiguity and avoid extra cat/roll.
 - Add optional MLP timing if needed.
+- Add SDPA/FlashAttention fastpath on decode (no mask) behind `OWL_ATTN_SDPA_DECODE=1`; keep FlexAttention when block_mask is present.
 
 ### Latest profiler snapshot (compile OFF)
 - Command:
@@ -508,7 +509,7 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 
 3) Performance focus (no scheduler changes)
 - Attention path:
-  - Ensure FlexAttention/SDPA fastpath always used; keep tensors `[B,H,T,D]` contiguous.
+  - Ensure FlexAttention/SDPA fastpath always used; keep tensors `[B,H,T,D]` contiguous. A decode-only SDPA toggle is available via `OWL_ATTN_SDPA_DECODE=1`.
   - Minimize concat/roll before the kernel; reuse buffers.
   - Keep `torch.compile` ON for model; avoid graph breaks from profiling code.
 - Decoder path:
@@ -518,6 +519,13 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 4) Optional Phase D: TensorRT engines (if needed later)
 - Only if you need additional perf beyond PyTorch: export prefill/decode graphs, keep activations FP16/BF16, KV in 8‑bit, build engines with FlexAttention.
 - Profile vs PyTorch to justify complexity.
+
+Implementation note (current):
+- Added optional TensorRT engine for the VAE frame decoder behind `OWL_TRT_DECODER=1`.
+  - When enabled, `inference/causvid_pipeline.py` builds a Torch‑TensorRT engine for the decoder on first use (FP16) and falls back to PyTorch if unavailable.
+  - We avoid `torch.compile` on the decoder when TRT is enabled to ensure the original module is compiled by TRT.
+  - Profiling prints include a build confirmation when `OWL_PROFILE_KV=1`.
+  - Model (transformer) remains in PyTorch for now due to KV cache object inputs; future work may stage TRT for fixed‑shape subgraphs.
 
 5) Validation and release checklist
 - A/B runs: baseline BF16 vs default FP8 settings; log FPS, decoder_ms, attn_ms, memory, and qualitative notes.
@@ -537,20 +545,16 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 - Status: Reverting to legacy roll-based cache restored visuals. Framerate remained good under legacy path.
 - Likely cause: ring index misalignment with scales or tail-slice logic (per-token scale alignment) in `QuantizedStaticCache`.
 
-### Incremental reintroduction plan
-1) Re-enable ring buffers in BF16 `StaticCache` only (no quant), verify visuals and FPS.
-2) Add tail-only reads for local layers only (global layers keep full window), verify.
-3) Enable ring buffers in `QuantizedStaticCache` with legacy full-window `get()` (no tail), verify.
-4) Enable tail-only reads for local layers in `QuantizedStaticCache`, verify.
-5) Optional: per-layer toggles to bisect (enable on last N layers first).
+### Decision: remove ring buffer implementation (for now)
+- Observation: Ring buffers introduced black frames under `torch.compile` and severe lag spikes due to retraces/dynamic indexing.
+- Decision: Remove ring buffer code paths and env flags; revert to legacy roll-based window maintenance. Keep tail-only reads for local layers.
+- Rationale: Stability and FPS are better with roll; ring can be revisited via fused/compile-friendly kernels later.
 
 ### Debug flags and logging
 - `OWL_PROFILE_KV=1` with `OWL_PROFILE_KV_FIRST=3`, `OWL_PROFILE_KV_EVERY=50`.
 - `OWL_K_FP8=0` (default; keep Keys in BF16).
 - `OWL_KV_LATE_LAYERS=N` to restrict FP8 to last N layers.
-- Add temporary env toggles (to implement):
-  - `OWL_KV_RING=1` → ring buffer mode (else legacy roll)
-  - `OWL_KV_TAIL_LOCAL_ONLY=1` → apply tail reads only to local layers
+- Removed ring toggles; only legacy roll is supported now.
 - Log lines to capture on each update/get:
   - `update_begin/update_done`: `layer`, `new_len`, `wp`, `filled`, `offset`.
   - `get`: `layer`, `logical_len`, shapes; `get_tail_begin`: `tail_len`, `filled`, `wp`.
