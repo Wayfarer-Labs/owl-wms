@@ -503,7 +503,7 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 - Freeze default flags once visually acceptable in “stand still” and normal movement.
 
 2) Phase C: Hardening & configuration
-- Make flags first‑class in a config (not only env): `fp8_kv`, `k_fp8`, `kv_late_layers`, `v_percentile`, `v_per_channel`, `scale_smooth_alpha`.
+- Make flags first‑class in a config (not only env): `fp8_kv`, `k_fp8`, `kv_late_layers`, `v_percentile`, `v_per_channel`, `scale_smooth_alpha`. (done for inference: see `inference` section in `owl_wms/configs.py`)
 - Add a one‑shot “report settings” line on startup for reproducibility.
 - Add a seed + deterministic mode to reproduce stabilization results for QA.
 
@@ -522,6 +522,23 @@ Implication: We are compute‑bound by transformer attention/MLP and decoder; KV
 
 Implementation note (current):
 - Added optional TensorRT engine for the VAE frame decoder behind `OWL_TRT_DECODER=1`.
+- Inference configuration (YAML) and env overrides
+  - YAML example:
+```
+inference:
+  compile: true
+  profile_kv: false
+  profile_kv_every: 30
+  profile_kv_first: 3
+  sampling_steps: 4
+  fp8_kv: true
+  k_fp8: false
+  kv_late_layers: 12
+  trt_decoder: true
+  trt_decoder_force: false
+  trt_decoder_slow_pct: 10.0
+```
+  - Env overrides: `OWL_COMPILE`, `OWL_PROFILE_KV`, `OWL_PROFILE_KV_EVERY`, `OWL_PROFILE_KV_FIRST`, `OWL_SAMPLING_STEPS`, `OWL_FP8_KV`, `OWL_K_FP8`, `OWL_KV_LATE_LAYERS`, `OWL_TRT_DECODER`, `OWL_TRT_DECODER_FORCE`, `OWL_TRT_DECODER_SLOW_PCT`.
   - When enabled, `inference/causvid_pipeline.py` builds a Torch‑TensorRT engine for the decoder on first use (FP16) and falls back to PyTorch if unavailable.
   - We avoid `torch.compile` on the decoder when TRT is enabled to ensure the original module is compiled by TRT.
   - Profiling prints include a build confirmation when `OWL_PROFILE_KV=1`.
