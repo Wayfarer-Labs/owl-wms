@@ -69,6 +69,10 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
+
+        # TODO: attn-only checkpoint
+        # enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
+
         residual = x
         x = self.adaln0(x, cond)
         x = self.attn(x, block_mask, kv_cache)
@@ -104,7 +108,6 @@ class WorldDiT(nn.Module):
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
     def forward(self, x, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
-        enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
 
         # generate block masks for each layer
         block_masks = self.attn_masker(
@@ -114,10 +117,7 @@ class WorldDiT(nn.Module):
             device=x.device
         )
         for block, block_mask in zip(self.blocks, block_masks):
-            if enable_ckpt:
-                x = owl_nn.checkpoint(block, x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
-            else:
-                x = block(x, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+            x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
         return x
 
 
