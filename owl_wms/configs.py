@@ -70,10 +70,30 @@ class WANDBConfig:
     run_name : str = None 
 
 @dataclass
+class InferenceConfig:
+    # Compilation & profiling
+    compile: Optional[bool] = True
+    profile_kv: Optional[bool] = False
+    profile_kv_every: Optional[int] = 30
+    profile_kv_first: Optional[int] = 3
+    sampling_steps: Optional[int] = 4
+
+    # Quantized KV cache
+    fp8_kv: Optional[bool] = True
+    k_fp8: Optional[bool] = True              # Keys quantized
+    kv_late_layers: Optional[int] = 12         # apply on last N layers
+
+    # TensorRT decoder
+    trt_decoder: Optional[bool] = True
+    trt_decoder_force: Optional[bool] = False
+    trt_decoder_slow_pct: Optional[float] = 10.0
+
+@dataclass
 class Config:
     model: TransformerConfig
     train: TrainingConfig
     wandb: WANDBConfig
+    inference: Optional[InferenceConfig] = None
 
     @classmethod
     def from_yaml(cls, path):

@@ -29,6 +29,7 @@ def to_bgr_uint8(frame, target_size=(1080,1920)):
     frame = frame.clamp(0, 255).to(device='cpu',dtype=torch.uint32,memory_format=torch.contiguous_format,non_blocking=True)
     return frame
 
+# Default fallback; overridden by config/env at runtime
 SAMPLING_STEPS = 2
 WINDOW_SIZE = 60
 
@@ -37,6 +38,7 @@ class CausvidPipeline:
         cfg = Config.from_yaml(cfg_path)
         model_cfg = cfg.model
         train_cfg = cfg.train
+        infer_cfg = (cfg.inference or type('X', (), {})())
 
         self.ground_truth = ground_truth
         
@@ -63,8 +65,8 @@ class CausvidPipeline:
 
         self.alpha = 0.25
 
-        # Optional compile toggle
-        self.compile_enabled = bool(int(os.environ.get("OWL_COMPILE", "1")))
+        # Optional compile toggle (config overrides envs)
+        self.compile_enabled = bool(int(os.environ.get("OWL_COMPILE", str(int(bool(getattr(infer_cfg, 'compile', True))))) ))
         if self.compile_enabled:
             self.model = torch.compile(self.model)#, mode = 'max-autotune', dynamic = False, fullgraph = True)
             self.frame_decoder = torch.compile(self.frame_decoder, mode = 'max-autotune', dynamic = False, fullgraph = True)
@@ -72,15 +74,17 @@ class CausvidPipeline:
         self.device = 'cuda'
         
         self.cache = None
-        self.profile_kv = bool(int(os.environ.get("OWL_PROFILE_KV", "0")))
-        self.profile_kv_every = int(os.environ.get("OWL_PROFILE_KV_EVERY", "30"))
-        self.profile_kv_first = int(os.environ.get("OWL_PROFILE_KV_FIRST", "3"))
+        self.profile_kv = bool(int(os.environ.get("OWL_PROFILE_KV", str(int(bool(getattr(infer_cfg, 'profile_kv', False))))) ))
+        self.profile_kv_every = int(os.environ.get("OWL_PROFILE_KV_EVERY", str(getattr(infer_cfg, 'profile_kv_every', 30))))
+        self.profile_kv_first = int(os.environ.get("OWL_PROFILE_KV_FIRST", str(getattr(infer_cfg, 'profile_kv_first', 3))))
         self._profile_kv_count = 0
-        self.use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", "0")))
+        self.use_fp8_kv = bool(int(os.environ.get("OWL_FP8_KV", str(int(bool(getattr(infer_cfg, 'fp8_kv', False))))) ))
+        # Sampling steps (decoder steps)
+        self.sampling_steps = int(os.environ.get("OWL_SAMPLING_STEPS", str(getattr(infer_cfg, 'sampling_steps', SAMPLING_STEPS))))
         # Optional TensorRT acceleration flags for decoder
-        self.use_trt_decoder = bool(int(os.environ.get("OWL_TRT_DECODER", "0")))
-        self.trt_force = bool(int(os.environ.get("OWL_TRT_DECODER_FORCE", "0")))
-        self.trt_slow_pct = float(os.environ.get("OWL_TRT_DECODER_SLOW_PCT", "10"))
+        self.use_trt_decoder = bool(int(os.environ.get("OWL_TRT_DECODER", str(int(bool(getattr(infer_cfg, 'trt_decoder', False))))) ))
+        self.trt_force = bool(int(os.environ.get("OWL_TRT_DECODER_FORCE", str(int(bool(getattr(infer_cfg, 'trt_decoder_force', False))))) ))
+        self.trt_slow_pct = float(os.environ.get("OWL_TRT_DECODER_SLOW_PCT", str(getattr(infer_cfg, 'trt_decoder_slow_pct', 10.0))))
         self._trt_decoder_built = False
         self._trt_decoder = None
         self._trt_benchmark = None  # {'pytorch_ms':..., 'trt_ms':...}
@@ -117,8 +121,8 @@ class CausvidPipeline:
         if self.use_fp8_kv:
             # max_length is number of frames (same as StaticCache usage)
             # Default: K BF16 (k_fp8=0), V FP8 on last 12 layers
-            kv_late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", "12"))
-            k_fp8 = bool(int(os.environ.get("OWL_K_FP8", "0")))
+            kv_late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", str(getattr(infer_cfg, 'kv_late_layers', 12))))
+            k_fp8 = bool(int(os.environ.get("OWL_K_FP8", str(int(bool(getattr(infer_cfg, 'k_fp8', False))))) ))
             self.cache = QuantizedStaticCache(
                 self.model.config,
                 max_length = init_len,
@@ -277,7 +281,9 @@ class CausvidPipeline:
         curr_x = torch.randn_like(self.history_buffer[:,:1])  # [1,1,c,h,w]
         curr_t = torch.ones(1, 1, device=curr_x.device, dtype=curr_x.dtype)  # [1,1]
 
-        dt = 1.0 / SAMPLING_STEPS
+        # Use configured sampling steps
+        sampling_steps = self.sampling_steps
+        dt = 1.0 / sampling_steps
 
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
@@ -306,39 +312,48 @@ class CausvidPipeline:
         curr_x = curr_x - 0.75 * pred_v
         curr_t = curr_t - 0.75
 
-        # Second sampling step does cache update as well
-        self.cache.enable_cache_updates()
-        if self.profile_kv:
-            torch.cuda.reset_peak_memory_stats()
-            t_kv1 = time.time()
-            e_attn2 = torch.cuda.Event(enable_timing=True); e_attn3 = torch.cuda.Event(enable_timing=True)
-            e_attn2.record()
-        pred_v = self.model(
-            curr_x,
-            curr_t,
-            new_mouse_input,
-            new_btn_input,
-            kv_cache=self.cache
-        )
-        self.cache.disable_cache_updates()
-        if self.profile_kv:
-            e_attn3.record(); torch.cuda.synchronize()
-            step2_s = time.time() - t_kv1
-            attn2_ms = e_attn2.elapsed_time(e_attn3)
-            mem2_mb = torch.cuda.max_memory_reserved() / (1024**2)
-            # Throttle printing: first N frames, then every M frames
-            self._profile_kv_count += 1
-            should_print = (self._profile_kv_count <= self.profile_kv_first) or (self._profile_kv_count % self.profile_kv_every == 0)
-            if should_print:
-                # Cache-level quant/dequant accumulated timings
-                q_ms = getattr(self.cache, 'quant_ms', 0.0)
-                dq_ms = getattr(self.cache, 'dequant_ms', 0.0)
-                attn_total = getattr(self.cache, 'attn_ms', 0.0)
-                mlp_total = getattr(self.cache, 'mlp_ms', 0.0)
-                print(f"[KV-Profile] step1_s={step1_s:.3f}s (attn1={attn1_ms:.2f}ms), step2_s={step2_s:.3f}s (attn2={attn2_ms:.2f}ms), q_ms={q_ms:.2f}, dq_ms={dq_ms:.2f}, max_reserved={max(mem1_mb, mem2_mb):.1f}MB")
-                print(f"[KV-Profile] accum: attn_total_ms={attn_total:.2f}, mlp_total_ms={mlp_total:.2f}")
+        # Additional sampling steps
+        for step_idx in range(1, sampling_steps):
+            # On final step, also update cache
+            do_update = (step_idx == sampling_steps - 1)
+            if do_update:
+                self.cache.enable_cache_updates()
+            if self.profile_kv:
+                if do_update:
+                    torch.cuda.reset_peak_memory_stats()
+                    t_kv_next = time.time()
+                    e_attn2 = torch.cuda.Event(enable_timing=True); e_attn3 = torch.cuda.Event(enable_timing=True)
+                    e_attn2.record()
+            pred_v = self.model(
+                curr_x,
+                curr_t,
+                new_mouse_input,
+                new_btn_input,
+                kv_cache=self.cache
+            )
+            if do_update:
+                self.cache.disable_cache_updates()
+            if self.profile_kv and do_update:
+                e_attn3.record(); torch.cuda.synchronize()
+                step_next_s = time.time() - t_kv_next
+                attn_next_ms = e_attn2.elapsed_time(e_attn3)
+                mem_next_mb = torch.cuda.max_memory_reserved() / (1024**2)
+                self._profile_kv_count += 1
+                should_print = (self._profile_kv_count <= self.profile_kv_first) or (self._profile_kv_count % self.profile_kv_every == 0)
+                if should_print:
+                    q_ms = getattr(self.cache, 'quant_ms', 0.0)
+                    dq_ms = getattr(self.cache, 'dequant_ms', 0.0)
+                    attn_total = getattr(self.cache, 'attn_ms', 0.0)
+                    mlp_total = getattr(self.cache, 'mlp_ms', 0.0)
+                    print(f"[KV-Profile] step1_s={step1_s:.3f}s (attn1={attn1_ms:.2f}ms), step{step_idx+1}_s={step_next_s:.3f}s (attn{step_idx+1}={attn_next_ms:.2f}ms), q_ms={q_ms:.2f}, dq_ms={dq_ms:.2f}, max_reserved={max(mem1_mb, mem_next_mb):.1f}MB")
+                    print(f"[KV-Profile] accum: attn_total_ms={attn_total:.2f}, mlp_total_ms={mlp_total:.2f}")
 
-        new_frame = curr_x - 0.25 * pred_v
+            # Euler-like update per step
+            # Scale could be adapted with scheduler; keep existing ratios for now
+            curr_x = curr_x - (0.75 if step_idx < sampling_steps - 1 else 0.25) * pred_v
+            curr_t = curr_t - (0.75 if step_idx < sampling_steps - 1 else 0.25)
+
+        new_frame = curr_x
 
         end_event.record()
         torch.cuda.synchronize()
