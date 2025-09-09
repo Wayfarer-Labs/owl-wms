@@ -57,11 +57,11 @@ class AttnMaskScheduler:
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
     def __call__(self, seq_len, doc_id, kv_cache, device, t_pos):
-        q_offset = kv_cache.kv_offset[0] if kv_cache is not None else 0
-
-        torch._assert(t_pos.shape[-1] == q_offset + seq_len, "t_pos length must equal q_offset + seq_len")
+        q_offset = t_pos.shape[-1] - seq_len
+        torch._assert(q_offset >= 0, "negative q_offset")
         if kv_cache is not None:
             torch._assert((kv_cache.kv_offset == kv_cache.kv_offset[0]).all(), "Per-layer KV offsets diverged")
+            torch._assert(int(kv_cache.kv_offset[0].item()) == q_offset, "cache offset disagrees with t_pos")
         torch._assert(doc_id is None or doc_id.size(1) == t_pos.size(1), "doc_id must be token-expanded to S tokens")
 
         kwargs = dict(
