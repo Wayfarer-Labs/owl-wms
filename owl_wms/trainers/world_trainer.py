@@ -152,24 +152,25 @@ class WorldTrainer(BaseTrainer):
 
         self.load()
 
+        # Dataset setup
+        self.train_loader = self.train_loader()
+        self.eval_sample_loader = iter(self.eval_loader())
+        self.eval_loss_loader = self.eval_loader()
+
         timer = Timer()
         metrics = LogHelper()
 
         if self.rank == 0:
             wandb.watch(self.get_module(), log='all')
 
-        # Dataset setup
-        train_loader = self.train_loader()
-        eval_loader = iter(self.eval_loader())
-
-        # TODO: clean up sampler use
+        # TODO: clean up, sampler use
         self.sampler_only_return_generated = self.train_cfg.sampler_kwargs.pop("only_return_generated")
         sampler = get_sampler_cls(self.train_cfg.sampler_id)(**self.train_cfg.sampler_kwargs)
 
         for epoch in range(self.train_cfg.epochs):
             for mini_batches in tqdm.tqdm(
-                    itertools.batched(train_loader, n=self.accum_steps_per_device),
-                    total=len(train_loader) // self.accum_steps_per_device,
+                    itertools.batched(self.train_loader, n=self.accum_steps_per_device),
+                    total=len(self.train_loader) // self.accum_steps_per_device,
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
@@ -178,7 +179,7 @@ class WorldTrainer(BaseTrainer):
 
                 self.ema.update()
 
-                self.log_step(metrics, timer, eval_loader, sampler)
+                self.log_step(metrics, timer, sampler)
 
                 self.total_step_counter += 1
                 if self.total_step_counter % self.train_cfg.save_interval == 0:
@@ -223,14 +224,14 @@ class WorldTrainer(BaseTrainer):
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
-    def log_step(self, metrics, timer, sample_loader, sampler):
+    def log_step(self, metrics, timer, sampler):
         wandb_dict = metrics.pop()
         wandb_dict['time'] = timer.hit()
         timer.reset()
 
         # eval / sample step
         if self.total_step_counter % self.train_cfg.sample_interval == 0:
-            eval_wandb_dict = self.eval_step(sample_loader, sampler)
+            eval_wandb_dict = self.eval_step(sampler)
             if self.rank == 0:
                 wandb_dict.update(eval_wandb_dict)
 
@@ -252,12 +253,12 @@ class WorldTrainer(BaseTrainer):
         else:
             dist.gather(tc, dst=0, group=self.pg_cpu)
 
-    def eval_step(self, sample_loader, sampler):
+    def eval_step(self, sampler):
         ema_model = self.ema.ema_model
         ema_model.eval()
 
         # ---- Generate Samples ----
-        eval_batch = self.prep_batch(next(sample_loader))
+        eval_batch = self.prep_batch(next(self.eval_sample_loader))
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         if self.train_cfg.num_seed_frames:
@@ -296,12 +297,25 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
 
         # ---- Eval Loss ----
-        eval_loss = self.conditional_flow_matching_loss(ema_model, **eval_batch)
+        target_n = getattr(self.train_cfg, "n_eval_loss_samples") // self.world_size
+        if not target_n:
+            dist.barrier()
+            return eval_wandb_dict
+
+        num, den = 0.0, 0.0
+        loss_iter = iter(self.eval_loss_loader)
+        while den < target_n:
+            b = self.prep_batch(next(loss_iter))
+            bsz = float(b["x"].size(0))
+            loss = self.conditional_flow_matching_loss(ema_model, **b).item()
+            num += loss * bsz
+            den += bsz
         if self.world_size > 1:
-            dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
-            eval_loss /= self.world_size
+            t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+            num, den = float(t[0].item()), float(t[1].item())
         if self.rank == 0:
-            eval_wandb_dict["eval_loss"] = eval_loss.item()
+            eval_wandb_dict["eval_loss"] = num / max(1.0, den)
 
         dist.barrier()
 
