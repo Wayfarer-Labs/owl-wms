@@ -61,7 +61,7 @@ class AttnMaskScheduler:
         torch._assert(q_offset >= 0, "negative q_offset")
         if kv_cache is not None:
             torch._assert((kv_cache.kv_offset == kv_cache.kv_offset[0]).all(), "Per-layer KV offsets diverged")
-            torch._assert(int(kv_cache.kv_offset[0].item()) == q_offset, "cache offset disagrees with t_pos")
+            torch._assert((kv_cache.kv_offset[0] == q_offset).all(), "cache offset disagrees with t_pos")
         torch._assert(doc_id is None or doc_id.size(1) == t_pos.size(1), "doc_id must be token-expanded to S tokens")
 
         kwargs = dict(

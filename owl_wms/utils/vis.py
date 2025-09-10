@@ -73,19 +73,21 @@ def draw_frame(frame, mouse, button, fps_label=None):
     frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
     return frame
 
+
 def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
     b, n = frames.shape[:2]
     out_frames = []
+    per_sample_fps = fps_label if isinstance(fps_label, list) else [fps_label] * b
     for i in range(b):
         batch_frames = []
         for j in range(n):
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            drawn = draw_frame(frame, mouse, button, fps_label=fps_label)
+            drawn = draw_frame(frame, mouse, button, fps_label=per_sample_fps[i])
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)

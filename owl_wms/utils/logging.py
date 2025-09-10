@@ -165,16 +165,16 @@ def to_wandb_samples(video, mouse, btn, fps=60):
             str(path),
             np.moveaxis(clip, 1, -1),                 # [T, H, W, C]
             audio=None,
-            fps=fps
+            fps=fps[i] if isinstance(fps, list) else fps
         )
         samples.append(wandb.Video(str(path), format="mp4"))
 
-    artefacts = {"samples": samples}
+    artifacts = {"samples": samples}
     if depth_gif is not None:
-        artefacts["depth_gif"] = depth_gif
+        artifacts["depth_gif"] = depth_gif
     if flow_gif is not None:
-        artefacts["flow_gif"] = flow_gif
-    return artefacts
+        artifacts["flow_gif"] = flow_gif
+    return artifacts
 
 
 def write_video_with_audio(path, vid, audio, fps=60,audio_fps=44100):

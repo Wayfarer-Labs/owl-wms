@@ -1,5 +1,6 @@
 from .npy_table import NpyTable
 
+import random
 from functools import partial
 import torch
 import torch.distributed as dist
@@ -30,13 +31,15 @@ class WindowedViewDataset(Dataset):
         self,
         table_dir: str,
         window_length: int,
+        sampling_periods: tuple[int, ...] = (1, 2, 3),
         include_missing_features: bool = False,
         include_truncated: bool = True,
-        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len"),
+        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
+        self.sampling_periods = sampling_periods
 
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
@@ -44,15 +47,18 @@ class WindowedViewDataset(Dataset):
             self.array_columns = array_columns
 
         seq_len, missing, truncated = self.table[["seq_len", "missing", "truncated"]]
+        # seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
 
         self._index = []
+        max_stride = max(self.sampling_periods)
+        required_span = (window_length - 1) * max_stride + 1
         for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
             if not include_missing_features and miss:
                 continue
             if not include_truncated and trunc:
                 continue
             for start in range(0, L, window_length):
-                if start + window_length <= L:
+                if start + required_span <= L:
                     self._index.append((i, start))
 
         print(f"{len(self._index)} samples qualified out of {len(seq_len)} total videos")
@@ -63,10 +69,21 @@ class WindowedViewDataset(Dataset):
     def __getitem__(self, idx):
         row, start = self._index[idx]
         column_arrays = self.table.get(self.array_columns, rows=[row])
-        return {
-            col: torch.from_numpy(arr_list[0][start: start + self.window_length])
+        L = column_arrays[0][0].shape[0]
+        choices = [s for s in self.sampling_periods if start + s * self.window_length <= L]
+        rng = random.Random((row << 32) + start)  # deterministic per (row, start)
+        stride = choices[rng.randrange(len(choices))]
+        out = {
+            col: torch.from_numpy(arr_list[0][start: start + stride * self.window_length: stride])
             for col, arr_list in zip(self.array_columns, column_arrays)
         }
+
+        # TODO: GET FPS FROM ROW
+        fps = 60
+        out["fps"] = torch.tensor(float(fps) / float(stride))
+        #####
+
+        return out
 
 
 def collate_fn(batch, batch_columns: list, latent_column: str | None = None):

@@ -131,7 +131,8 @@ class WorldTrainer(BaseTrainer):
         batch["x"] = (batch["x"] / self.train_cfg.vae_scale).bfloat16()
 
         # TODO: dont hardcode FPS
-        batch["fps"] = 60.0
+        if "fps" not in batch:
+            batch["fps"] = 60.0
 
         return batch
 
@@ -290,6 +291,11 @@ class WorldTrainer(BaseTrainer):
         # ---- Generate Media Artifacts ----
         video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
 
+        if isinstance(eval_batch["fps"], torch.Tensor):
+            fps = self._gather_concat_cpu(eval_batch["fps"])
+            if self.rank == 0:
+                fps = fps.view(-1).tolist()
+
         # TODO: clean this hack
         mouse, btn = None, None
         if eval_batch["controller_inputs"] is not None:
@@ -297,7 +303,7 @@ class WorldTrainer(BaseTrainer):
                 self._gather_concat_cpu,
                 torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
             )
-        eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=60) if self.rank == 0 else None
+        eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=fps) if self.rank == 0 else None
 
         # ---- Eval Loss ----
         target_n = getattr(self.train_cfg, "n_eval_loss_samples") // self.world_size
