@@ -206,8 +206,8 @@ class WorldModel(nn.Module):
         assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
         if frame_timestamp is None:
             MAX_FPS = 60
-            frame_timestamp = torch.arange(N, device=x.device, dtype=torch.long) * MAX_FPS / fps
-            frame_timestamp = frame_timestamp.unsqueeze(0).expand(B, -1)
+            frame_timestamp = torch.arange(N, device=x.device, dtype=torch.long)
+            frame_timestamp = frame_timestamp.unsqueeze(0).expand(B, -1) * MAX_FPS / fps
 
         pos_ids = self.get_pos_ids(frame_timestamp, H, W)
         if doc_id is not None:

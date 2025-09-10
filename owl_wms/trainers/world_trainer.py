@@ -195,7 +195,7 @@ class WorldTrainer(BaseTrainer):
 
             # TODO: dont hardcode FPS
             if "fps" not in batch:
-                batch["fps"] = [60] * len(batch["x"])
+                batch["fps"] = torch.tensor([60] * len(batch["x"]))
             ####
 
             loss = self.fwd_step(batch)
