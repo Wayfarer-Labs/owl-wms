@@ -90,8 +90,16 @@ class AVCachingSampler:
                 frame_ts = torch.cat([prev_time, curr_time], dim=0)
             else:
                 vid, sigma, ctrl, frame_ts = new_vid, t_new, curr_ctrl, curr_time
+            frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
-            eps = model(vid, sigma, frame_ts.unsqueeze(0), prompt_emb, ctrl, kv_cache=kv_cache)
+            eps = model(
+                vid,
+                sigma=sigma,
+                frame_timestamp=frame_ts,
+                prompt_emb=prompt_emb,
+                controller_inputs=ctrl,
+                kv_cache=kv_cache
+            )
             new_vid -= eps[:, -1:] * dt[step]  # only update the new frame
             t_new -= dt[step]
 

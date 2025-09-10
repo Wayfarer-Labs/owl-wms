@@ -186,7 +186,7 @@ class WorldModel(nn.Module):
         self,
         x: Tensor,
         sigma: Tensor,
-        frame_timestamps_ms: Optional[Tensor] = None,
+        frame_timestamp: Optional[Tensor] = None,
         fps: float = None,
         prompt_emb: Optional[TensorDict] = None,
         controller_inputs: Optional[Tensor] = None,
@@ -203,13 +203,13 @@ class WorldModel(nn.Module):
         """
         B, N, C, H, W = x.shape
 
-        assert (fps is None) != (frame_timestamps_ms is None), "Must specify fps or frame timestamps"
-        if frame_timestamps_ms is None:
+        assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
+        if frame_timestamp is None:
             MAX_FPS = 60
-            frame_timestamps_ms = torch.arange(N, device=x.device, dtype=torch.long) * MAX_FPS / fps
-            frame_timestamps_ms = frame_timestamps_ms.unsqueeze(0).expand(B, -1)
+            frame_timestamp = torch.arange(N, device=x.device, dtype=torch.long) * MAX_FPS / fps
+            frame_timestamp = frame_timestamp.unsqueeze(0).expand(B, -1)
 
-        pos_ids = self.get_pos_ids(frame_timestamps_ms, H, W)
+        pos_ids = self.get_pos_ids(frame_timestamp, H, W)
         if doc_id is not None:
             doc_id = doc_id.repeat_interleave(H * W, dim=1)
 
