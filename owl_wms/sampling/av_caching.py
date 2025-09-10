@@ -1,7 +1,6 @@
 from typing import Optional
 from torch import Tensor
 from tensordict import TensorDict
-import einops as eo
 
 import torch
 from tqdm import tqdm
@@ -57,25 +56,6 @@ class AVCachingSampler:
 
         return torch.cat(latents, dim=1)
 
-    def get_pos_ids(self, seq_ts: torch.Tensor, H: int, W: int, B: int, device) -> TensorDict:
-        """Return TensorDict with t/y/x positions for [B, F*H*W]. seq_ts: [F] or [B,F] (long)."""
-        if seq_ts.ndim == 1:
-            seq_ts = seq_ts[None, :].expand(B, -1)  # [B,F]
-        F = seq_ts.size(1)
-        y = torch.arange(H, device=device)
-        x = torch.arange(W, device=device)
-        yy, xx = torch.meshgrid(y, x, indexing='ij')
-        y_flat = yy.reshape(-1).repeat(F)[None, :].expand(B, -1)
-        x_flat = xx.reshape(-1).repeat(F)[None, :].expand(B, -1)
-        return TensorDict(
-            {
-                "t_pos": seq_ts.repeat_interleave(H * W, 1),
-                "y_pos": y_flat,
-                "x_pos": x_flat,
-            },
-            batch_size=[B, F * H * W],
-        )
-
     @torch.compile
     def denoise_frame(
         self,
@@ -91,11 +71,6 @@ class AVCachingSampler:
     ):
         """Run all denoising steps for new frame"""
         B = prev_video.size(0)
-        H, W = prev_video.size(3), prev_video.size(4)
-
-        # precompute position IDs
-        curr_pos_ids = self.get_pos_ids(curr_time, H, W, B, prev_video.device)
-        all_pos_ids = self.get_pos_ids(torch.cat([prev_time, curr_time], dim=0), H, W, B, prev_video.device)
 
         # Partially re-noise history
         prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), self.noise_prev)
@@ -110,15 +85,13 @@ class AVCachingSampler:
             # step >= 1: prev frame cached, only include current frame
             if step == 0:
                 vid = torch.cat([prev_vid, new_vid], dim=1)
-                tim = torch.cat([t_prev, t_new], dim=1)  # TODO: rename sigma
+                sigma = torch.cat([t_prev, t_new], dim=1)  # TODO: rename sigma
                 ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
-                pos_ids = all_pos_ids
+                frame_ts = torch.cat([prev_time, curr_time], dim=0)
             else:
-                vid, tim, ctrl, pos_ids = new_vid, t_new, curr_ctrl, curr_pos_ids
+                vid, sigma, ctrl, frame_ts = new_vid, t_new, curr_ctrl, curr_time
 
-            x_flat = eo.rearrange(vid, 'b n c h w -> b (n h w) c')
-            eps = model.flat_forward(x_flat, pos_ids, tim, prompt_emb, ctrl, kv_cache=kv_cache)
-            eps = eo.rearrange(eps, 'b (n h w) c -> b n c h w', h=H, w=W)
+            eps = model(vid, sigma, frame_ts.unsqueeze(0), prompt_emb, ctrl, kv_cache=kv_cache)
             new_vid -= eps[:, -1:] * dt[step]  # only update the new frame
             t_new -= dt[step]
 

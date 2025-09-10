@@ -2,7 +2,6 @@ from ema_pytorch import EMA
 from pathlib import Path
 import tqdm
 import wandb
-import gc
 import itertools
 
 import torch
@@ -128,7 +127,11 @@ class WorldTrainer(BaseTrainer):
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
 
+        # scale latents
         batch["x"] = (batch["x"] / self.train_cfg.vae_scale).bfloat16()
+
+        # TODO: dont hardcode FPS
+        batch["fps"] = 60.0
 
         return batch
 
@@ -208,19 +211,19 @@ class WorldTrainer(BaseTrainer):
 
     def conditional_flow_matching_loss(self, model, x, **kw):
         """
-        x0: [B, N, C, H, W] clean latents (timestep 0.0)
+        x0: [B, N, C, H, W] clean latents (sigma=0.0)
         """
         x0 = x
         B, N = x0.size(0), x0.size(1)
 
         with torch.no_grad():
-            ts = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()
+            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()
             x1 = torch.randn_like(x0)  # gaussian @ timestep 1.0
-            x_t = x0 + (x1 - x0) * ts.view(B, N, 1, 1, 1)  # lerp to noise level @ ts
+            x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 
         with self.autocast_ctx:
-            v_pred = model(x_t, ts, **kw)
+            v_pred = model(x_t, sigma, **kw)
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()

@@ -1,6 +1,4 @@
 model:
-  model_id: game_rft
-
   channels: 128
 
   n_layers: 16
@@ -83,13 +81,13 @@ train:
     adamw_wd: 1.0e-4
     adamw_eps: 1.0e-15
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [proj_in, proj_out, timestep_emb, ctrl_emb, gate, adaln]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, gate, adaln]
 
   scheduler: null
 
   checkpoint_dir: checkpoints/video_world_model_v1
   output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
-  resume_ckpt: /mnt/data/lapp0/checkpoints/tmp/step_25000.pt  # null
+  resume_ckpt: null
 
   sample_interval: 2000
   save_interval: 5000

@@ -147,7 +147,7 @@ class WorldModel(nn.Module):
         self.config = config
         assert config.tokens_per_frame == config.height * config.width
 
-        self.timestep_emb = owl_nn.TimestepEmbedding(config.d_model)
+        self.denoise_step_emb = owl_nn.TimestepEmbedding(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
 
         self.transformer = WorldDiT(config)
@@ -155,42 +155,25 @@ class WorldModel(nn.Module):
         self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
         self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels)
 
-    def get_timestep_conditioning(self, ts):
+    def get_noise_conditioning(self, sigma):
         # placeholder until we have Dit-Air
-        return self.timestep_emb(ts)
-
-    def pack_seq(self, x, doc_id):
-        B, N, C, H, W = x.shape
-        assert (H, W) == (self.config.height, self.config.width)  # TODO: remove and allow inferred H, W
-
-        # flatten into [B, S, C] and pos_id's for each S
-        idx = torch.arange(N * H * W, device=x.device, dtype=torch.long)
-        t_pos, y_pos, x_pos = torch.unravel_index(idx, (N, H, W))
-        pos_ids = TensorDict(
-            {
-                "t_pos": t_pos.unsqueeze(0).expand(B, -1),
-                "y_pos": y_pos.unsqueeze(0).expand(B, -1),
-                "x_pos": x_pos.unsqueeze(0).expand(B, -1),
-            },
-            batch_size=[B, N * H * W],
-        )
-        flat_latents = eo.rearrange(x, 'b n c h w -> b (n h w) c')
-        return flat_latents, pos_ids
+        return self.denoise_step_emb(sigma)
 
     def flat_forward(
         self,
         x: Tensor,
         pos_ids: TensorDict,
-        ts: Tensor,
+        sigma: Tensor,
         prompt_emb: Optional[TensorDict] = None,
         controller_inputs: Optional[Tensor] = None,
         doc_id: Optional[Tensor] = None,
         kv_cache=None
     ):
-        assert len(x.shape) == 3, "Requires x to be [B, S, C]"
+        assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
+        assert x.ndim == 3, "Requires x to be [B, S, C]"
 
         # embed
-        cond = self.get_timestep_conditioning(ts)  # [B, N, d]
+        cond = self.get_noise_conditioning(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         # patchify, fwd, unpatchify
@@ -199,11 +182,12 @@ class WorldModel(nn.Module):
         x = self.proj_out(x, cond)
         return x
 
-    # TODO: delete, only use flat fwd path
     def forward(
         self,
         x: Tensor,
-        ts: Tensor,
+        sigma: Tensor,
+        frame_timestamps_ms: Optional[Tensor] = None,
+        fps: float = None,
         prompt_emb: Optional[TensorDict] = None,
         controller_inputs: Optional[Tensor] = None,
         doc_id: Optional[Tensor] = None,
@@ -211,22 +195,41 @@ class WorldModel(nn.Module):
     ):
         """
         x: [B, N, C, H, W],
-        ts: [B, N]
+        sigma: [B, N]
+        frame_ts: [B, N]
         prompt_emb: [B, P, D]
         controller_inputs: [B, N, I]
         doc_id: [B, N]
         """
-        assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
-
         B, N, C, H, W = x.shape
-        assert (H, W) == (self.config.height, self.config.width)
 
-        # pack
-        x, pos_ids = self.pack_seq(x, doc_id)
+        assert (fps is None) != (frame_timestamps_ms is None), "Must specify fps or frame timestamps"
+        if frame_timestamps_ms is None:
+            MAX_FPS = 60
+            frame_timestamps_ms = torch.arange(N, device=x.device, dtype=torch.long) * MAX_FPS / fps
+            frame_timestamps_ms = frame_timestamps_ms.unsqueeze(0).expand(B, -1)
+
+        pos_ids = self.get_pos_ids(frame_timestamps_ms, H, W)
         if doc_id is not None:
             doc_id = doc_id.repeat_interleave(H * W, dim=1)
-        ######
 
-        x = self.flat_forward(x, pos_ids, ts, prompt_emb, controller_inputs, doc_id, kv_cache)
+        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
+        x = self.flat_forward(x, pos_ids, sigma, prompt_emb, controller_inputs, doc_id, kv_cache)
         x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         return x
+
+    @staticmethod
+    def get_pos_ids(seq_ts: torch.Tensor, H: int, W: int) -> TensorDict:
+        """Positions for [B, F*H*W]; seq_ts is [B,F] (long)."""
+        B, F = seq_ts.shape
+        device = seq_ts.device
+        y = torch.arange(H, device=device, dtype=torch.long).repeat_interleave(W)  # [H*W]
+        x = torch.arange(W, device=device, dtype=torch.long).repeat(H)             # [H*W]
+        return TensorDict(
+            {
+                "t_pos": seq_ts.repeat_interleave(H * W, 1),  # [B,F*H*W]
+                "y_pos": y.repeat(F).expand(B, -1),           # [B,F*H*W]
+                "x_pos": x.repeat(F).expand(B, -1),           # [B,F*H*W]
+            },
+            batch_size=[B, F * H * W],
+        )
