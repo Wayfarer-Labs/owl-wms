@@ -130,10 +130,6 @@ class WorldTrainer(BaseTrainer):
         # scale latents
         batch["x"] = (batch["x"] / self.train_cfg.vae_scale).bfloat16()
 
-        # TODO: dont hardcode FPS
-        if "fps" not in batch:
-            batch["fps"] = 60.0
-
         return batch
 
     def train_loader(self):
@@ -196,6 +192,12 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
+
+            # TODO: dont hardcode FPS
+            if "fps" not in batch:
+                batch["fps"] = [60] * len(batch["x"])
+            ####
+
             loss = self.fwd_step(batch)
             loss.backward()
             loss_sum += loss.item()
@@ -295,6 +297,8 @@ class WorldTrainer(BaseTrainer):
             fps = self._gather_concat_cpu(eval_batch["fps"])
             if self.rank == 0:
                 fps = fps.view(-1).tolist()
+        else:
+            print(type(eval_batch["fps"]))  #### TODO REMOVE
 
         # TODO: clean this hack
         mouse, btn = None, None
