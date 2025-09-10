@@ -68,7 +68,7 @@ train:
   sample_data_kwargs:
     seq_len: 1024  # size of single ground truth start tokens
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["depthlatent", "mouse", "buttons"]
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
 
   epochs: 10000
