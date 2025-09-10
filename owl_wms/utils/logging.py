@@ -154,7 +154,7 @@ def to_wandb_samples(video, mouse, btn, fps=60):
         flow_gif = to_wandb_gif(video[:, :, 4:7])
     video = video[:, :, :3]                           # keep RGB only
 
-    video = draw_frames(video, mouse, btn)            # overlay labels – uint8
+    video = draw_frames(video, mouse, btn, fps_label=fps)
 
     out_dir = pathlib.Path("temp_vids")
     out_dir.mkdir(exist_ok=True)

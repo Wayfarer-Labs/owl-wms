@@ -139,7 +139,7 @@ class StaticKVCache(nn.Module):
         assert (self.kv_offset == self.t_pos_offset).all(), "kv_offset should = t_pos_offset before upsert"
         torch._assert(t_pos.size(0) == self.t_pos.size(0), "Batch mismatch in t_pos")
 
-        start = int(self.t_pos_offset.item())
+        start = self.t_pos_offset
         S = t_pos.size(1)
         end = start + S
         torch._assert(end <= self.t_pos.size(1), "KV cache overflow (t_pos)")

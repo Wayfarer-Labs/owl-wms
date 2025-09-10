@@ -7,7 +7,8 @@ KEYBINDS = ["W","A","S","D","LSHIFT","SPACE","R","F","E", "LMB", "RMB"]
 import os
 import numpy as np
 
-def draw_frame(frame, mouse, button):
+
+def draw_frame(frame, mouse, button, fps_label=None):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
@@ -59,12 +60,20 @@ def draw_frame(frame, mouse, button):
             text_y = y_pos - 5  # 5px above box
             cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
+    # Top-right FPS label
+    if fps_label is not None:
+        label = f"FPS:{fps_label}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        x = frame.shape[1] - tw - 5   # 5px right margin
+        y = 5 + th                    # 5px top margin
+        cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
     # Convert back to RGB for display
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     frame = np.transpose(frame, (2, 0, 1))  # HWC -> CHW
     return frame
 
-def draw_frames(frames, mouse_inputs, button_inputs):
+def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
@@ -76,7 +85,7 @@ def draw_frames(frames, mouse_inputs, button_inputs):
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            drawn = draw_frame(frame, mouse, button)
+            drawn = draw_frame(frame, mouse, button, fps_label=fps_label)
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)
