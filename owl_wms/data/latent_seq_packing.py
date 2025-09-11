@@ -99,9 +99,13 @@ class WindowedViewDataset(Dataset):
 
         out = {}
         for k, v in sample.items():
-            arr = np.concatenate(v)
-            out[k] = torch.from_numpy(arr[::stride][: self.window_length])
-        out["doc_id"] = torch.tensor(np.asarray(doc_id)[::stride][: self.window_length], dtype=torch.long)
+            arr = np.concatenate([seg[::stride] for seg in v])
+            out[k] = torch.from_numpy(arr[: self.window_length])
+        out["doc_id"] = torch.tensor(
+            np.concatenate([np.full(hi - lo, d, dtype=np.int64)[::stride]
+                            for d, lo, hi in self._slices[idx]])[: self.window_length],
+            dtype=torch.long
+        )
         fps_val = float(self._fps_full[self._row_lookup[seed_doc]])
         out["fps"] = torch.tensor(fps_val / float(stride))
         return out
@@ -118,7 +122,7 @@ class WindowedViewDataset(Dataset):
         Pack a permutation of `lengths` into fixed-width `window`s.
         Return List[Chunk] where each Chunk = list[(doc, start, end)] and `end` is exclusive.
         """
-        W = self.window_length * max(self.sampling_periods)
+        W = (self.window_length - 1) * max(self.sampling_periods) + 1
         lens = self._lens[perm]
 
         start = np.concatenate(([0], lens.cumsum()[:-1]))        # global offsets
