@@ -43,7 +43,7 @@ train:
     batch_size: 1
     seq_len: 512
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
-    batch_columns: ["depthlatent", "mouse", "buttons"]
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
 
   #  data_id: multi

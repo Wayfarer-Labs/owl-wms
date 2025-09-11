@@ -192,12 +192,6 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
-
-            # TODO: dont hardcode FPS
-            if "fps" not in batch:
-                batch["fps"] = torch.tensor([60] * len(batch["x"]))
-            ####
-
             loss = self.fwd_step(batch)
             loss.backward()
             loss_sum += loss.item()
