@@ -95,13 +95,8 @@ class WindowedViewDataset(Dataset):
             k: torch.from_numpy(np.concatenate(v)[phase::stride][: self.window_length])
             for k, v in sample.items()
         }
-        out["doc_id"] = torch.tensor(
-            np.concatenate([
-                np.full(hi - lo, d, dtype=np.int64)[phase::stride]
-                for d, lo, hi in self._slices[idx]
-            ])[: self.window_length],
-            dtype=torch.long
-        )
+        doc_full = np.concatenate([np.full(hi - lo, d, dtype=np.int64) for d, lo, hi in self._slices[idx]])
+        out["doc_id"] = torch.from_numpy(doc_full[phase::stride][: self.window_length]).long()
         # fps from first doc segment, adjusted by subsampling factor
         # seed_doc = self._slices[idx][0][0]
         # fps_val = float(self._fps[seed_doc]) / float(stride)
