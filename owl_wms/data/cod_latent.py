@@ -51,7 +51,7 @@ class WindowedViewDataset(Dataset):
 
         self._index = []
         max_stride = max(self.sampling_periods)
-        required_span = (window_length - 1) * max_stride + 1
+        required_span = window_length * max_stride  # allow any phase
         for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
             if not include_missing_features and miss:
                 continue
@@ -73,8 +73,14 @@ class WindowedViewDataset(Dataset):
         choices = [s for s in self.sampling_periods if start + s * self.window_length <= L]
         rng = random.Random((row << 32) + start)  # deterministic per (row, start)
         stride = choices[rng.randrange(len(choices))]
+        phase = rng.randrange(stride)
+        # clamp phase near tail so slice stays in-bounds
+        max_phase = max(0, L - (start + stride * self.window_length))
+        phase = min(phase, max_phase)
         out = {
-            col: torch.from_numpy(arr_list[0][start: start + stride * self.window_length: stride])
+            col: torch.from_numpy(
+                arr_list[0][start + phase : start + phase + stride * self.window_length : stride]
+            )
             for col, arr_list in zip(self.array_columns, column_arrays)
         }
 

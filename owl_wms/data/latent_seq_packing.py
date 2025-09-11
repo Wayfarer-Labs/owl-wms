@@ -87,13 +87,22 @@ class WindowedViewDataset(Dataset):
                 sample[col].append(arr[0][lo:hi])
             doc_id.extend([doc] * span)
 
-        stride = random.choice(self.sampling_periods)
+        seed_doc, seed_lo, _ = self._slices[idx][0]
+        rng = random.Random((int(seed_doc) << 32) + int(seed_lo))  # deterministic per window
+        stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
+        phase = rng.randrange(stride)
         out = {
-            k: torch.from_numpy(np.concatenate(v)[::stride][: self.window_length])
+            k: torch.from_numpy(
+                np.concatenate([seg[phase::stride] for seg in v])[: self.window_length]
+            )
             for k, v in sample.items()
         }
         out["doc_id"] = torch.tensor(
-            np.asarray(doc_id)[::stride][: self.window_length], dtype=torch.long
+            np.concatenate([
+                np.full(hi - lo, d, dtype=np.int64)[phase::stride]
+                for d, lo, hi in self._slices[idx]
+            ])[: self.window_length],
+            dtype=torch.long
         )
         # fps from first doc segment, adjusted by subsampling factor
         # seed_doc = self._slices[idx][0][0]
@@ -120,7 +129,7 @@ class WindowedViewDataset(Dataset):
         start = np.concatenate(([0], lens.cumsum()[:-1]))        # global offsets
 
         # require enough raw frames for the largest stride
-        W = (self.window_length - 1) * max(self.sampling_periods) + 1
+        W = self.window_length * max(self.sampling_periods)
         first = start // self.window_length
         n_win = (start + lens - 1) // self.window_length - first + 1
 
