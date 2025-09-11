@@ -1,7 +1,6 @@
 from .npy_table import NpyTable
 
 from functools import partial
-
 import random
 
 import numpy as np
@@ -38,7 +37,7 @@ class WindowedViewDataset(Dataset):
         sampling_periods: tuple[int, ...] = (1, 2, 3),
         include_missing_features: bool = False,
         include_truncated: bool = True,
-        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len", "fps"),
+        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len"),
         array_columns: set | None = None,
     ):
         self.window_length = window_length
@@ -48,16 +47,11 @@ class WindowedViewDataset(Dataset):
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            self.array_columns = [c for c in array_columns if c != "fps"]
             # self.array_columns = array_columns
-            # TODO: GET FPS FROM NPY TABLE
+            self.array_columns = [c for c in array_columns if c != "fps"]
 
         seq_len, miss, trunc = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated"]]]
-        # seq_len, miss, trunc, fps_full = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated", "fps"]]]
-
-        # TODO: GET FPS FROM NPY TABLE
-        self._fps_full = np.asarray([60] * len(trunc))
-        ######
+        # seq_len, miss, trunc, fps = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated", "fps"]]]
 
         mask = np.ones_like(seq_len, bool)
         if not include_missing_features:
@@ -67,6 +61,7 @@ class WindowedViewDataset(Dataset):
 
         self._docs = np.nonzero(mask)[0]
         self._lens = seq_len[mask].astype(np.int64)
+        # self._fps = fps[mask].astype(np.float32)
 
         assert (self._lens > 0).all()
 
@@ -92,22 +87,21 @@ class WindowedViewDataset(Dataset):
                 sample[col].append(arr[0][lo:hi])
             doc_id.extend([doc] * span)
 
-        # deterministic stride per packed window
-        seed_doc, seed_lo, _ = self._slices[idx][0]
-        rng = random.Random((int(seed_doc) << 32) + int(seed_lo))
-        stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
-
-        out = {}
-        for k, v in sample.items():
-            arr = np.concatenate([seg[::stride] for seg in v])
-            out[k] = torch.from_numpy(arr[: self.window_length])
+        stride = random.choice(self.sampling_periods)
+        out = {
+            k: torch.from_numpy(np.concatenate(v)[::stride][: self.window_length])
+            for k, v in sample.items()
+        }
         out["doc_id"] = torch.tensor(
-            np.concatenate([np.full(hi - lo, d, dtype=np.int64)[::stride]
-                            for d, lo, hi in self._slices[idx]])[: self.window_length],
-            dtype=torch.long
+            np.asarray(doc_id)[::stride][: self.window_length], dtype=torch.long
         )
-        fps_val = float(self._fps_full[self._row_lookup[seed_doc]])
-        out["fps"] = torch.tensor(fps_val / float(stride))
+        # fps from first doc segment, adjusted by subsampling factor
+        # seed_doc = self._slices[idx][0][0]
+        # fps_val = float(self._fps[seed_doc]) / float(stride)
+        # out["fps"] = torch.tensor(fps_val)
+        # TODO: need to pass raw timestamps since different docs can have different FPS
+        out["fps"] = torch.tensor(60.0 / float(stride))
+
         return out
 
     def _build_packing(self, perm=None):
@@ -122,13 +116,13 @@ class WindowedViewDataset(Dataset):
         Pack a permutation of `lengths` into fixed-width `window`s.
         Return List[Chunk] where each Chunk = list[(doc, start, end)] and `end` is exclusive.
         """
-        W = (self.window_length - 1) * max(self.sampling_periods) + 1
         lens = self._lens[perm]
-
         start = np.concatenate(([0], lens.cumsum()[:-1]))        # global offsets
 
-        first = start // W
-        n_win = (start + lens - 1) // W - first + 1
+        # require enough raw frames for the largest stride
+        W = (self.window_length - 1) * max(self.sampling_periods) + 1
+        first = start // self.window_length
+        n_win = (start + lens - 1) // self.window_length - first + 1
 
         assert n_win.sum() > 0
 
@@ -141,8 +135,8 @@ class WindowedViewDataset(Dataset):
         win_id = np.repeat(first, n_win) + np.arange(rows) - offset
 
         g0 = np.repeat(start, n_win)
-        s_idx = np.maximum(g0, win_id * W) - g0
-        e_idx = np.minimum(g0 + np.repeat(lens, n_win), (win_id + 1) * W) - g0
+        s_idx = np.maximum(g0, win_id * self.window_length) - g0
+        e_idx = np.minimum(g0 + np.repeat(lens, n_win), s_idx + W) - g0
 
         # `win_id` is already non-decreasing → just split where it changes
         cuts = np.flatnonzero(np.diff(win_id)) + 1
