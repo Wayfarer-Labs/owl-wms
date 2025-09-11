@@ -92,9 +92,7 @@ class WindowedViewDataset(Dataset):
         stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
         phase = rng.randrange(stride)
         out = {
-            k: torch.from_numpy(
-                np.concatenate([seg[phase::stride] for seg in v])[: self.window_length]
-            )
+            k: torch.from_numpy(np.concatenate(v)[phase::stride][: self.window_length])
             for k, v in sample.items()
         }
         out["doc_id"] = torch.tensor(
@@ -130,8 +128,8 @@ class WindowedViewDataset(Dataset):
 
         # require enough raw frames for the largest stride
         W = self.window_length * max(self.sampling_periods)
-        first = start // self.window_length
-        n_win = (start + lens - 1) // self.window_length - first + 1
+        first = start // W
+        n_win = (start + lens - 1) // W - first + 1
 
         assert n_win.sum() > 0
 
@@ -144,8 +142,8 @@ class WindowedViewDataset(Dataset):
         win_id = np.repeat(first, n_win) + np.arange(rows) - offset
 
         g0 = np.repeat(start, n_win)
-        s_idx = np.maximum(g0, win_id * self.window_length) - g0
-        e_idx = np.minimum(g0 + np.repeat(lens, n_win), s_idx + W) - g0
+        s_idx = np.maximum(g0, win_id * W) - g0
+        e_idx = np.minimum(g0 + np.repeat(lens, n_win), (win_id + 1) * W) - g0
 
         # `win_id` is already non-decreasing → just split where it changes
         cuts = np.flatnonzero(np.diff(win_id)) + 1
