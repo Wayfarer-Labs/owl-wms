@@ -74,9 +74,6 @@ class WindowedViewDataset(Dataset):
         rng = random.Random((row << 32) + start)  # deterministic per (row, start)
         stride = choices[rng.randrange(len(choices))]
         phase = rng.randrange(stride)
-        # clamp phase near tail so slice stays in-bounds
-        max_phase = max(0, L - (start + stride * self.window_length))
-        phase = min(phase, max_phase)
         out = {
             col: torch.from_numpy(
                 arr_list[0][start + phase : start + phase + stride * self.window_length : stride]
