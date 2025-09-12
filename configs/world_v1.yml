@@ -38,7 +38,7 @@ train:
   total_accum_steps: 8
 
 
-  data_id: sequence_packing
+  data_id: cod # sequence_packing
   data_kwargs:
     batch_size: 1
     seq_len: 512
