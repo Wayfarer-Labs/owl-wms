@@ -96,7 +96,7 @@ class Attn(nn.Module):
 
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
         qkv = self.qkv(x)
-        q, k, v = eo.rearrange(qkv, "b t (3 h d) -> 3 b h t d", h=self.config.n_heads)
+        q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.config.n_heads)
         q = self.rope(rms_norm(q), pos_ids=pos_ids)
         k = self.rope(rms_norm(k), pos_ids=pos_ids)
 
