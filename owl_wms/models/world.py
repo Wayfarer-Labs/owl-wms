@@ -208,7 +208,8 @@ class WorldModel(nn.Module):
             BASE_FPS = 60  # self.config.base_fps
             assert fps.dim() == 1 and fps.numel() == B and fps.dtype == torch.long
             assert torch.all(BASE_FPS % fps == 0), "fps must divide BASE_FPS"
-            frame_timestamp = torch.arange(N, device=x.device).unsqueeze(0) * (BASE_FPS // fps).unsqueeze(1)
+            scale = (BASE_FPS // fps).unsqueeze(1)
+            frame_timestamp = torch.arange(N, device=x.device).unsqueeze(0) * scale
 
         pos_ids = self.get_pos_ids(frame_timestamp, H, W)
         if doc_id is not None:

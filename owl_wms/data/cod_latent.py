@@ -82,8 +82,8 @@ class WindowedViewDataset(Dataset):
         }
 
         # TODO: GET FPS FROM ROW
-        fps = 60
-        out["fps"] = torch.tensor(float(fps) / float(stride))
+        base_fps = 60
+        out["fps"] = torch.tensor(fps // stride, dtype=torch.long)
         #####
 
         return out

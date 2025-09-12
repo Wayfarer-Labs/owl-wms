@@ -102,7 +102,8 @@ class WindowedViewDataset(Dataset):
         # fps_val = float(self._fps[seed_doc]) / float(stride)
         # out["fps"] = torch.tensor(fps_val)
         # TODO: need to pass raw timestamps since different docs can have different FPS
-        out["fps"] = torch.tensor(60.0 / float(stride))
+        base_fps = 60
+        out["fps"] = torch.tensor(base_fps // stride, dtype=torch.long)
 
         return out
 
