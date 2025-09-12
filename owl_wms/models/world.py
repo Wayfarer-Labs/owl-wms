@@ -206,8 +206,18 @@ class WorldModel(nn.Module):
         assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
         if frame_timestamp is None:
             MAX_FPS = 60
-            frame_timestamp = torch.arange(N, device=x.device, dtype=torch.long)
-            frame_timestamp = frame_timestamp.unsqueeze(0).expand(B, -1) * MAX_FPS / fps
+            frame_timestamp = torch.arange(N, device=x.device, dtype=torch.long).unsqueeze(0).expand(B, -1)
+
+            # make sure fps is exactly an integer and divides 60
+            fps_f = fps.to(torch.float32)                      # avoid bf16 rounding weirdness
+            fps_i = torch.round(fps_f).to(torch.long)          # expected 60, 30 or 20
+            if not torch.allclose(fps_f, fps_i.float(), atol=0.0, rtol=0.0):
+                raise AssertionError("fps must be an integer (60/30/20).")
+            if not torch.all((MAX_FPS % fps_i) == 0):
+                raise AssertionError("60 must be divisible by fps.")
+            ####
+
+            frame_timestamp = frame_timestamp * (MAX_FPS // fps)
 
         pos_ids = self.get_pos_ids(frame_timestamp, H, W)
         if doc_id is not None:

@@ -93,7 +93,7 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
     # TODO: fix hack, buttons should be preprocessed as float
     stacked = {
-        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") else t
+        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") and k != "fps" else t
         for k, t in stacked.items()
         if k in batch_columns
     }

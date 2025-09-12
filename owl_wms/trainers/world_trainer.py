@@ -139,10 +139,8 @@ class WorldTrainer(BaseTrainer):
         )
 
     def eval_loader(self):
-        per_dev_samples = (self.train_cfg.n_samples + self.world_size - 1) // self.world_size
         return get_loader(
             self.train_cfg.sample_data_id,
-            batch_size=per_dev_samples,
             **self.train_cfg.sample_data_kwargs
         )
 
@@ -291,8 +289,6 @@ class WorldTrainer(BaseTrainer):
             fps = self._gather_concat_cpu(eval_batch["fps"])
             if self.rank == 0:
                 fps = fps.view(-1).tolist()
-        else:
-            print(type(eval_batch["fps"]))  #### TODO REMOVE
 
         # TODO: clean this hack
         mouse, btn = None, None
@@ -313,10 +309,10 @@ class WorldTrainer(BaseTrainer):
         loss_iter = iter(self.eval_loss_loader)
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
-            bsz = float(b["x"].size(0))
-            loss = self.conditional_flow_matching_loss(ema_model, **b).item()
-            num += loss * bsz
-            den += bsz
+            loss = self.conditional_flow_matching_loss(ema_model, **b)
+            elems = b["x"].numel()   # same denominator as mse 'mean'
+            num += loss.item() * elems
+            den += elems
         if self.world_size > 1:
             t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
             dist.all_reduce(t, op=dist.ReduceOp.SUM)
