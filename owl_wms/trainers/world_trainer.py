@@ -291,6 +291,12 @@ class WorldTrainer(BaseTrainer):
             fps = self._gather_concat_cpu(eval_batch["fps"])
             if self.rank == 0:
                 fps = fps.view(-1).tolist()
+                ####
+                strides = [int(round(60.0 / max(1e-6, f))) for f in fps]
+                hist = {}
+                for s in strides: hist[s] = hist.get(s, 0) + 1
+                print(f"[eval sample] stride hist: {dict(sorted(hist.items()))}")
+                ####
         else:
             print(type(eval_batch["fps"]))  #### TODO REMOVE
 
@@ -311,18 +317,30 @@ class WorldTrainer(BaseTrainer):
 
         num, den = 0.0, 0.0
         loss_iter = iter(self.eval_loss_loader)
+        ####
+        stride_hist = {}
+        ####
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
             bsz = float(b["x"].size(0))
             loss = self.conditional_flow_matching_loss(ema_model, **b).item()
             num += loss * bsz
             den += bsz
+            ####
+            if "fps" in b:
+                s = (60.0 / b["fps"].float()).round().to(torch.int64).view(-1).cpu().tolist()
+                for v in s: stride_hist[v] = stride_hist.get(v, 0) + 1
+            ####
         if self.world_size > 1:
             t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
             dist.all_reduce(t, op=dist.ReduceOp.SUM)
             num, den = float(t[0].item()), float(t[1].item())
         if self.rank == 0:
             eval_wandb_dict["eval_loss"] = num / max(1.0, den)
+            ####
+            if stride_hist:
+                print(f"[eval loss] stride hist: {dict(sorted(stride_hist.items()))}")
+            ####
 
         dist.barrier()
 
