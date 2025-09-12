@@ -38,7 +38,7 @@ train:
   total_accum_steps: 8
 
 
-  data_id: cod # sequence_packing
+  data_id: sequence_packing
   data_kwargs:
     batch_size: 1
     seq_len: 512
@@ -49,7 +49,7 @@ train:
   sample_data_id: cod
   sample_data_kwargs:
     batch_size: 1
-    seq_len: 512  # size of single ground truth start tokens
+    seq_len: 1024
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
@@ -82,7 +82,7 @@ train:
     noise_prev: 0.2
     only_return_generated: false
   num_seed_frames: 60
-  num_generated_frames: 450
+  num_generated_frames: 900
   n_samples: 4
 
   eval_sample_dir: null
