@@ -9,7 +9,7 @@ from .mlp import MLP
 
 
 from .modulation import AdaLN, Gate
-from .rope import get_rope_cls
+from .rope import get_rope
 
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 
@@ -84,36 +84,31 @@ class Attn(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.n_heads = config.n_heads
 
         self.qkv = nn.Linear(config.d_model, 3 * config.d_model, bias=False)
         self.out = nn.Linear(config.d_model, config.d_model, bias=False)
-        self.rope = get_rope_cls(getattr(config, "rope_impl", "ortho"))(config)
+        self.rope = get_rope(config)
 
         self.use_attn_gate = getattr(config, "use_attn_gate", False)
         if self.use_attn_gate:
-            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=True)
+            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
             nn.init.zeros_(self.gate_proj.weight)
-            nn.init.zeros_(self.gate_proj.bias)
 
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
         qkv = self.qkv(x)
-        q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.n_heads)
-        q, k = rms_norm(q), rms_norm(k)
-
-        # rotate new queries and keys (shared kv cache between modalities)
-        q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
+        q, k, v = eo.rearrange(qkv, "b t (3 h d) -> 3 b h t d", h=self.config.n_heads)
+        q = self.rope(rms_norm(q), pos_ids=pos_ids)
+        k = self.rope(rms_norm(k), pos_ids=pos_ids)
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
+        attn_out = eo.rearrange(attn_out, "b h t d -> b t (h d)")
 
         if self.use_attn_gate:
-            gate = eo.rearrange(self.gate_proj(x).sigmoid(), "b t (h d) -> b h t d", h=self.n_heads)
-            attn_out = attn_out * gate
+            attn_out = attn_out * self.gate_proj(x).sigmoid()
 
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
         return self.out(attn_out)
 
 

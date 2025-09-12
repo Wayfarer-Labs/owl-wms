@@ -17,6 +17,11 @@ def get_rope_cls(cls_name):
         raise ValueError(f"Invalid RoPE class: {cls_name}")
 
 
+def get_rope(config):
+    cls = get_rope_cls(getattr(config, "rope_impl", "ortho"))
+    return cls(config)
+
+
 class RoPE(nn.Module):
     def __init__(self, config):
         super().__init__()
