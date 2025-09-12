@@ -205,7 +205,7 @@ class WorldModel(nn.Module):
 
         assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
         if frame_timestamp is None:
-            BASE_FPS = self.model_cfg.base_fps
+            BASE_FPS = 240  # self.config.base_fps
             assert fps.dim() == 1 and fps.numel() == B
             base = torch.arange(N, device=x.device, dtype=torch.float64).unsqueeze(0)
             frame_timestamp = (base * (BASE_FPS / fps).unsqueeze(1)).round().long()
