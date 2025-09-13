@@ -46,6 +46,7 @@ train:
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
 
   sample_data_id: cod
   sample_data_kwargs:
@@ -54,6 +55,7 @@ train:
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
 
   epochs: 10000
 

@@ -173,10 +173,7 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     return stacked
 
 
-def get_loader(
-        batch_size, dataset_path, seq_len, batch_columns, latent_column=None,
-        sampling_periods: tuple[int, ...] = (1, 2, 3,)
-):
+def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=None, sampling_periods: tuple = (1,)):
     assert batch_size == 1
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
