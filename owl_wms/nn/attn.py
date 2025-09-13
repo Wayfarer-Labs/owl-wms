@@ -99,8 +99,6 @@ class Attn(nn.Module):
         q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.config.n_heads)
         q, k = rms_norm(q), rms_norm(k)
         q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
-        q = self.rope(rms_norm(q), pos_ids=pos_ids)
-        k = self.rope(rms_norm(k), pos_ids=pos_ids)
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
