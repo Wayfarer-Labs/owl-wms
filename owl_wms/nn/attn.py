@@ -97,6 +97,8 @@ class Attn(nn.Module):
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
         qkv = self.qkv(x)
         q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.config.n_heads)
+        q, k = rms_norm(q), rms_norm(k)
+        q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
         q = self.rope(rms_norm(q), pos_ids=pos_ids)
         k = self.rope(rms_norm(k), pos_ids=pos_ids)
 
@@ -104,7 +106,7 @@ class Attn(nn.Module):
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
-        attn_out = eo.rearrange(attn_out, "b h t d -> b t (h d)")
+        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
 
         if self.use_attn_gate:
             attn_out = attn_out * self.gate_proj(x).sigmoid()
