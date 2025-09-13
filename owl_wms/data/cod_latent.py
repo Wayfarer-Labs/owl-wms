@@ -31,7 +31,7 @@ class WindowedViewDataset(Dataset):
         self,
         table_dir: str,
         window_length: int,
-        sampling_periods: tuple[int, ...] = (1, 2, 3),
+        sampling_periods: tuple[int, ...],
         include_missing_features: bool = False,
         include_truncated: bool = True,
         meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len", "fps"),
@@ -103,11 +103,14 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     return stacked
 
 
-def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=None):
+def get_loader(
+        batch_size, dataset_path, seq_len, batch_columns, latent_column=None,
+        sampling_periods: tuple[int, ...] = (1,)
+):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    ds = WindowedViewDataset(dataset_path, seq_len)
+    ds = WindowedViewDataset(dataset_path, seq_len, sampling_periods)
 
     if world_size > 1:
         sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
