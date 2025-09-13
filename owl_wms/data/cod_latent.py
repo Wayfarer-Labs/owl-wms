@@ -44,21 +44,20 @@ class WindowedViewDataset(Dataset):
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            self.array_columns = array_columns
+            self.array_columns = list(array_columns)
 
         seq_len, missing, truncated = self.table[["seq_len", "missing", "truncated"]]
         # seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
 
         self._index = []
-        max_stride = max(self.sampling_periods)
-        required_span = window_length * max_stride  # allow any phase
         for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
             if not include_missing_features and miss:
                 continue
             if not include_truncated and trunc:
                 continue
             for start in range(0, L, window_length):
-                if start + required_span <= L:
+                # keep if any stride fits with phase=0; exact phase is handled in __getitem__
+                if any(start + s * window_length <= L for s in self.sampling_periods):
                     self._index.append((i, start))
 
         print(f"{len(self._index)} samples qualified out of {len(seq_len)} total videos")
@@ -70,10 +69,15 @@ class WindowedViewDataset(Dataset):
         row, start = self._index[idx]
         column_arrays = self.table.get(self.array_columns, rows=[row])
         L = column_arrays[0][0].shape[0]
-        choices = [s for s in self.sampling_periods if start + s * self.window_length <= L]
+        # candidates that fit with at least phase=0
+        candidates = [s for s in self.sampling_periods if start + s * self.window_length <= L]
+        assert len(candidates) > 0, "No valid stride for this (row, start); indexing should prevent this."
         rng = random.Random((row << 32) + start)  # deterministic per (row, start)
-        stride = choices[rng.randrange(len(choices))]
-        phase = rng.randrange(stride)
+        stride = candidates[rng.randrange(len(candidates))]
+        # choose a phase that guarantees exactly window_length elements
+        slack = L - (start + stride * self.window_length)  # ≥ 0 if candidate is valid
+        max_phase = min(slack, stride - 1)
+        phase = rng.randrange(max_phase + 1)
         out = {
             col: torch.from_numpy(
                 arr_list[0][start + phase : start + phase + stride * self.window_length : stride]
@@ -93,7 +97,7 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
     # TODO: fix hack, buttons should be preprocessed as float
     stacked = {
-        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") and k != "fps" else t
+        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") else t
         for k, t in stacked.items()
         if k in batch_columns
     }
