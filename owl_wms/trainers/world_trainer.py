@@ -161,7 +161,6 @@ class WorldTrainer(BaseTrainer):
         # Dataset setup
         self.train_loader = self.train_loader()
         self.eval_sample_loader = iter(self.eval_loader(self.train_cfg.get("sampling_batch_size")))
-        self.eval_loss_loader = self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
 
         timer = Timer()
         metrics = LogHelper()
@@ -308,13 +307,17 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=fps) if self.rank == 0 else None
 
         # ---- Eval Loss ----
+
+        # Always reset the eval-loss DataLoader so each eval starts from the beginning
+        eval_loss_loader = self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
+
         target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
         if not target_n:
             dist.barrier()
             return eval_wandb_dict
 
         num, den = 0.0, 0.0
-        loss_iter = iter(self.eval_loss_loader)
+        loss_iter = iter(eval_loss_loader)
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
             loss = self.conditional_flow_matching_loss(ema_model, **b)
