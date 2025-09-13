@@ -175,7 +175,7 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
 
 def get_loader(
         batch_size, dataset_path, seq_len, batch_columns, latent_column=None,
-        sampling_periods: tuple[int, ...] = (1,)
+        sampling_periods: tuple[int, ...] = (1, 2, 3,)
 ):
     assert batch_size == 1
 
