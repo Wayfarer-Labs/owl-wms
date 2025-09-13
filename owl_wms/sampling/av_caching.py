@@ -25,34 +25,46 @@ class AVCachingSampler:
         self.noise_prev = noise_prev
 
     @torch.inference_mode()
-    def __call__(self, model, x, prompt_emb: Optional[TensorDict], controller_input: Optional[Tensor], num_frames=60):
+    def __call__(
+        self,
+        model,
+        x,
+        prompt_emb: Optional[TensorDict],
+        controller_input: Optional[Tensor],
+        num_frames: int = 120,
+        fps: int = 60,
+    ):
         """Generate `num_frames` new frames and return updated tensors."""
         init_len = x.size(1)
 
         dt = get_sd3_euler(self.n_steps).to(device=x.device, dtype=x.dtype)
 
         kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).to(x.device)
+        frame_timestamps = model.get_frame_timestamps(
+            torch.tensor([fps], device=x.device, dtype=torch.long),
+            init_len + num_frames,
+            x.device
+        )
 
         # History for the first frame generation step = full clean clip
         prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
-        prev_time = torch.arange(init_len, device=x.device, dtype=torch.long)
+        prev_ts = frame_timestamps[0, :init_len]
 
         latents = [x]
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = init_len + idx
             curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
-            curr_time = torch.tensor([start], device=x.device, dtype=torch.long)
+            curr_ts = frame_timestamps[0, start:start + 1]
 
             x = self.denoise_frame(
                 model, prompt_emb, kv_cache,
                 x, prev_ctrl, curr_ctrl,
-                prev_time=prev_time, curr_time=curr_time,
+                prev_ts=prev_ts, curr_ts=curr_ts,
                 dt=dt,
             )
 
             latents.append(x)
-            prev_ctrl = curr_ctrl
-            prev_time = curr_time
+            prev_ctrl, prev_ts = curr_ctrl, curr_ts
 
         return torch.cat(latents, dim=1)
 
@@ -65,8 +77,8 @@ class AVCachingSampler:
         prev_video: torch.Tensor,
         prev_ctrl: torch.Tensor,
         curr_ctrl: torch.Tensor,
-        prev_time: torch.Tensor,
-        curr_time: torch.Tensor,
+        prev_ts: torch.Tensor,
+        curr_ts: torch.Tensor,
         dt: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
@@ -87,9 +99,9 @@ class AVCachingSampler:
                 vid = torch.cat([prev_vid, new_vid], dim=1)
                 sigma = torch.cat([t_prev, t_new], dim=1)  # TODO: rename sigma
                 ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
-                frame_ts = torch.cat([prev_time, curr_time], dim=0)
+                frame_ts = torch.cat([prev_ts, curr_ts], dim=0)
             else:
-                vid, sigma, ctrl, frame_ts = new_vid, t_new, curr_ctrl, curr_time
+                vid, sigma, ctrl, frame_ts = new_vid, t_new, curr_ctrl, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
             eps = model(

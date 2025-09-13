@@ -205,11 +205,7 @@ class WorldModel(nn.Module):
 
         assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
         if frame_timestamp is None:
-            BASE_FPS = 60  # self.config.base_fps
-            assert fps.dim() == 1 and fps.numel() == B and fps.dtype == torch.long
-            assert torch.all(BASE_FPS % fps == 0), "fps must divide BASE_FPS"
-            scale = (BASE_FPS // fps).unsqueeze(1)
-            frame_timestamp = torch.arange(N, device=x.device).unsqueeze(0) * scale
+            frame_timestamp = self.get_frame_timestamps(fps, N, x.device)
 
         pos_ids = self.get_pos_ids(frame_timestamp, H, W)
         if doc_id is not None:
@@ -219,6 +215,13 @@ class WorldModel(nn.Module):
         x = self.flat_forward(x, pos_ids, sigma, prompt_emb, controller_inputs, doc_id, kv_cache)
         x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         return x
+
+    @staticmethod
+    def get_frame_timestamps(fps: torch.Tensor, num_frames: int, device):
+        BASE_FPS = 60  # self.config.base_fps
+        assert fps.dim() == 1 and fps.dtype == torch.long and torch.all(BASE_FPS % fps == 0)
+        scale = (BASE_FPS // fps).unsqueeze(1)
+        return torch.arange(num_frames, device=device).unsqueeze(0) * scale
 
     @staticmethod
     def get_pos_ids(seq_ts: torch.Tensor, H: int, W: int) -> TensorDict:
