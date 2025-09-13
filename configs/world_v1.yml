@@ -24,7 +24,8 @@ model:
   rope_impl: motion
   rope_ats_delta: 2.0
 
-  local_window: 16  # 16/60 seconds of ctx
+  base_fps: 60
+  local_window: 64  # 64/60 seconds of ctx
   global_window: 512  # 512/60 seconds of ctx
 
   ####

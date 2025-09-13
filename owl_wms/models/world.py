@@ -216,11 +216,9 @@ class WorldModel(nn.Module):
         x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         return x
 
-    @staticmethod
-    def get_frame_timestamps(fps: torch.Tensor, num_frames: int, device):
-        BASE_FPS = 60  # self.config.base_fps
-        assert fps.dim() == 1 and fps.dtype == torch.long and torch.all(BASE_FPS % fps == 0)
-        scale = (BASE_FPS // fps).unsqueeze(1)
+    def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
+        assert fps.dim() == 1 and fps.dtype == torch.long and torch.all(self.config.base_fps % fps == 0)
+        scale = (self.config.base_fps // fps).unsqueeze(1)
         return torch.arange(num_frames, device=device).unsqueeze(0) * scale
 
     @staticmethod
