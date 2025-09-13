@@ -138,7 +138,9 @@ class WorldTrainer(BaseTrainer):
             **self.train_cfg.data_kwargs
         )
 
-    def eval_loader(self):
+    def eval_loader(self, bs=None):
+        _bs = self.train_cfg.sample_data_kwargs.pop("batch_size", None)
+        bs = bs or _bs
         return get_loader(
             self.train_cfg.sample_data_id,
             **self.train_cfg.sample_data_kwargs
@@ -152,8 +154,8 @@ class WorldTrainer(BaseTrainer):
 
         # Dataset setup
         self.train_loader = self.train_loader()
-        self.eval_sample_loader = iter(self.eval_loader())
-        self.eval_loss_loader = self.eval_loader()
+        self.eval_sample_loader = iter(self.eval_loader(self.train_cfg.get("sampling_batch_size")))
+        self.eval_loss_loader = self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
 
         timer = Timer()
         metrics = LogHelper()

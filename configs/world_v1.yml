@@ -81,12 +81,14 @@ train:
     cfg_scale: 1.0
     noise_prev: 0.2
     only_return_generated: false
+  sampling_batch_size: 4
   num_seed_frames: 60
   num_generated_frames: 900
   n_samples: 4
 
   eval_sample_dir: null
-  n_eval_loss_samples: 256
+  n_eval_loss_samples: 512
+  eval_loss_batch_size: 4
 
   vae_id: null
   vae_batch_size: 4
