@@ -20,6 +20,11 @@ from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..muon import init_muon
 
 
+# Prevent eager mode by increasing recompile limit
+import torch._dynamo as dynamo
+dynamo.config.recompile_limit = 32
+
+
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
     def __init__(self, *args, **kwargs):
