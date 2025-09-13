@@ -43,14 +43,17 @@ class WindowedViewDataset(Dataset):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
         self.sampling_periods = sampling_periods
+        self.max_stride = max(self.sampling_periods)
 
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            # self.array_columns = array_columns
-            self.array_columns = [c for c in array_columns if c != "fps"]
+            # self.array_columns = list(array_columns)
+            self.array_columns = [c for c in list(array_columns) if c != "fps"]  # TODO
 
+        # TODO: don't hardcode
         seq_len, miss, trunc = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated"]]]
+        fps = np.full(seq_len.shape, 60.0, dtype=np.float32)
         # seq_len, miss, trunc, fps = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated", "fps"]]]
 
         mask = np.ones_like(seq_len, bool)
@@ -61,7 +64,7 @@ class WindowedViewDataset(Dataset):
 
         self._docs = np.nonzero(mask)[0]
         self._lens = seq_len[mask].astype(np.int64)
-        # self._fps = fps[mask].astype(np.float32)
+        self._fps = fps[mask].astype(np.float32)
 
         assert (self._lens > 0).all()
 
@@ -80,30 +83,33 @@ class WindowedViewDataset(Dataset):
 
         for doc, lo, hi in self._slices[idx]:
             row = self._row_lookup[doc]
-            span = hi - lo
             arrays = self.table.get(self.array_columns, rows=[row])
 
             for col, arr in zip(self.array_columns, arrays):
                 sample[col].append(arr[0][lo:hi])
-            doc_id.extend([doc] * span)
+            doc_id.extend([doc] * (hi - lo))
 
         seed_doc, seed_lo, _ = self._slices[idx][0]
         rng = random.Random((int(seed_doc) << 32) + int(seed_lo))  # deterministic per window
         stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
         phase = rng.randrange(stride)
+        # unbiased subwindow shift within the strided view
+        W = self.window_length * self.max_stride
+        n_avail = (W - phase + stride - 1) // stride
+        shift_max = max(0, n_avail - self.window_length)
+        k = rng.randrange(shift_max + 1) if shift_max else 0
+        start = phase + k * stride
         out = {
-            k: torch.from_numpy(np.concatenate(v)[phase::stride][: self.window_length])
+            k: torch.from_numpy(np.concatenate(v)[start::stride][: self.window_length])
             for k, v in sample.items()
         }
-        doc_full = np.concatenate([np.full(hi - lo, d, dtype=np.int64) for d, lo, hi in self._slices[idx]])
-        out["doc_id"] = torch.from_numpy(doc_full[phase::stride][: self.window_length]).long()
-        # fps from first doc segment, adjusted by subsampling factor
-        # seed_doc = self._slices[idx][0][0]
-        # fps_val = float(self._fps[seed_doc]) / float(stride)
-        # out["fps"] = torch.tensor(fps_val)
-        # TODO: need to pass raw timestamps since different docs can have different FPS
-        base_fps = 60
-        out["fps"] = torch.tensor(base_fps // stride, dtype=torch.long)
+        doc_full = np.asarray(doc_id, dtype=np.int64)
+        out["doc_id"] = torch.from_numpy(doc_full[start::stride][: self.window_length]).long()
+        # per-doc fps from first segment, adjusted by stride (float)
+        base_fps = int(self._fps_perm[seed_doc])
+        assert base_fps % stride == 0, f"base fps {base_fps} must be divisible by stride {stride}"
+        fps_val = base_fps // stride
+        out["fps"] = torch.tensor(fps_val, dtype=torch.long)
 
         return out
 
@@ -113,6 +119,7 @@ class WindowedViewDataset(Dataset):
         assert len(perm) == len(self._lens)
         self._row_lookup = self._docs[perm]
         self._slices = self.get_window_slices(perm)
+        self._fps_perm = self._fps[perm]
 
     def get_window_slices(self, perm):
         """
@@ -123,7 +130,7 @@ class WindowedViewDataset(Dataset):
         start = np.concatenate(([0], lens.cumsum()[:-1]))        # global offsets
 
         # require enough raw frames for the largest stride
-        W = self.window_length * max(self.sampling_periods)
+        W = self.window_length * self.max_stride
         first = start // W
         n_win = (start + lens - 1) // W - first + 1
 
