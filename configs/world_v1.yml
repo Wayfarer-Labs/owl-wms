@@ -81,7 +81,7 @@ train:
     cfg_scale: 1.0
     noise_prev: 0.2
     only_return_generated: false
-  sampling_batch_size: 4
+  sampling_batch_size: 1
   num_seed_frames: 60
   num_generated_frames: 900
   n_samples: 4
