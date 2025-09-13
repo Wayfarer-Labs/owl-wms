@@ -143,6 +143,7 @@ class WorldTrainer(BaseTrainer):
         bs = bs or _bs
         return get_loader(
             self.train_cfg.sample_data_id,
+            batch_size=bs,
             **self.train_cfg.sample_data_kwargs
         )
 
@@ -302,7 +303,7 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=fps) if self.rank == 0 else None
 
         # ---- Eval Loss ----
-        target_n = getattr(self.train_cfg, "n_eval_loss_samples") // self.world_size
+        target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
         if not target_n:
             dist.barrier()
             return eval_wandb_dict
@@ -312,7 +313,7 @@ class WorldTrainer(BaseTrainer):
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
             loss = self.conditional_flow_matching_loss(ema_model, **b)
-            elems = b["x"].numel()   # same denominator as mse 'mean'
+            elems = b["x"].numel()
             num += loss.item() * elems
             den += elems
         if self.world_size > 1:
