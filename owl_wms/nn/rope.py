@@ -156,12 +156,3 @@ class MotionRoPE(RoPE):
         x_pos, y_pos, t_pos = eo.rearrange(interleaved, 'd f n -> d (f n)').unbind(0)
 
         return x_pos, y_pos, t_pos
-
-
-def visaulize_rope_freqs():
-    pos_emb = RotaryEmbedding(
-        dim = dim_head//6, # Using half dimension since we only need 1D rotation
-        freqs_for='pixel',
-        max_freq=256
-    )
-    freqs = pos_emb.get_axial_freqs(16, 5, 5)

@@ -57,7 +57,7 @@ class WindowedViewDataset(Dataset):
                 continue
             for start in range(0, L, window_length):
                 # keep if any stride fits with phase=0; exact phase is handled in __getitem__
-                if any(start + s * window_length <= L for s in self.sampling_periods):
+                if start + max(self.sampling_periods) * window_length <= L:
                     self._index.append((i, start))
 
         print(f"{len(self._index)} samples qualified out of {len(seq_len)} total videos")
@@ -69,11 +69,8 @@ class WindowedViewDataset(Dataset):
         row, start = self._index[idx]
         column_arrays = self.table.get(self.array_columns, rows=[row])
         L = column_arrays[0][0].shape[0]
-        # candidates that fit with at least phase=0
-        candidates = [s for s in self.sampling_periods if start + s * self.window_length <= L]
-        assert len(candidates) > 0, "No valid stride for this (row, start); indexing should prevent this."
         rng = random.Random((row << 32) + start)  # deterministic per (row, start)
-        stride = candidates[rng.randrange(len(candidates))]
+        stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
         # choose a phase that guarantees exactly window_length elements
         slack = L - (start + stride * self.window_length)  # ≥ 0 if candidate is valid
         max_phase = min(slack, stride - 1)
