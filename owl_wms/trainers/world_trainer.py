@@ -258,6 +258,27 @@ class WorldTrainer(BaseTrainer):
         else:
             dist.gather(tc, dst=0, group=self.pg_cpu)
 
+    def aggregate_eval_loss(self, model, loader):
+        target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
+        if not target_n:
+            dist.barrier()
+            return None
+
+        num, den = 0.0, 0.0
+        loss_iter = iter(loader)
+        while den < target_n:
+            b = self.prep_batch(next(loss_iter))
+            loss = self.conditional_flow_matching_loss(model, **b)
+            elems = b["x"].numel()
+            num += loss.item() * elems
+            den += elems
+        if self.world_size > 1:
+            t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+            num, den = float(t[0].item()), float(t[1].item())
+
+        return num / max(1.0, den)
+
     def eval_step(self, sampler):
         ema_model = self.ema.ema_model
         ema_model.eval()
@@ -308,29 +329,18 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=fps) if self.rank == 0 else None
 
         # ---- Eval Loss ----
-
         # Always reset the eval-loss DataLoader so each eval starts from the beginning
-        eval_loss_loader = self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
-
-        target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
-        if not target_n:
-            dist.barrier()
-            return eval_wandb_dict
-
-        num, den = 0.0, 0.0
-        loss_iter = iter(eval_loss_loader)
-        while den < target_n:
-            b = self.prep_batch(next(loss_iter))
-            loss = self.conditional_flow_matching_loss(ema_model, **b)
-            elems = b["x"].numel()
-            num += loss.item() * elems
-            den += elems
-        if self.world_size > 1:
-            t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
-            dist.all_reduce(t, op=dist.ReduceOp.SUM)
-            num, den = float(t[0].item()), float(t[1].item())
+        ema_val_loss = self.aggregate_eval_loss(
+            ema_model,
+            self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
+        )
+        online_val_loss = self.aggregate_eval_loss(
+            self.get_raw_model(self.model),
+            self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
+        )
         if self.rank == 0:
-            eval_wandb_dict["eval_loss"] = num / max(1.0, den)
+            eval_wandb_dict["eval_loss"] = ema_val_loss
+            eval_wandb_dict["online_model_eval_loss"] = online_val_loss
 
         dist.barrier()
 
