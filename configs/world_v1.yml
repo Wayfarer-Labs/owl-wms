@@ -5,11 +5,6 @@ model:
   n_heads: 16
   d_model: 2048
 
-  tokens_per_frame: 64
-  height: 8
-  width: 8
-
-  has_audio: false
 
   n_controller_inputs: 13
 
@@ -22,10 +17,16 @@ model:
   rope_impl: motion
   rope_ats_delta: 2.0
 
+  tokens_per_frame: 64
+  height: 8
+  width: 8
+
   n_frames: 4096  # train frames
   base_fps: 60
   local_window: 64  # 64/60 seconds of ctx
-  global_window: 512  # 512/60 seconds of ctx
+  global_window: 256  # 256/60 seconds of ctx
+
+  has_audio: false
 
   ####
   gradient_checkpointing: false
