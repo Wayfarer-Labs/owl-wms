@@ -68,17 +68,15 @@ class WindowedViewDataset(Dataset):
     def __getitem__(self, idx):
         row, start = self._index[idx]
         column_arrays = self.table.get(self.array_columns, rows=[row])
-        L = column_arrays[0][0].shape[0]
         rng = random.Random((row << 32) + start)  # deterministic per (row, start)
         stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
-        # choose a phase that guarantees exactly window_length elements
-        slack = L - (start + stride * self.window_length)  # ≥ 0 if candidate is valid
-        max_phase = min(slack, stride - 1)
-        phase = rng.randrange(max_phase + 1)
+        # uniform phase + unbiased interior shift within W = window_length * max_stride
+        phase = rng.randrange(stride)
+        kmax = (self.window_length * max(self.sampling_periods) - phase + stride - 1)//stride - self.window_length
+        shift = rng.randrange(max(kmax, 0) + 1)
+        off = start + phase + shift * stride
         out = {
-            col: torch.from_numpy(
-                arr_list[0][start + phase : start + phase + stride * self.window_length : stride]
-            )
+            col: torch.from_numpy(arr_list[0][off : off + stride * self.window_length : stride])
             for col, arr_list in zip(self.array_columns, column_arrays)
         }
 
