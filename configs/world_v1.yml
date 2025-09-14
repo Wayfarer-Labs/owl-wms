@@ -50,7 +50,7 @@ train:
   sample_data_id: cod
   sample_data_kwargs:
     batch_size: 1
-    seq_len: 1024
+    seq_len: 512
     dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
     batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
@@ -85,7 +85,7 @@ train:
     only_return_generated: false
   sampling_batch_size: 1
   num_seed_frames: 60
-  num_generated_frames: 900
+  num_generated_frames: 450
   n_samples: 4
 
   eval_sample_dir: null
