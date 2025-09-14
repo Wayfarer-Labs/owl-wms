@@ -271,7 +271,8 @@ class WorldTrainer(BaseTrainer):
 
         with self.autocast_ctx:
             latent_vid = sampler(
-                ema_model, vid, prompt_emb, controller_inputs, self.train_cfg.num_generated_frames
+                ema_model, vid, prompt_emb, controller_inputs,
+                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
             )
 
         if self.sampler_only_return_generated:

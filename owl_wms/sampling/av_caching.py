@@ -31,8 +31,8 @@ class AVCachingSampler:
         x,
         prompt_emb: Optional[TensorDict],
         controller_input: Optional[Tensor],
+        fps: Optional[Tensor] = None,
         num_frames: int = 120,
-        fps: int = 60,
     ):
         """Generate `num_frames` new frames and return updated tensors."""
         init_len = x.size(1)
@@ -41,7 +41,7 @@ class AVCachingSampler:
 
         kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).to(x.device)
         frame_timestamps = model.get_frame_timestamps(
-            torch.tensor([fps], device=x.device, dtype=torch.long),
+            fps if fps is not None else torch.tensor([60], device=x.device, dtype=torch.long),
             init_len + num_frames,
             x.device
         )
