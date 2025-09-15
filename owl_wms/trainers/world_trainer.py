@@ -143,12 +143,15 @@ class WorldTrainer(BaseTrainer):
             **self.train_cfg.data_kwargs
         )
 
-    def eval_loader(self, bs=None):
-        _bs = self.train_cfg.sample_data_kwargs.pop("batch_size", None)
-        bs = bs or _bs
+    def eval_loader(self):
+        return get_loader(
+            self.train_cfg.eval_data_id,
+            **self.train_cfg.eval_data_kwargs
+        )
+
+    def eval_sample_loader(self):
         return get_loader(
             self.train_cfg.sample_data_id,
-            batch_size=bs,
             **self.train_cfg.sample_data_kwargs
         )
 
@@ -160,7 +163,7 @@ class WorldTrainer(BaseTrainer):
 
         # Dataset setup
         self.train_loader = self.train_loader()
-        self.eval_sample_loader = iter(self.eval_loader(self.train_cfg.get("sampling_batch_size")))
+        self.sample_loader = iter(self.eval_sample_loader())
 
         timer = Timer()
         metrics = LogHelper()
@@ -284,7 +287,7 @@ class WorldTrainer(BaseTrainer):
         ema_model.eval()
 
         # ---- Generate Samples ----
-        eval_batch = self.prep_batch(next(self.eval_sample_loader))
+        eval_batch = self.prep_batch(next(self.sample_loader))
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         if self.train_cfg.num_seed_frames:
@@ -330,14 +333,8 @@ class WorldTrainer(BaseTrainer):
 
         # ---- Eval Loss ----
         # Always reset the eval-loss DataLoader so each eval starts from the beginning
-        ema_val_loss = self.aggregate_eval_loss(
-            ema_model,
-            self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
-        )
-        online_val_loss = self.aggregate_eval_loss(
-            self.get_raw_model(self.model),
-            self.eval_loader(self.train_cfg.get("eval_loss_batch_size"))
-        )
+        ema_val_loss = self.aggregate_eval_loss(ema_model, self.eval_loader())
+        online_val_loss = self.aggregate_eval_loss(self.get_raw_model(self.model), self.eval_loader())
         if self.rank == 0:
             eval_wandb_dict["eval_loss"] = ema_val_loss
             eval_wandb_dict["online_model_eval_loss"] = online_val_loss

@@ -48,6 +48,16 @@ train:
     latent_column: "depthlatent"
     sampling_periods: [1, 2, 3]
 
+  eval_data_id: sequence_packing
+  eval_data_kwargs:
+    batch_size: 1
+    seq_len: 512
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
+    latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
+  n_eval_loss_samples: 512
+
   sample_data_id: cod
   sample_data_kwargs:
     batch_size: 1
@@ -56,6 +66,18 @@ train:
     batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
     latent_column: "depthlatent"
     sampling_periods: [1, 2, 3]
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    noise_prev: 0.2
+    only_return_generated: false
+  sampling_batch_size: 1
+  num_seed_frames: 60
+  num_generated_frames: 450
+  n_samples: 4
+  eval_sample_dir: null
 
   epochs: 10000
 
@@ -77,21 +99,6 @@ train:
 
   sample_interval: 2000
   save_interval: 5000
-
-  sampler_id: av_caching
-  sampler_kwargs:
-    n_steps: 16
-    cfg_scale: 1.0
-    noise_prev: 0.2
-    only_return_generated: false
-  sampling_batch_size: 1
-  num_seed_frames: 60
-  num_generated_frames: 450
-  n_samples: 4
-
-  eval_sample_dir: null
-  n_eval_loss_samples: 512
-  eval_loss_batch_size: 4
 
   vae_id: null
   vae_batch_size: 4
