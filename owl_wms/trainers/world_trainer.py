@@ -3,11 +3,7 @@ from pathlib import Path
 import tqdm
 import wandb
 import itertools
-
-import torch
-import torch.nn.functional as F
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
+import functools
 
 from .base import BaseTrainer
 
@@ -19,12 +15,36 @@ from ..utils.logging import LogHelper, to_wandb_samples
 from ..utils.owl_vae_bridge import get_decoder_only, make_batched_decode_fn
 from ..muon import init_muon
 
+import torch
+import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+import torch._dynamo as dynamo
+
+from torch.utils.checkpoint import checkpoint, create_selective_checkpoint_contexts, CheckpointPolicy
 
 # Prevent eager mode by increasing recompile limit
-import torch._dynamo as dynamo
 dynamo.config.recompile_limit = 32
 
-torch._functorch.config.activation_memory_budget = 0.5
+
+# checkpointing
+aten = torch.ops.aten
+HEAVY = {
+    aten.mm.default, aten.bmm.default, aten.addmm.default,
+    getattr(aten, "matmul", None) and aten.matmul.default,
+    getattr(aten, "_scaled_dot_product_flash_attention", None) and aten._scaled_dot_product_flash_attention.default,
+    getattr(aten, "_scaled_dot_product_efficient_attention", None) and aten._scaled_dot_product_efficient_attention.default,
+    getattr(aten, "_scaled_dot_product_attention", None) and aten._scaled_dot_product_attention.default,
+    getattr(aten, "_flash_attention_forward", None) and aten._flash_attention_forward.default,
+    getattr(aten, "_efficient_attention_forward", None) and aten._efficient_attention_forward.default,
+}
+HEAVY = {op for op in HEAVY if op is not None}
+
+
+def _sac_policy(ctx, op, *a, **k):
+    if op in HEAVY or "attention" in str(op):
+        return CheckpointPolicy.MUST_SAVE
+    return CheckpointPolicy.PREFER_RECOMPUTE
 
 
 class WorldTrainer(BaseTrainer):
@@ -229,8 +249,16 @@ class WorldTrainer(BaseTrainer):
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 
-        with self.autocast_ctx:
-            v_pred = model(x_t, sigma, **kw)
+        def _model_fwd(x_t_, sigma_):
+            with self.autocast_ctx:
+                return model(x_t_, sigma_, **kw)
+
+        v_pred = checkpoint(
+            _model_fwd, x_t, sigma,
+            use_reentrant=False,
+            context_fn=functools.partial(create_selective_checkpoint_contexts, _sac_policy),
+        )
+
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
