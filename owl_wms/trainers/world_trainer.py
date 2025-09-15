@@ -83,6 +83,7 @@ class WorldTrainer(BaseTrainer):
 
         # Online model, EMA, Optimizer
         self.model = self.model.cuda()
+        self.maybe_checkpoint(self.model)
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
@@ -102,6 +103,27 @@ class WorldTrainer(BaseTrainer):
             self.total_step_counter = int(state.get("steps", 0))
 
             del state  # free memory
+
+    def maybe_checkpoint(self, model):
+        if not self.model_cfg.gradient_checkpointing:
+            return
+
+        import torch.distributed.algorithms._checkpoint.checkpoint_wrapper as ckpt_wrap
+        from torch import nn
+
+        heavy_tokens = ("attn", "attention", "sdpa", "flash", "flex")
+        is_heavy = lambda m: isinstance(m, nn.Linear) or any(t in m.__class__.__name__.lower() for t in heavy_tokens)
+        is_leaf = lambda m: not any(m.children())
+
+        ckpt_wrap.apply_activation_checkpointing(
+            model,
+            checkpoint_wrapper_fn=lambda mod: ckpt_wrap.checkpoint_wrapper(
+                mod,
+                checkpoint_impl=ckpt_wrap.CheckpointImpl.NO_REENTRANT,
+                preserve_rng_state=False  # NOTE: BREAKS IF WE HAVE DROPOUT I THINK
+            ),
+            check_fn=lambda m: is_leaf(m) and not is_heavy(m),
+        )
 
     @torch.no_grad()
     def update_buffer(self, name: str, value: torch.Tensor, value_ema: torch.Tensor | None = None):
