@@ -54,6 +54,7 @@ class ControllerInputEmbedding(nn.Module):
 class WorldDiTBlock(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
+        self.config = config
         self.attn = owl_nn.Attn(config, layer_idx)
         self.cross_attn = owl_nn.CrossAttention(config)
         self.mlp = owl_nn.MLP(config)
@@ -94,7 +95,10 @@ class WorldDiTBlock(nn.Module):
 
         residual = x
         x = self.adaln2(x, cond)
-        x = self.mlp(x)
+
+        x = owl_nn.checkpoint(self.mlp, x) if getattr(self.config, "gradient_checkpointing", False) else self.mlp(x)
+
+        # x = self.mlp(x)
         x = self.gate2(x, cond) + residual
 
         return x

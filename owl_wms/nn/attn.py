@@ -103,10 +103,7 @@ class Attn(nn.Module):
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
-        if getattr(self.config, "gradient_checkpointing", False):
-            attn_out = checkpoint(flex_attention, q, k, v, block_mask=block_mask)
-        else:
-            attn_out = flex_attention(q, k, v, block_mask=block_mask)
+        attn_out = flex_attention(q, k, v, block_mask=block_mask)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
 
         if self.use_attn_gate:
