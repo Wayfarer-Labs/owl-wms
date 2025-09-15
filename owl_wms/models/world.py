@@ -70,10 +70,6 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-
-        # TODO: attn-only checkpoint
-        # enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
-
         residual = x
         x = self.adaln0(x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
@@ -95,10 +91,7 @@ class WorldDiTBlock(nn.Module):
 
         residual = x
         x = self.adaln2(x, cond)
-
-        x = owl_nn.checkpoint(self.mlp, x) if getattr(self.config, "gradient_checkpointing", False) else self.mlp(x)
-
-        # x = self.mlp(x)
+        x = self.mlp(x)
         x = self.gate2(x, cond) + residual
 
         return x

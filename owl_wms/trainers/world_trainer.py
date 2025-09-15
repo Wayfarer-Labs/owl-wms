@@ -24,6 +24,8 @@ from ..muon import init_muon
 import torch._dynamo as dynamo
 dynamo.config.recompile_limit = 32
 
+torch._functorch.config.activation_memory_budget = 0.5
+
 
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
