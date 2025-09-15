@@ -229,7 +229,7 @@ class WorldTrainer(BaseTrainer):
 
         with self.autocast_ctx:
             v_pred = model(x_t, sigma, **kw)
-        return F.mse_loss(v_pred, v_target)
+        return F.mse_loss(v_pred.float(), v_target.float())
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
