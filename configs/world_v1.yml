@@ -29,7 +29,7 @@ model:
   has_audio: false
 
   ####
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   use_attn_gate: true
   ####
 
