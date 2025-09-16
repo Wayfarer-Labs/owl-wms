@@ -112,7 +112,7 @@ def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=N
         sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
         loader_kwargs = dict(sampler=sampler, shuffle=False)  # shuffle in sampler
     else:
-        loader_kwargs = dict(shuffle=True)  # no sampler, shuffle in dataloader
+        loader_kwargs = dict(shuffle=True, generator=torch.Generator().manual_seed(0))
 
     return DataLoader(
         ds,
