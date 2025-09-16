@@ -1,0 +1,113 @@
+model:
+  channels: 128
+
+  n_layers: 30
+  n_heads: 32
+  d_model: 4096
+
+  n_controller_inputs: 13
+
+  cfg_prob: 0.1
+
+  causal: true
+  uncond: true
+  backbone: dit
+
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  tokens_per_frame: 64
+  height: 8
+  width: 8
+
+  n_frames: 1024  # train frames
+  base_fps: 60
+  local_window: 64  # 64/60 seconds of ctx
+  global_window: 128  # 256/60 seconds of ctx
+
+  has_audio: false
+
+  ####
+  gradient_checkpointing: true
+  use_attn_gate: true
+  ####
+
+train:
+  trainer_id: world
+
+  total_accum_steps: 8
+
+  data_id: sequence_packing
+  data_kwargs:
+    batch_size: 1
+    seq_len: 128
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
+    latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
+
+  eval_data_id: sequence_packing
+  eval_data_kwargs:
+    batch_size: 1
+    seq_len: 128
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
+    latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
+  n_eval_loss_samples: 512
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    batch_size: 1
+    seq_len: 128
+    dataset_path: /mnt/data/lapp0/npy_datasets/BlackOpsColdWar/train
+    batch_columns: ["depthlatent", "fps", "mouse", "buttons"]
+    latent_column: "depthlatent"
+    sampling_periods: [1, 2, 3]
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    noise_prev: 0.2
+    only_return_generated: false
+  sampling_batch_size: 1
+  num_seed_frames: 40
+  num_generated_frames: 80
+  n_samples: 4
+  eval_sample_dir: null
+
+  epochs: 10000
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, gate, adaln]
+
+  scheduler: null
+
+  checkpoint_dir: checkpoints/video_world_model_v1
+  output_path: /mnt/data/owl-wms/checkpoints/world_model_v1
+  resume_ckpt: null
+
+  sample_interval: 5000
+  save_interval: 10000
+
+  vae_id: null
+  vae_batch_size: 4
+
+  vae_scale: 0.63
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/cod_yt_v2/base.yml
+  vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_yt_v2/cod_yt_v2_515k_ema_decoder.pt
+
+  prompt_encoder_model_id: google/umt5-xxl
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: waypoint_1  # owl
+  run_name: waypoint_1_stage_0

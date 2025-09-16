@@ -53,7 +53,7 @@ class WorldTrainer(BaseTrainer):
         )
         freeze(self.decoder)
 
-        self.prompt_encoder = PromptEncoder()
+        self.prompt_encoder = PromptEncoder(self.train_cfg.prompt_encoder_model_id)
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
