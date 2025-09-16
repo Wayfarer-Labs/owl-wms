@@ -116,12 +116,16 @@ class WindowedViewDataset(Dataset):
     def _build_packing(self, perm=None):
         if perm is None:
             perm = np.arange(len(self._docs))
+            shift = 0
+        else:
+            W = self.window_length * self.max_stride
+            shift = int(np.sum(perm, dtype=np.int64) % W)
         assert len(perm) == len(self._lens)
         self._row_lookup = self._docs[perm]
-        self._slices = self.get_window_slices(perm)
+        self._slices = self.get_window_slices(perm, shift)
         self._fps_perm = self._fps[perm]
 
-    def get_window_slices(self, perm):
+    def get_window_slices(self, perm, shift):
         """
         Pack a permutation of `lengths` into fixed-width `window`s.
         Return List[Chunk] where each Chunk = list[(doc, start, end)] and `end` is exclusive.
@@ -131,8 +135,11 @@ class WindowedViewDataset(Dataset):
 
         # require enough raw frames for the largest stride
         W = self.window_length * self.max_stride
-        first = start // W
-        n_win = (start + lens - 1) // W - first + 1
+
+        # apply a global circular shift of the W grid: boundaries at k*W - shift
+        start_shifted = start + shift
+        first = start_shifted // W
+        n_win = (start_shifted + lens - 1) // W - first + 1
 
         assert n_win.sum() > 0
 
@@ -145,8 +152,12 @@ class WindowedViewDataset(Dataset):
         win_id = np.repeat(first, n_win) + np.arange(rows) - offset
 
         g0 = np.repeat(start, n_win)
-        s_idx = np.maximum(g0, win_id * W) - g0
-        e_idx = np.minimum(g0 + np.repeat(lens, n_win), (win_id + 1) * W) - g0
+
+        # window edges in original coordinates
+        left = win_id * W - shift
+        right = (win_id + 1) * W - shift
+        s_idx = np.maximum(g0, left) - g0
+        e_idx = np.minimum(g0 + np.repeat(lens, n_win), right) - g0
 
         # `win_id` is already non-decreasing → just split where it changes
         cuts = np.flatnonzero(np.diff(win_id)) + 1
