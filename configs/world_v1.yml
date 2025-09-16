@@ -38,7 +38,6 @@ train:
 
   total_accum_steps: 8
 
-
   data_id: sequence_packing
   data_kwargs:
     batch_size: 1
@@ -106,6 +105,8 @@ train:
   vae_scale: 0.63
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/cod_yt_v2/base.yml
   vae_ckpt_path: /mnt/data/checkpoints/owl_vaes/cod_yt_v2/cod_yt_v2_515k_ema_decoder.pt
+
+  prompt_encoder_model_id: google/umt5-xl
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
