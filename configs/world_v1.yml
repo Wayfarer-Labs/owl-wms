@@ -47,7 +47,7 @@ train:
     latent_column: "depthlatent"
     sampling_periods: [1, 2, 3]
 
-  eval_data_id: sequence_packing
+  eval_data_id: cod
   eval_data_kwargs:
     batch_size: 1
     seq_len: 512
