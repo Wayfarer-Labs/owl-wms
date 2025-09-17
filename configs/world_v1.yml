@@ -112,5 +112,5 @@ train:
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp
-  project: video_models  # owl
-  run_name: world_model_v1
+  project: waypoint_1  # owl
+  run_name: ${oc.env:RUN_NAME}
