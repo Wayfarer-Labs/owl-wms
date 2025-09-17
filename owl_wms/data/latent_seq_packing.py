@@ -87,6 +87,7 @@ class WindowedViewDataset(Dataset):
         base = getattr(self, "_epoch_span", len(self._slices))
         epoch = idx // base
         if epoch != getattr(self, "_local_epoch", -1):
+            self._epoch_span = base  # freeze span for this epoch
             rs = np.random.RandomState(epoch)
             W = self.window_length * self.max_stride
             self._build_packing(rs.permutation(len(self._docs)), int(rs.randint(W)))
