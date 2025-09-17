@@ -76,7 +76,8 @@ class WindowedViewDataset(Dataset):
 
     def set_epoch(self, epoch: int):
         rs = np.random.RandomState(epoch)   # deterministic across ranks
-        self._build_packing(rs.permutation(len(self._docs)))
+        W = self.window_length * self.max_stride
+        self._build_packing(rs.permutation(len(self._docs)), int(rs.randint(W)))
 
     def __len__(self):
         return len(self._slices)
@@ -87,7 +88,8 @@ class WindowedViewDataset(Dataset):
         epoch = idx // base
         if epoch != getattr(self, "_local_epoch", -1):
             rs = np.random.RandomState(epoch)
-            self._build_packing(rs.permutation(len(self._docs)))
+            W = self.window_length * self.max_stride
+            self._build_packing(rs.permutation(len(self._docs)), int(rs.randint(W)))
             self._local_epoch = epoch
         idx = idx % len(self._slices)
 
@@ -125,13 +127,11 @@ class WindowedViewDataset(Dataset):
 
         return out
 
-    def _build_packing(self, perm=None):
+    def _build_packing(self, perm=None, shift=0):
         if perm is None:
             perm = np.arange(len(self._docs))
-            shift = 0
-        else:
-            W = self.window_length * self.max_stride
-            shift = int(np.sum(perm, dtype=np.int64) % W)
+        W = self.window_length * self.max_stride
+        shift = int(shift % W)
         assert len(perm) == len(self._lens)
         self._row_lookup = self._docs[perm]
         self._slices = self.get_window_slices(perm, shift)
