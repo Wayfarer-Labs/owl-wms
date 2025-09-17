@@ -66,6 +66,33 @@ class NpyTable:
         self.manifest_path.write_text(json.dumps(self.manifest))
         return idx
 
+    def add_column(self, name: str, values, array: bool = False):
+        if name in self.columns:
+            raise ValueError(f"Column {name!r} already exists")
+        try:
+            vals = list(values)  # accept any iterable
+        except TypeError as e:
+            raise TypeError("values must be an iterable") from e
+        if len(vals) != len(self):
+            raise ValueError(f"Expected {len(self)} values, got {len(vals)}")
+
+        self.columns.append(name)
+        if array:
+            self.array_columns.add(name)
+
+        for i, (entry, val) in enumerate(zip(self.manifest, vals)):
+            if array:
+                path = self.directory / f"{name}_{i}.npy"
+                with open(path, "wb", buffering=8 << 20) as f:
+                    np.save(f, np.asarray(val, order="C"), allow_pickle=False)
+                entry[name] = path.name
+            else:
+                entry[name] = val
+
+        self.schema_path.write_text(json.dumps({"columns": self.columns,
+                                                "array_columns": list(self.array_columns)}))
+        self.manifest_path.write_text(json.dumps(self.manifest))
+
     def __getitem__(self, key):
         if isinstance(key, str):
             return self.get(columns=[key])[0]
