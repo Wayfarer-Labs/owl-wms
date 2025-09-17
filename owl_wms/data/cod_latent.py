@@ -46,8 +46,8 @@ class WindowedViewDataset(Dataset):
         else:
             self.array_columns = list(array_columns)
 
-        seq_len, missing, truncated = self.table[["seq_len", "missing", "truncated"]]
-        # seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
+        seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
+        self.fps = fps
 
         self._index = []
         for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
@@ -79,11 +79,7 @@ class WindowedViewDataset(Dataset):
             col: torch.from_numpy(arr_list[0][off : off + stride * self.window_length : stride])
             for col, arr_list in zip(self.array_columns, column_arrays)
         }
-
-        # TODO: GET FPS FROM ROW
-        base_fps = 60  # dataset fps
-        out["fps"] = torch.tensor(base_fps // stride, dtype=torch.long)
-        #####
+        out["fps"] = torch.tensor(int(self.fps[row]) // stride, dtype=torch.long)
 
         return out
 
