@@ -20,9 +20,12 @@ class AutoEpochDistributedSampler(DistributedSampler):
         self._auto_epoch = 0
 
     def __iter__(self):
-        self.set_epoch(self._auto_epoch)
+        e = self._auto_epoch
+        super().set_epoch(e)
+        base = getattr(self.dataset, "_epoch_span", len(self.dataset))
         self._auto_epoch += 1
-        return super().__iter__()
+        for i in super().__iter__():
+            yield i + e * base
 
 
 class WindowedViewDataset(Dataset):
@@ -79,6 +82,15 @@ class WindowedViewDataset(Dataset):
         return len(self._slices)
 
     def __getitem__(self, idx):
+        # lazily rebuild per-epoch inside workers
+        base = getattr(self, "_epoch_span", len(self._slices))
+        epoch = idx // base
+        if epoch != getattr(self, "_local_epoch", -1):
+            rs = np.random.RandomState(epoch)
+            self._build_packing(rs.permutation(len(self._docs)))
+            self._local_epoch = epoch
+        idx = idx % len(self._slices)
+
         sample, doc_id = {c: [] for c in self.array_columns}, []
 
         for doc, lo, hi in self._slices[idx]:
@@ -90,7 +102,7 @@ class WindowedViewDataset(Dataset):
             doc_id.extend([doc] * (hi - lo))
 
         seed_doc, seed_lo, _ = self._slices[idx][0]
-        rng = random.Random((int(seed_doc) << 32) + int(seed_lo))  # deterministic per window
+        rng = random.Random(((int(seed_doc) << 32) + int(seed_lo)) ^ epoch)  # now varies by epoch
         stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
         phase = rng.randrange(stride)
         # unbiased subwindow shift within the strided view
@@ -192,11 +204,8 @@ def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=N
 
     ds = WindowedViewDataset(dataset_path, seq_len, array_columns=batch_columns, sampling_periods=sampling_periods)
 
-    if world_size > 1:
-        sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
-        loader_kwargs = dict(sampler=sampler, shuffle=False)  # shuffle in sampler
-    else:
-        loader_kwargs = dict(shuffle=True)  # no sampler, shuffle in dataloader
+    sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
+    loader_kwargs = dict(sampler=sampler, shuffle=False)  # always shuffle in sampler
 
     return DataLoader(
         ds,
