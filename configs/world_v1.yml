@@ -33,6 +33,8 @@ model:
   use_attn_gate: true
   ####
 
+  noise_conditioning: dit
+
 train:
   trainer_id: world
 

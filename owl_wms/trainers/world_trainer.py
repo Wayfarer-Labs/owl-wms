@@ -223,7 +223,7 @@ class WorldTrainer(BaseTrainer):
 
         with torch.no_grad():
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()
-            x1 = torch.randn_like(x0)  # gaussian @ timestep 1.0
+            x1 = torch.randn_like(x0)  # gaussian @ sigma 1.0
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 

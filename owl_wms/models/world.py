@@ -60,9 +60,10 @@ class WorldDiTBlock(nn.Module):
         self.mlp = owl_nn.MLP(config)
 
         dim = config.d_model
-        self.adaln0, self.gate0 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
-        self.adaln1, self.gate1 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
-        self.adaln2, self.gate2 = owl_nn.AdaLN(dim), owl_nn.Gate(dim)
+        self.adaln = nn.ModuleList([owl_nn.AdaLN(dim) for _ in range(3)])
+        self.gate = nn.ModuleList([owl_nn.Gate(dim) for _ in range(3)])
+        if self.config.noise_conditioning == "wan":
+            self.conditioning_bias = nn.Parameter(torch.zeros(dim))
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -70,10 +71,13 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
+        if self.config.noise_conditioning == "wan":
+            cond = cond + self.conditioning_bias
+
         residual = x
-        x = self.adaln0(x, cond)
+        x = self.adaln[0](x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.gate0(x, cond) + residual
+        x = self.gate[0](x, cond) + residual
 
         """
         if prompt_emb is not None:
@@ -90,9 +94,9 @@ class WorldDiTBlock(nn.Module):
         """
 
         residual = x
-        x = self.adaln2(x, cond)
+        x = self.adaln[2](x, cond)
         x = self.mlp(x)
-        x = self.gate2(x, cond) + residual
+        x = self.gate[2](x, cond) + residual
 
         return x
 
@@ -103,6 +107,11 @@ class WorldDiT(nn.Module):
         self.config = config
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
+
+        if self.config.noise_conditioning in ("dit_air", "wan"):
+            ref = self.blocks[0]
+            for blk in self.blocks[1:]:
+                blk.adaln, blk.gate = ref.adaln, ref.gate
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
         ####
@@ -152,10 +161,6 @@ class WorldModel(nn.Module):
         self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
         self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels)
 
-    def get_noise_conditioning(self, sigma):
-        # placeholder until we have Dit-Air
-        return self.denoise_step_emb(sigma)
-
     def flat_forward(
         self,
         x: Tensor,
@@ -170,7 +175,7 @@ class WorldModel(nn.Module):
         assert x.ndim == 3, "Requires x to be [B, S, C]"
 
         # embed
-        cond = self.get_noise_conditioning(sigma)  # [B, N, d]
+        cond = self.denoise_step_emb(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         # patchify, fwd, unpatchify
