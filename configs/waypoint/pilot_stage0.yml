@@ -103,9 +103,9 @@ train:
   vae_id: null
   vae_batch_size: 4
 
-  vae_scale: 0.63  # TODO
+  vae_scale: 0.73
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/rgb_only.yml
-  vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/waypoint_1_f32c64_8res_rgb_only/step_385000.pt
+  vae_ckpt_path: /mnt/data/lapp0/vaes/waypoint_1_f32c64_8res_rgb_only.pt
 
   prompt_encoder_model_id: google/umt5-xl
 
