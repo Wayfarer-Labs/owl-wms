@@ -1,0 +1,115 @@
+model:
+  channels: 128
+
+  n_layers: 20
+  n_heads: 16
+  d_model: 2048
+
+  n_controller_inputs: 13
+
+  cfg_prob: 0.1
+
+  causal: true
+  uncond: true
+  backbone: dit
+
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  tokens_per_frame: 64
+  height: 8
+  width: 8
+
+  n_frames: 4096  # train frames
+  base_fps: 60
+  local_window: 64  # 64/60 seconds of ctx
+  global_window: 256  # 256/60 seconds of ctx
+
+  has_audio: false
+
+  ####
+  gradient_checkpointing: true
+  use_attn_gate: true
+  ####
+
+  noise_conditioning: wan
+
+train:
+  trainer_id: world
+
+  total_accum_steps: 8
+
+  data_id: sequence_packing
+  data_kwargs:
+    batch_size: 1
+    seq_len: 512
+    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
+    batch_columns: ["rgblatent", "fps"]
+    latent_column: "rgblatent"
+    sampling_periods: [1, 2, 3]
+
+  eval_data_id: cod
+  eval_data_kwargs:
+    batch_size: 1
+    seq_len: 512
+    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
+    batch_columns: ["rgblatent", "fps"]
+    latent_column: "rgblatent"
+    sampling_periods: [1, 2, 3]
+  n_eval_loss_samples: 512
+
+  sample_data_id: cod
+  sample_data_kwargs:
+    batch_size: 1
+    seq_len: 512
+    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
+    batch_columns: ["rgblatent", "fps"]
+    latent_column: "rgblatent"
+    sampling_periods: [1, 2, 3]
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    noise_prev: 0.2
+    only_return_generated: false
+  sampling_batch_size: 1
+  num_seed_frames: 60
+  num_generated_frames: 450
+  n_samples: 4
+  eval_sample_dir: null
+
+  epochs: 10000
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-15
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, gate, adaln]
+
+  scheduler: null
+
+  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0
+  output_path: /mnt/data/waypoint_1/models/pilot_stage0
+  resume_ckpt: null
+
+  sample_interval: 2000
+  save_interval: 5000
+
+  vae_id: null
+  vae_batch_size: 4
+
+  vae_scale: 0.63  # TODO
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/rgb_only.yml
+  vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/waypoint_1_f32c64_8res_rgb_only/step_385000.pt
+
+  prompt_encoder_model_id: google/umt5-xl
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: waypoint_1  # owl
+  run_name: ${oc.env:RUN_NAME}
