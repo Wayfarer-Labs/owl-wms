@@ -40,7 +40,7 @@ class WindowedViewDataset(Dataset):
         sampling_periods: tuple[int, ...],
         include_missing_features: bool = False,
         include_truncated: bool = True,
-        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len"),
+        meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
     ):
         self.window_length = window_length
@@ -51,11 +51,8 @@ class WindowedViewDataset(Dataset):
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            # self.array_columns = list(array_columns)
-            self.array_columns = [c for c in list(array_columns) if c != "fps"]  # TODO
+            self.array_columns = list(array_columns)
 
-        # TODO: don't hardcode
-        seq_len, miss, trunc = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated"]]]
         seq_len, miss, trunc, fps = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated", "fps"]]]
 
         mask = np.ones_like(seq_len, bool)

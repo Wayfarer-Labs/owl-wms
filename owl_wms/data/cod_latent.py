@@ -34,7 +34,7 @@ class WindowedViewDataset(Dataset):
         sampling_periods: tuple[int, ...],
         include_missing_features: bool = False,
         include_truncated: bool = True,
-        meta_cols: tuple = ("tarball", "pt_idx", "missing", "truncated", "seq_len", "fps"),
+        meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
     ):
         self.window_length = window_length
