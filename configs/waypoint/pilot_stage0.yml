@@ -20,7 +20,7 @@ model:
   height: 16
   width: 16
 
-  n_frames: 8192  # train frames
+  n_frames: 2048  # train frames
   base_fps: 300
   local_window: 64  # 64/300 seconds of ctx
   global_window: 128  # 128/300 seconds of ctx
