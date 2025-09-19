@@ -324,7 +324,7 @@ class WorldTrainer(BaseTrainer):
 
         # TODO: clean this hack
         mouse, btn = None, None
-        if eval_batch["controller_inputs"] is not None:
+        if eval_batch.get("controller_inputs") is not None:
             mouse, btn = map(
                 self._gather_concat_cpu,
                 torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
