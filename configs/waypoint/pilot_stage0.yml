@@ -74,8 +74,8 @@ train:
     noise_prev: 0.2
     only_return_generated: false
   sampling_batch_size: 1
-  num_seed_frames: 60
-  num_generated_frames: 450
+  num_seed_frames: 30
+  num_generated_frames: 90
   n_samples: 4
   eval_sample_dir: null
 
