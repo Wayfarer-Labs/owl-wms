@@ -105,7 +105,7 @@ train:
 
   vae_scale: 0.73
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/rgb_only.yml
-  vae_ckpt_path: /mnt/data/lapp0/vaes/waypoint_1_f32c64_8res_rgb_only.pt
+  vae_ckpt_path: /mnt/data/lapp0/vaes/waypoint_1_f32c64_8res_rgb_only_decoder.pt
 
   prompt_encoder_model_id: google/umt5-xl
 
