@@ -51,7 +51,7 @@ class WindowedViewDataset(Dataset):
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            self.array_columns = list(array_columns)
+            self.array_columns = [c for c in array_columns if c not in meta_cols]
 
         seq_len, miss, trunc, fps = [np.asarray(x) for x in self.table[["seq_len", "missing", "truncated", "fps"]]]
 
