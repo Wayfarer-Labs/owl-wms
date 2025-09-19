@@ -1,7 +1,7 @@
 model:
   channels: 64
 
-  n_layers: 20
+  n_layers: 16
   n_heads: 16
   d_model: 2048
 
