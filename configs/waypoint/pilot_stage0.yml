@@ -21,9 +21,9 @@ model:
   width: 16
 
   n_frames: 2048  # train frames
-  base_fps: 300
-  local_window: 64  # 64/300 seconds of ctx
-  global_window: 128  # 128/300 seconds of ctx
+  base_fps: 50
+  local_window: 4
+  global_window: 16
 
   has_audio: false
 
