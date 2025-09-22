@@ -32,7 +32,7 @@ model:
   use_attn_gate: true
   ####
 
-  noise_conditioning: wan
+  noise_conditioning: dit_air
 
 train:
   trainer_id: world
