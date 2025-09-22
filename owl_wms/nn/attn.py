@@ -87,9 +87,8 @@ class Attn(nn.Module):
         self.n_heads = config.n_heads
         self.n_kv_heads = getattr(config, "n_kv_heads", config.n_heads)
         self.d_head = config.d_model // self.n_heads
-
         assert config.d_model % self.n_heads == 0
-        assert self.n_heads % self.n_kv_heads == 0
+
         self.enable_gqa = self.n_heads != self.n_kv_heads
 
         qkv_out = (self.n_heads + 2 * self.n_kv_heads) * self.d_head
@@ -98,31 +97,27 @@ class Attn(nn.Module):
 
         self.rope = get_rope(config)
 
-        self.use_attn_gate = getattr(config, "use_attn_gate", False)
-        if self.use_attn_gate:
-            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
-            nn.init.zeros_(self.gate_proj.weight)
+        self.gated_attn = getattr(config, "gated_attn", False)
+        if self.gated_attn:
+            self.gate = nn.Linear(config.d_model, config.d_model, bias=False)
+            nn.init.zeros_(self.gate.weight)
 
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
-        d, H, HKV = self.d_head, self.n_heads, self.n_kv_heads
         q, k, v = (
-            eo.rearrange(self.qkv(x), "b t (g d) -> b g t d", d=d)
-            .split([H, HKV, HKV], dim=1)
+            eo.rearrange(self.qkv(x), "b t (g d) -> b g t d", d=self.d_head)
+            .split([self.n_heads, self.n_kv_heads, self.n_kv_heads], dim=1)
         )
-
         q, k = rms_norm(q), rms_norm(k)
-        q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
+        q, k = self.rope(q, pos_ids), self.rope(k, pos_ids)
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
         attn_out = flex_attention(q, k, v, block_mask=block_mask, enable_gqa=self.enable_gqa)
         attn_out = eo.rearrange(attn_out, "b h t d -> b t (h d)")
-
-        if self.use_attn_gate:
-            attn_out = attn_out * self.gate_proj(x).sigmoid()
-
-        return self.out(attn_out)
+        attn_out = (attn_out * self.gate(x).sigmoid()) if self.gated_attn else attn_out
+        attn_out = self.out(attn_out)
+        return attn_out
 
 
 class CrossAttention(nn.Module):
