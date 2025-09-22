@@ -39,8 +39,9 @@ class AVCachingSampler:
 
         dt = get_sd3_euler(self.n_steps).to(device=x.device, dtype=x.dtype)
 
-        kv_cache = StaticKVCache(model.config, batch_size=x.size(0), dtype=x.dtype).to(x.device)
-        frame_timestamps = model.get_frame_timestamps(fps, init_len + num_frames, x.device)
+        seq_len = init_len + num_frames
+        kv_cache = StaticKVCache(model.config, max_seq_len=seq_len, batch_size=x.size(0), dtype=x.dtype).to(x.device)
+        frame_timestamps = model.get_frame_timestamps(fps, seq_len, x.device)
 
         # History for the first frame generation step = full clean clip
         prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None

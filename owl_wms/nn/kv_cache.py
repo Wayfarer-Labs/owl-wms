@@ -95,7 +95,7 @@ class SingleKVCache:
 
 
 class StaticKVCache(nn.Module):
-    def __init__(self, config, batch_size, dtype):
+    def __init__(self, config, max_seq_len, batch_size, dtype):
         super().__init__()
 
         # Exclude last N tokens from caching
@@ -103,7 +103,7 @@ class StaticKVCache(nn.Module):
 
         B = batch_size
         H = config.n_heads
-        L = config.n_frames * config.tokens_per_frame
+        L = max_seq_len * config.tokens_per_frame
         Dh = config.d_model // config.n_heads
         NL = config.n_layers
 
