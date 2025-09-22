@@ -400,10 +400,10 @@ class CausvidPipeline:
         if self.use_trt_decoder and not self._trt_decoder_built:
             try:
                 import torch_tensorrt.dynamo as torchtrt
-                example = x_to_dec.contiguous().cuda().half()
+                example = x_to_dec.half()
                 self._trt_decoder = torchtrt.compile(
                     self.frame_decoder.half().eval(),
-                    inputs=[example],
+                    inputs=[example.contiguous()],
                     enabled_precisions={torch.float16},
                     workspace_size=1 << 28,
                 )
@@ -419,8 +419,8 @@ class CausvidPipeline:
         if self._trt_decoder is not None:
             if self._trt_benchmark is None and not self.trt_force:
                 try:
-                    x_pt = x_to_dec.contiguous()
-                    x_trt = x_to_dec.contiguous().half()
+                    x_pt = x_to_dec
+                    x_trt = x_to_dec.half()
                     e_p0 = torch.cuda.Event(enable_timing=True); e_p1 = torch.cuda.Event(enable_timing=True)
                     e_t0 = torch.cuda.Event(enable_timing=True); e_t1 = torch.cuda.Event(enable_timing=True)
                     e_p0.record(); _ = self.frame_decoder(x_pt); e_p1.record(); torch.cuda.synchronize(); pt_ms = e_p0.elapsed_time(e_p1)
@@ -436,7 +436,7 @@ class CausvidPipeline:
                     if self.profile_kv:
                         print(f"[TensorRT] Benchmark failed: {e}")
             if self._trt_decoder is not None:
-                frame = self._trt_decoder(x_to_dec.contiguous().cuda().half()).squeeze()
+                frame = self._trt_decoder(x_to_dec.half()).squeeze()
             else:
                 frame = self.frame_decoder(x_to_dec).squeeze()
         else:

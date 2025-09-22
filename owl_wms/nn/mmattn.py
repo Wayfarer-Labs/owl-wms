@@ -69,7 +69,7 @@ class MMAttn(nn.Module):
 
         # update cache
         if kv_cache is not None and kv_cache.should_update:
-            kv_cache.update(k.clone(), v.clone(), self.layer_idx)
+            kv_cache.update(k, v, self.layer_idx)
 
         # Attention & merge heads
         attn_out = flex_attention(q, k, v, block_mask=block_mask)
@@ -80,8 +80,8 @@ class MMAttn(nn.Module):
         x0, x1 = eo.rearrange(attn_out, 'b (f n) d -> b f n d', n=V + 1).split([V, 1], dim=2)
         x0, x1 = x0.flatten(1, 2), x1.flatten(1, 2)
 
-        x0 = self.out_projs[0](x0).contiguous()
-        x1 = self.out_projs[1](x1).contiguous()
+        x0 = self.out_projs[0](x0)
+        x1 = self.out_projs[1](x1)
 
         return x0, x1
 

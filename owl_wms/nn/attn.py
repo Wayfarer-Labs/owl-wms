@@ -82,7 +82,7 @@ class Attn(nn.Module):
 
         qkv = self.qkv(x)
         q, k, v = einops.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.n_heads)
-        q = q.contiguous(); k = k.contiguous(); v = v.contiguous()
+        # Avoid gratuitous copies; keep as-is unless required downstream
         q, k = rms_norm(q), rms_norm(k)
 
         # rotate new queries and keys (shared kv cache between modalities)
@@ -122,7 +122,7 @@ class Attn(nn.Module):
         else:
             attn_out = flex_attention(q, k, v, block_mask=block_mask)
 
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.shape[0], L, -1)
+        attn_out = attn_out.permute(0, 2, 1, 3).reshape(x.shape[0], L, -1)
 
         return self.out(attn_out)
 
