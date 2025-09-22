@@ -103,10 +103,8 @@ class Attn(nn.Module):
             nn.init.zeros_(self.gate.weight)
 
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
-        q, k, v = (
-            eo.rearrange(self.qkv(x), "b t (g d) -> b g t d", d=self.d_head)
-            .split([self.n_heads, self.n_kv_heads, self.n_kv_heads], dim=1)
-        )
+        q, k, v = eo.rearrange(self.qkv(x), "b t (g d) -> b g t d", d=self.d_head)\
+                    .split([self.n_heads, self.n_kv_heads, self.n_kv_heads], dim=1)
         q, k = rms_norm(q), rms_norm(k)
         q, k = self.rope(q, pos_ids), self.rope(k, pos_ids)
 
