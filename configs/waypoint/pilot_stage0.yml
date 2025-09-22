@@ -22,8 +22,8 @@ model:
 
   n_frames: 2048  # train frames
   base_fps: 50
-  local_window: 4
-  global_window: 16
+  local_window: 16
+  global_window: 64
 
   has_audio: false
 
@@ -42,7 +42,7 @@ train:
   data_id: sequence_packing
   data_kwargs:
     batch_size: 1
-    seq_len: 128
+    seq_len: 64
     dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
     batch_columns: ["rgblatent", "fps"]
     latent_column: "rgblatent"
