@@ -216,7 +216,7 @@ class StaticCache:
     def shape(self):
         return self.k_cache[0].shape
 
-
+# DEPRECATED
 class QuantizedStaticCache:
     def __init__(
         self,
@@ -444,3 +444,172 @@ class QuantizedStaticCache:
     @property
     def shape(self):
         return self.k_i8[0].shape
+
+    @torch.inference_mode()
+    def upsert(self, k: torch.Tensor, v: torch.Tensor, layer: int):
+        """
+        One-line KV update + read API to match StaticKVCache usage in attention.
+        - If should_update is enabled, write k/v into the cache (quantized or BF16) and return the current window.
+        - If not, do not mutate cache; return window concatenated with the provided k/v for this compute.
+        Returns BF16 tensors suitable for FlexAttention.
+        """
+        if getattr(self, "should_update", False):
+            self.update(k, v, layer)
+            return self.get(layer)
+        else:
+            return self.get(layer, new_k=k, new_v=v)
+
+
+class StaticKVCache(torch.nn.Module):
+    def __init__(
+        self,
+        config: TransformerConfig,
+        batch_size: int,
+        dtype: torch.dtype,
+        *,
+        max_length_frames: int | None = None,
+        kv_storage: str | None = None,   # None|'bf16'|'i8_scale'|'mxfp'
+        kv_bits: int = 8,                # 8 or 4 when kv_storage='mxfp'
+        fmt_k: str = 'e5m2',
+        fmt_v: str = 'e4m3',
+        kv_late_layers: int | None = None,
+        k_fp8: bool | None = None,
+    ):
+        super().__init__()
+
+        # Public config
+        self.config = config
+        self.should_update = True  # upsert ignores this, but present for compatibility
+
+        # Exclude last N tokens from caching (uncached tail)
+        self.n_uncached = config.tokens_per_frame
+
+        # Shapes
+        B = batch_size
+        H = config.n_heads
+        frames = max_length_frames if max_length_frames is not None else getattr(config, 'n_frames', 0)
+        L_tokens = frames * config.tokens_per_frame
+        torch._assert(L_tokens > 0, "StaticKVCache requires max_length_frames or config.n_frames > 0")
+        Dh = config.d_model // config.n_heads
+        NL = config.n_layers
+
+        # Storage mode
+        self.kv_storage = (kv_storage or 'bf16').lower()
+        self.kv_bits = kv_bits
+        self.fmt_k = fmt_k
+        self.fmt_v = fmt_v
+
+        # Late-layer policy (for FP8 usage)
+        late_layers = kv_late_layers if kv_late_layers is not None else int(os.environ.get("OWL_KV_LATE_LAYERS", "0"))
+        start_fp8 = max(0, NL - late_layers) if late_layers > 0 else 0
+        k_fp8_global = (k_fp8 if k_fp8 is not None else bool(int(os.environ.get("OWL_K_FP8", "0"))))
+        self.k_use_fp8 = [(k_fp8_global and (li >= start_fp8)) for li in range(NL)]
+        self.v_use_fp8 = [(li >= start_fp8) for li in range(NL)]
+
+        # Logical offsets (per layer)
+        self.offset = torch.nn.Buffer(torch.zeros(NL, dtype=torch.long), persistent=False)
+
+        if self.kv_storage in (None, 'bf16'):
+            # Pure BF16 slabs
+            self.k_bf16 = torch.nn.Buffer(torch.empty(NL, B, H, L_tokens, Dh, dtype=dtype), persistent=False)
+            self.v_bf16 = torch.nn.Buffer(torch.empty(NL, B, H, L_tokens, Dh, dtype=dtype), persistent=False)
+            # For uniform interface
+            self.k_i8 = None; self.v_i8 = None; self.scale_k = None; self.scale_v = None
+        else:
+            # Mixed: FP8/int8 on selected layers, BF16 on others
+            self.k_i8 = [
+                (torch.empty(B, H, L_tokens, Dh, dtype=torch.int8) if self.k_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+            self.v_i8 = [
+                (torch.empty(B, H, L_tokens, Dh, dtype=torch.int8) if self.v_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+            self.k_bf16 = [
+                (torch.empty(B, H, L_tokens, Dh, dtype=dtype) if not self.k_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+            self.v_bf16 = [
+                (torch.empty(B, H, L_tokens, Dh, dtype=dtype) if not self.v_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+            # Timewise scales per token for int8 storage
+            self.scale_k = [
+                (torch.ones(B, H, L_tokens, dtype=dtype) if self.k_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+            self.scale_v = [
+                (torch.ones(B, H, L_tokens, dtype=dtype) if self.v_use_fp8[li] else None)
+                for li in range(NL)
+            ]
+
+    def enable_cache_updates(self):
+        self.should_update = True
+
+    def disable_cache_updates(self):
+        self.should_update = False
+
+    def to(self, device='cuda', dtype=torch.bfloat16):
+        # nn.Buffers move with .to on the module; keep signature for compatibility
+        return super().to(device=device, dtype=dtype)
+
+    @torch.inference_mode()
+    def _write_fp8_layer(self, layer: int, start: int, end: int, k: torch.Tensor, v: torch.Tensor):
+        # Quantize per-token (timewise); use bits only for mxfp path
+        if self.k_use_fp8[layer]:
+            if self.kv_storage == 'mxfp':
+                qk, sk = quantize_per_head_timewise(k, fmt=self.fmt_k, bits=self.kv_bits)
+            else:
+                qk, sk = quantize_per_head_timewise(k, fmt=self.fmt_k)
+            self.k_i8[layer][:, :, start:end, :].copy_(qk)
+            self.scale_k[layer][:, :, start:end].copy_(sk)
+        else:
+            self.k_bf16[layer][:, :, start:end, :].copy_(k)
+        if self.v_use_fp8[layer]:
+            if self.kv_storage == 'mxfp':
+                qv, sv = quantize_per_head_timewise(v, fmt=self.fmt_v, bits=self.kv_bits)
+            else:
+                qv, sv = quantize_per_head_timewise(v, fmt=self.fmt_v)
+            self.v_i8[layer][:, :, start:end, :].copy_(qv)
+            self.scale_v[layer][:, :, start:end].copy_(sv)
+        else:
+            self.v_bf16[layer][:, :, start:end, :].copy_(v)
+
+    @torch.inference_mode()
+    def _read_window_bf16(self, layer: int, end: int) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.kv_storage in (None, 'bf16'):
+            return self.k_bf16[layer, :, :, :end, :], self.v_bf16[layer, :, :, :end, :]
+        # Mixed path: dequantize where needed
+        if self.k_use_fp8[layer]:
+            k = dequantize_per_head_timewise(self.k_i8[layer][:, :, :end, :], self.scale_k[layer][:, :, :end])
+        else:
+            k = self.k_bf16[layer][:, :, :end, :]
+        if self.v_use_fp8[layer]:
+            v = dequantize_per_head_timewise(self.v_i8[layer][:, :, :end, :], self.scale_v[layer][:, :, :end])
+        else:
+            v = self.v_bf16[layer][:, :, :end, :]
+        return k, v
+
+    @torch.inference_mode()
+    def upsert(self, k: torch.Tensor, v: torch.Tensor, layer: int):
+        T = k.size(2)
+        start = int(self.offset[layer].item())
+        end = start + T
+
+        if self.kv_storage in (None, 'bf16'):
+            torch._assert(end <= self.k_bf16.size(3), "KV cache overflow")
+            torch._assert(T >= self.n_uncached, "chunk shorter than n_uncached")
+            self.k_bf16[layer, :, :, start:end, :].copy_(k)
+            self.v_bf16[layer, :, :, start:end, :].copy_(v)
+        else:
+            # Mixed FP8/BF16 depending on late-layer policy
+            cap = (self.k_i8[layer] if self.k_use_fp8[layer] else self.k_bf16[layer]).size(2)
+            torch._assert(end <= cap, "KV cache overflow")
+            torch._assert(T >= self.n_uncached, "chunk shorter than n_uncached")
+            self._write_fp8_layer(layer, start, end, k, v)
+
+        # Keep a small uncached tail to avoid double-including the newest tokens on next call
+        self.offset[layer].fill_(end - self.n_uncached)
+
+        # Return BF16 window up to 'end'
+        return self._read_window_bf16(layer, end)

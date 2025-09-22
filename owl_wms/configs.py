@@ -73,7 +73,7 @@ class WANDBConfig:
 class InferenceConfig:
     # Compilation & profiling
     compile: Optional[bool] = True
-    profile_kv: Optional[bool] = False
+    profile_kv: Optional[bool] = True
     profile_kv_every: Optional[int] = 30
     profile_kv_first: Optional[int] = 3
     sampling_steps: Optional[int] = 4

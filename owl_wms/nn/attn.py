@@ -92,11 +92,15 @@ class Attn(nn.Module):
         k = self.rope(k, offset=offset)
 
         if kv_cache is not None:
-            if kv_cache.should_update:
-                kv_cache.update(k, v, self.layer_idx)
-                k, v = kv_cache.get(self.layer_idx)
+            # Prefer the simpler one-line static cache path when available
+            if hasattr(kv_cache, "upsert"):
+                k, v = kv_cache.upsert(k, v, self.layer_idx)
             else:
-                k, v = kv_cache.get(self.layer_idx, new_k = k, new_v = v)
+                if kv_cache.should_update:
+                    kv_cache.update(k, v, self.layer_idx)
+                    k, v = kv_cache.get(self.layer_idx)
+                else:
+                    k, v = kv_cache.get(self.layer_idx, new_k = k, new_v = v)
 
         # prepend cached values
         #if offset > 0:

@@ -1,7 +1,7 @@
 from owl_wms.configs import Config
 from owl_wms.data import get_loader
 from owl_wms import from_pretrained
-from owl_wms.nn.kv_cache import KVCache, StaticCache, QuantizedStaticCache
+from owl_wms.nn.kv_cache import KVCache, StaticCache, StaticKVCache
 from owl_wms.nn.rope import cast_rope_buffers_to_fp32
 from owl_wms.nn.mxfp import apply_mx_transforms
 from owl_wms.nn.attn import get_block_mask
@@ -156,17 +156,21 @@ class CausvidPipeline:
         
         # Initialize KV cache
         if self.use_fp8_kv:
-            # max_length is number of frames (same as StaticCache usage)
-            # Default: K BF16 (k_fp8=0), V FP8 on last 12 layers
+            # Use unified StaticKVCache in quantized mode (i8_scale or mxfp)
             kv_late_layers = int(os.environ.get("OWL_KV_LATE_LAYERS", "12"))
             k_fp8 = bool(int(os.environ.get("OWL_K_FP8", "0")))
-            self.cache = QuantizedStaticCache(
+            kv_storage = os.environ.get("OWL_KV_STORAGE", "mxfp")
+            kv_bits = int(os.environ.get("OWL_KV_BITS", "8"))
+            self.cache = StaticKVCache(
                 self.model.config,
-                max_length = init_len,
                 batch_size = batch_size,
+                dtype = self.history_buffer.dtype,
+                max_length_frames = init_len,
+                kv_storage = kv_storage,
+                kv_bits = kv_bits,
                 kv_late_layers = kv_late_layers,
                 k_fp8 = k_fp8,
-            )
+            ).to(self.history_buffer.device, dtype=self.history_buffer.dtype)
         else:
             self.cache = StaticCache(self.model.config, max_length = init_len, batch_size = batch_size)
         #self.cache = KVCache(self.model.config)
