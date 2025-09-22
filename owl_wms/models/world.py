@@ -5,9 +5,7 @@ import einops as eo
 from tensordict import TensorDict
 
 import torch
-import torch.nn.functional as F
 from torch import nn
-
 
 from .. import nn as owl_nn
 
@@ -73,18 +71,13 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-        dit_air = self.config.noise_conditioning == "dit_air"
-
         if self.config.noise_conditioning == "wan":
             cond = cond + self.conditioning_bias
-        elif dit_air:
-            attn_scale, attn_bias, attn_gate, mlp_scale, mlp_bias, mlp_gate = cond  # cond already chunked
 
         residual = x
-        x = self.adaln[0](x, cond) if not dit_air else owl_nn.cond_adaln(x, attn_scale, attn_bias)
+        x = self.adaln[0](x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.gate[0](x, cond) if not dit_air else owl_nn.cond_gate(x, attn_gate)
-        x = x + residual
+        x = self.gate[0](x, cond) + residual
 
         """
         if prompt_emb is not None:
@@ -101,10 +94,9 @@ class WorldDiTBlock(nn.Module):
         """
 
         residual = x
-        x = self.adaln[2](x, cond) if not dit_air else owl_nn.cond_adaln(x, mlp_scale, mlp_bias)
+        x = self.adaln[2](x, cond)
         x = self.mlp(x)
-        x = self.gate[2](x, cond) if not dit_air else owl_nn.cond_gate(x, mlp_gate)
-        x = x + residual
+        x = self.gate[2](x, cond) + residual
 
         return x
 
@@ -116,18 +108,12 @@ class WorldDiT(nn.Module):
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
-        if self.config.noise_conditioning == "wan":
+        if self.config.noise_conditioning in ("dit_air", "wan"):
             ref = self.blocks[0]
             for blk in self.blocks[1:]:
                 blk.adaln, blk.gate = ref.adaln, ref.gate
-        elif self.config.noise_conditioning == "dit_air":
-            self.mod_proj = nn.Linear(config.d_model, config.d_model * 6)
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
-        if self.config.noise_conditioning == "dit_air":
-            cond = self.mod_proj(F.silu(cond))
-            cond = cond.chunk(6, dim=-1)
-
         ####
         # TODO: REMOVE, just an experiment
         if ctrl_emb is not None:
