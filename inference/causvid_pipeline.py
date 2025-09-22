@@ -345,6 +345,18 @@ class CausvidPipeline:
             step1_s = time.time() - t_kv0
             attn1_ms = e_attn0.elapsed_time(e_attn1)
             mem1_mb = torch.cuda.max_memory_reserved() / (1024**2)
+            # Lightweight KV debug: offsets consistency (decode path)
+            try:
+                offsets = [self.cache.get_offset(i) for i in range(self.model.config.n_layers)]
+                same = all(o == offsets[0] for o in offsets)
+                if same:
+                    print(f"[KV-Debug] decode1 offsets_equal=1 offset={offsets[0]} end={offsets[0] + self.model.config.tokens_per_frame}")
+                else:
+                    # print first few for brevity
+                    snippet = ",".join(str(o) for o in offsets[:4])
+                    print(f"[KV-Debug] decode1 offsets_equal=0 first4=[{snippet}] end0={offsets[0] + self.model.config.tokens_per_frame}")
+            except Exception:
+                pass
         
         curr_x = curr_x - 0.75 * pred_v
         curr_t = curr_t - 0.75
@@ -380,6 +392,17 @@ class CausvidPipeline:
                 mlp_total = getattr(self.cache, 'mlp_ms', 0.0)
                 print(f"[KV-Profile] step1_s={step1_s:.3f}s (attn1={attn1_ms:.2f}ms), step2_s={step2_s:.3f}s (attn2={attn2_ms:.2f}ms), q_ms={q_ms:.2f}, dq_ms={dq_ms:.2f}, max_reserved={max(mem1_mb, mem2_mb):.1f}MB")
                 print(f"[KV-Profile] accum: attn_total_ms={attn_total:.2f}, mlp_total_ms={mlp_total:.2f}")
+                # Lightweight KV debug after update: show offsets and expected end window
+                try:
+                    offsets = [self.cache.get_offset(i) for i in range(self.model.config.n_layers)]
+                    same = all(o == offsets[0] for o in offsets)
+                    if same:
+                        print(f"[KV-Debug] decode2 offsets_equal=1 offset={offsets[0]} end={offsets[0] + self.model.config.tokens_per_frame}")
+                    else:
+                        snippet = ",".join(str(o) for o in offsets[:4])
+                        print(f"[KV-Debug] decode2 offsets_equal=0 first4=[{snippet}] end0={offsets[0] + self.model.config.tokens_per_frame}")
+                except Exception:
+                    pass
 
         new_frame = curr_x - 0.25 * pred_v
 

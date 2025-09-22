@@ -330,35 +330,75 @@ class QuantizedStaticCache:
         self.offsets = [0] * self.config.n_layers
 
     def get(self, layer_ind, new_k = None, new_v = None):
-        # Return BF16 K/V for current window (dequant if FP8)
+        # Return BF16 K/V for current window [0:end), where end is the current
+        # cached length. During decode, fresh tokens are concatenated logically
+        # via new_k/new_v; we still slice cached K/V to [0:offset).
+        # Compute capacity (T) from whichever buffer is active for this layer
+        if self.k_use_fp8[layer_ind]:
+            T_cap = self.k_i8[layer_ind].shape[2]
+        else:
+            T_cap = self.k_bf16[layer_ind].shape[2]
+        # Choose end as current offset (logical cached length), clamped to capacity
+        end = self.offsets[layer_ind]
+        if end > T_cap:
+            end = T_cap
+
+        # Keys
         if self.k_use_fp8[layer_ind]:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
                 e0.record()
-            k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
+            k = dequantize_per_head_timewise(
+                self.k_i8[layer_ind][:, :, :end, :],
+                self.scale_k[layer_ind][:, :, :end]
+            )
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
         else:
-            k = self.k_bf16[layer_ind]
+            k = self.k_bf16[layer_ind][:, :, :end, :]
+
+        # Values
         if self.v_use_fp8[layer_ind]:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
                 e0.record()
-            v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+            v = dequantize_per_head_timewise(
+                self.v_i8[layer_ind][:, :, :end, :],
+                self.scale_v[layer_ind][:, :, :end]
+            )
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
         else:
-            v = self.v_bf16[layer_ind]
-        if new_k is not None:
+            v = self.v_bf16[layer_ind][:, :, :end, :]
+
+        # Optional logical concat of fresh tokens
+        if new_k is not None and new_v is not None:
             k = torch.cat([k, new_k], dim=2)
             v = torch.cat([v, new_v], dim=2)
         return k, v
 
     def update(self, new_k, new_v, layer_ind):
-        # Quantize and write newest positions into ring (roll window by new_len tokens)
+        # Quantize (if enabled) and write at absolute indices [start:end)
         new_len = new_k.shape[2]
+        start = self.offsets[layer_ind]
+        end = start + new_len
 
-        # Select buffers per tensor kind (K/V) depending on FP8 enablement
+        # Capacity check (use whichever buffer is active for K/V)
+        T_cap = (self.k_i8[layer_ind] if self.k_use_fp8[layer_ind] else self.k_bf16[layer_ind]).shape[2]
+        # Clamp end to capacity to avoid OOB writes; truncate input if necessary
+        if end > T_cap:
+            end = T_cap
+            # If truncated, also narrow inputs
+            if new_len > 0:
+                trim = end - start
+                new_k = new_k[:, :, :trim, :]
+                new_v = new_v[:, :, :trim, :]
+                new_len = trim
+
+        if new_len == 0:
+            return
+
+        # Keys
         if self.k_use_fp8[layer_ind]:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
@@ -369,10 +409,12 @@ class QuantizedStaticCache:
                 qk, sk = quantize_per_head_timewise(new_k, fmt=self.fmt_k)
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
-            k_buf = self.k_i8[layer_ind]
+            self.k_i8[layer_ind][:, :, start:end, :] = qk
+            self.scale_k[layer_ind][:, :, start:end] = sk
         else:
-            k_slice = new_k
-            k_buf = self.k_bf16[layer_ind]
+            self.k_bf16[layer_ind][:, :, start:end, :] = new_k
+
+        # Values
         if self.v_use_fp8[layer_ind]:
             if self._can_profile():
                 e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
@@ -383,51 +425,12 @@ class QuantizedStaticCache:
                 qv, sv = quantize_per_head_timewise(new_v, fmt=self.fmt_v)
             if self._can_profile():
                 e1.record(); torch.cuda.synchronize(); self.quant_ms += e0.elapsed_time(e1)
-            v_buf = self.v_i8[layer_ind]
+            self.v_i8[layer_ind][:, :, start:end, :] = qv
+            self.scale_v[layer_ind][:, :, start:end] = sv
         else:
-            v_slice = new_v
-            v_buf = self.v_bf16[layer_ind]
+            self.v_bf16[layer_ind][:, :, start:end, :] = new_v
 
-        # Write K
-        T_cur_k = k_buf.shape[2]
-        if T_cur_k == 0 or new_len >= T_cur_k:
-            write_len_k = min(new_len, T_cur_k) if T_cur_k > 0 else 0
-            if write_len_k > 0:
-                if self.k_use_fp8[layer_ind]:
-                    k_buf[:, :, -write_len_k:, :] = qk[:, :, -write_len_k:, :]
-                    self.scale_k[layer_ind][:, :, -write_len_k:] = sk[:, :, -write_len_k:]
-                else:
-                    k_buf[:, :, -write_len_k:, :] = k_slice[:, :, -write_len_k:, :]
-        else:
-            if self.k_use_fp8[layer_ind]:
-                self.k_i8[layer_ind] = torch.roll(k_buf, shifts=-new_len, dims=2)
-                self.k_i8[layer_ind][:, :, -new_len:, :] = qk
-                self.scale_k[layer_ind] = torch.roll(self.scale_k[layer_ind], shifts=-new_len, dims=2)
-                self.scale_k[layer_ind][:, :, -new_len:] = sk
-            else:
-                self.k_bf16[layer_ind] = torch.roll(k_buf, shifts=-new_len, dims=2)
-                self.k_bf16[layer_ind][:, :, -new_len:, :] = k_slice
-
-        # Write V
-        T_cur_v = v_buf.shape[2]
-        if T_cur_v == 0 or new_len >= T_cur_v:
-            write_len_v = min(new_len, T_cur_v) if T_cur_v > 0 else 0
-            if write_len_v > 0:
-                if self.v_use_fp8[layer_ind]:
-                    v_buf[:, :, -write_len_v:, :] = qv[:, :, -write_len_v:, :]
-                    self.scale_v[layer_ind][:, :, -write_len_v:] = sv[:, :, -write_len_v:]
-                else:
-                    v_buf[:, :, -write_len_v:, :] = v_slice[:, :, -write_len_v:, :]
-        else:
-            if self.v_use_fp8[layer_ind]:
-                self.v_i8[layer_ind] = torch.roll(v_buf, shifts=-new_len, dims=2)
-                self.v_i8[layer_ind][:, :, -new_len:, :] = qv
-                self.scale_v[layer_ind] = torch.roll(self.scale_v[layer_ind], shifts=-new_len, dims=2)
-                self.scale_v[layer_ind][:, :, -new_len:] = sv
-            else:
-                self.v_bf16[layer_ind] = torch.roll(v_buf, shifts=-new_len, dims=2)
-                self.v_bf16[layer_ind][:, :, -new_len:, :] = v_slice
-
+        # Maintain existing offset semantics (do not change how offset is computed)
         self.offsets[layer_ind] += new_len
 
     def eject(self):
@@ -435,12 +438,19 @@ class QuantizedStaticCache:
         return
 
     def length_at(self, idx):
-        # Full logical window length in tokens
-        return self.k_i8[idx].shape[2]
+        # Logical number of cached tokens for this layer (clamped to capacity)
+        if self.k_i8[idx] is not None:
+            T_cap = self.k_i8[idx].shape[2]
+        else:
+            T_cap = self.k_bf16[idx].shape[2]
+        return min(self.offsets[idx], T_cap)
 
     def get_offset(self, idx=0):
         return self.offsets[idx]
 
     @property
     def shape(self):
-        return self.k_i8[0].shape
+        # Report shape from whichever storage is active for layer 0
+        if self.k_i8[0] is not None:
+            return self.k_i8[0].shape
+        return self.k_bf16[0].shape
