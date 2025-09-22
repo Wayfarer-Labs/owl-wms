@@ -82,11 +82,20 @@ class AttnMaskScheduler:
 class Attn(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.config = config
         self.layer_idx = layer_idx
 
-        self.qkv = nn.Linear(config.d_model, 3 * config.d_model, bias=False)
+        self.n_heads = config.n_heads
+        self.n_kv_heads = getattr(config, "n_kv_heads", config.n_heads)
+        self.d_head = config.d_model // self.n_heads
+
+        assert config.d_model % self.n_heads == 0
+        assert self.n_heads % self.n_kv_heads == 0
+        self.enable_gqa = self.n_heads != self.n_kv_heads
+
+        qkv_out = (self.n_heads + 2 * self.n_kv_heads) * self.d_head
+        self.qkv = nn.Linear(config.d_model, qkv_out, bias=False)
         self.out = nn.Linear(config.d_model, config.d_model, bias=False)
+
         self.rope = get_rope(config)
 
         self.use_attn_gate = getattr(config, "use_attn_gate", False)
@@ -95,16 +104,20 @@ class Attn(nn.Module):
             nn.init.zeros_(self.gate_proj.weight)
 
     def forward(self, x, pos_ids, block_mask, kv_cache=None):
-        qkv = self.qkv(x)
-        q, k, v = eo.rearrange(qkv, "b t (three h d) -> three b h t d", three=3, h=self.config.n_heads)
+        d, H, HKV = self.d_head, self.n_heads, self.n_kv_heads
+        q, k, v = (
+            eo.rearrange(self.qkv(x), "b t (g d) -> b g t d", d=d)
+            .split([H, HKV, HKV], dim=1)
+        )
+
         q, k = rms_norm(q), rms_norm(k)
         q, k = self.rope(q, pos_ids=pos_ids), self.rope(k, pos_ids=pos_ids)
 
         if kv_cache is not None:
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
-        attn_out = flex_attention(q, k, v, block_mask=block_mask)
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(x.size(0), x.size(1), -1)
+        attn_out = flex_attention(q, k, v, block_mask=block_mask, enable_gqa=self.enable_gqa)
+        attn_out = eo.rearrange(attn_out, "b h t d -> b t (h d)")
 
         if self.use_attn_gate:
             attn_out = attn_out * self.gate_proj(x).sigmoid()
