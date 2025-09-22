@@ -77,7 +77,8 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = self.adaln[0](x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.gate[0](x, cond) + residual
+        #x = self.gate[0](x, cond) + residual
+        x = x + residual
 
         """
         if prompt_emb is not None:
@@ -96,7 +97,8 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = self.adaln[2](x, cond)
         x = self.mlp(x)
-        x = self.gate[2](x, cond) + residual
+        #x = self.gate[2](x, cond) + residual
+        x = x + residual
 
         return x
 
