@@ -28,7 +28,7 @@ class RoPE(nn.Module):
         self.config = config
         freqs = self.get_freqs(config)
 
-        if not config.has_audio:
+        if not getattr(self.config, "has_audio", False):
             # subclasses freqs include audio by default, remove last item from each frame
             freqs = freqs.view(config.n_frames, -1, freqs.size(-1))[:, :-1].flatten(0, 1)
 
