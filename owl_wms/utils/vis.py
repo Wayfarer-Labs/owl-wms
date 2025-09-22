@@ -17,6 +17,8 @@ def draw_frame(frame, mouse, button):
     frame = frame.squeeze(0)
     frame = frame.permute(1,2,0)
     frame = (frame + 1)*127.5
+    # Convert to numpy only if logging is enabled; otherwise keep as minimal as possible
+    # This utility is used for logging/vis, so allow gating volume elsewhere
     frame = frame.float().cpu().numpy()
     frame = frame.astype(np.uint8)
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -27,8 +29,8 @@ def draw_frame(frame, mouse, button):
     cv2.circle(frame, circle_center, circle_radius, (255,255,255), 1)  # Draw compass circle
 
     # Convert mouse coordinates (-1 to 1) to compass coordinates
-    mouse_x = mouse[0].item() * circle_radius + circle_center[0]
-    mouse_y = mouse[1].item() * circle_radius + circle_center[1]
+    mouse_x = float(mouse[0]) * circle_radius + circle_center[0]
+    mouse_y = float(mouse[1]) * circle_radius + circle_center[1]
 
     # Draw arrow from center to mouse position
     cv2.arrowedLine(frame, circle_center, (int(mouse_x), int(mouse_y)), (0,255,0), 2)

@@ -93,7 +93,13 @@ class Game:
     def simple_display(self, frame):
         """Simple display method for WSL compatibility"""
         # Convert frame to numpy efficiently
-        frame_np = frame.detach().cpu().float().numpy()
+        if not bool(int(os.environ.get("OWL_LOG_DEBUG", "0"))):
+            # Fast-path conversion with minimal precision handling
+            frame_np = frame.detach().cpu().numpy()
+            frame_np = ((frame_np + 1.0) * 127.5).clip(0, 255).astype("uint8")
+            frame_np = frame_np.transpose(1, 2, 0) if frame_np.shape[0] == 3 else np.repeat(frame_np, 3, axis=0).transpose(1, 2, 0)
+        else:
+            frame_np = frame.detach().cpu().float().numpy()
         
         # Optimize the conversion: do all operations in one go
         if frame_np.shape[0] == 3:
@@ -112,7 +118,12 @@ class Game:
     def ultra_fast_display(self, frame):
         """Ultra-fast display using direct buffer manipulation"""
         # Convert frame to numpy efficiently
-        frame_np = frame.detach().cpu().float().numpy()
+        if not bool(int(os.environ.get("OWL_LOG_DEBUG", "0"))):
+            frame_np = frame.detach().cpu().numpy()
+            frame_np = ((frame_np + 1.0) * 127.5).clip(0, 255).astype("uint8")
+            frame_np = frame_np.transpose(1, 2, 0) if frame_np.shape[0] == 3 else np.repeat(frame_np, 3, axis=0).transpose(1, 2, 0)
+        else:
+            frame_np = frame.detach().cpu().float().numpy()
         
         # Optimize the conversion: do all operations in one go
         if frame_np.shape[0] == 3:
@@ -139,7 +150,12 @@ class Game:
     def optimize_frame_display(self, frame):
         """Optimized frame display with pre-allocated surfaces"""
         # Convert frame to numpy efficiently
-        frame_np = frame.detach().cpu().float().numpy()
+        if not bool(int(os.environ.get("OWL_LOG_DEBUG", "0"))):
+            frame_np = frame.detach().cpu().numpy()
+            frame_np = ((frame_np + 1.0) * 127.5).clip(0, 255).astype("uint8")
+            frame_np = frame_np.transpose(1, 2, 0) if frame_np.shape[0] == 3 else np.repeat(frame_np, 3, axis=0).transpose(1, 2, 0)
+        else:
+            frame_np = frame.detach().cpu().float().numpy()
         
         # Optimize the conversion: do all operations in one go
         # frame_np: [c, h, w] in [-1,1], convert to [h, w, c] in [0,255]

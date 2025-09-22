@@ -163,16 +163,13 @@ class StaticCache:
 
     def get(self, layer_ind, new_k = None, new_v = None):
         if new_k is not None and new_v is not None:
-            old_k = self.k_cache[layer_ind].clone()
-            old_v = self.v_cache[layer_ind].clone()
-
-            old_k = torch.roll(old_k, shifts = -new_k.shape[2], dims = 2)
-            old_v = torch.roll(old_v, shifts = -new_v.shape[2], dims = 2)
-
-            old_k[:,:,-new_k.shape[2]:] = new_k
-            old_v[:,:,-new_v.shape[2]:] = new_v
-
-            return old_k.contiguous(), old_v.contiguous()
+            t = new_k.shape[2]
+            base_k = self.k_cache[layer_ind]
+            base_v = self.v_cache[layer_ind]
+            # Equivalent to roll(-t) and tail insert, but avoids cloning/rolling the full slab
+            k_out = torch.cat([base_k[:, :, t:], new_k], dim=2).contiguous()
+            v_out = torch.cat([base_v[:, :, t:], new_v], dim=2).contiguous()
+            return k_out, v_out
         else:
             return self.k_cache[layer_ind].contiguous(), self.v_cache[layer_ind].contiguous()
 

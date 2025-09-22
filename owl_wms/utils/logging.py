@@ -65,6 +65,11 @@ class LogHelper:
 
 @torch.no_grad()
 def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):
+    heavy = bool(int(os.environ.get("OWL_LOG_DEBUG", "0")))
+    if not heavy:
+        # Reduce cost when heavy logging is disabled
+        gather = False
+        max_samples = min(max_samples, 1)
     # x is [b,n,c,h,w]
     x = x.clamp(-1, 1)
     x = x[:max_samples]
@@ -83,6 +88,9 @@ def to_wandb(x, batch_mouse, batch_btn, gather = False, max_samples = 8):
     return wandb.Video(x, format='gif', fps=60)
 
 def to_wandb_gif(x, max_samples = 4):
+    heavy = bool(int(os.environ.get("OWL_LOG_DEBUG", "0")))
+    if not heavy:
+        max_samples = min(max_samples, 1)
     x = x.clamp(-1, 1)
     x = (x + 1) * 127.5
     x = x.to(torch.uint8)
@@ -95,6 +103,10 @@ def to_wandb_gif(x, max_samples = 4):
 
 @torch.no_grad()
 def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 8):
+    heavy = bool(int(os.environ.get("OWL_LOG_DEBUG", "0")))
+    if not heavy:
+        gather = False
+        max_samples = min(max_samples, 1)
     # x is [b,n,c,h,w]
     # audio is [b,n,2]
     x = x.clamp(-1, 1)
@@ -145,6 +157,11 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
 
 @torch.no_grad()
 def to_wandb_samples(video, mouse, btn):
+    heavy = bool(int(os.environ.get("OWL_LOG_DEBUG", "0")))
+    if not heavy:
+        video = video[:1]
+        mouse = mouse[:1]
+        btn = btn[:1]
     video = video.clamp(-1, 1).cpu().float()          # [B, T, C, H, W]
 
     depth_gif = flow_gif = None
