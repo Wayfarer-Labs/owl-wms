@@ -179,8 +179,9 @@ class StaticCache:
     def update(self, new_k, new_v, layer_ind):
         new_len = new_k.shape[2]
         if new_len > self.tokens_per_frame: # More than one frame, full cache
-            self.k_cache[layer_ind][:,:,:,:new_len] = new_k
-            self.v_cache[layer_ind][:,:,:,:new_len] = new_v
+            # Write contiguous block along time dimension
+            self.k_cache[layer_ind][:, :, :new_len, :] = new_k
+            self.v_cache[layer_ind][:, :, :new_len, :] = new_v
             self.offsets[layer_ind] = new_len
         else: # step forward one
             self.k_cache[layer_ind] = torch.roll(self.k_cache[layer_ind], shifts = -new_len, dims = 2)
@@ -330,25 +331,8 @@ class QuantizedStaticCache:
         self.offsets = [0] * self.config.n_layers
 
     def get(self, layer_ind, new_k = None, new_v = None):
-        # Return BF16 K/V for current window (dequant if FP8)
-        if self.k_use_fp8[layer_ind]:
-            if self._can_profile():
-                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
-                e0.record()
-            k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
-            if self._can_profile():
-                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
-        else:
-            k = self.k_bf16[layer_ind]
-        if self.v_use_fp8[layer_ind]:
-            if self._can_profile():
-                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
-                e0.record()
-            v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
-            if self._can_profile():
-                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
-        else:
-            v = self.v_bf16[layer_ind]
+        # Return BF16 K/V for current window (dequant once via helper if FP8)
+        k, v = self._get_window_bf16(layer_ind)
         if new_k is not None:
             k = torch.cat([k, new_k], dim=2)
             v = torch.cat([v, new_v], dim=2)
@@ -436,14 +420,38 @@ class QuantizedStaticCache:
 
     def length_at(self, idx):
         # Full logical window length in tokens
-        return self.k_i8[idx].shape[2]
+        buf = self.k_i8[idx] if self.k_i8[idx] is not None else self.k_bf16[idx]
+        return buf.shape[2]
 
     def get_offset(self, idx=0):
         return self.offsets[idx]
 
     @property
     def shape(self):
-        return self.k_i8[0].shape
+        first = self.k_i8[0] if self.k_i8[0] is not None else self.k_bf16[0]
+        return first.shape
+
+    def _get_window_bf16(self, layer_ind: int) -> tuple[torch.Tensor, torch.Tensor]:
+        # Centralized read path to avoid duplicate dequantization in callers
+        if self.k_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
+            k = dequantize_per_head_timewise(self.k_i8[layer_ind], self.scale_k[layer_ind])
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
+        else:
+            k = self.k_bf16[layer_ind]
+        if self.v_use_fp8[layer_ind]:
+            if self._can_profile():
+                e0 = torch.cuda.Event(enable_timing=True); e1 = torch.cuda.Event(enable_timing=True)
+                e0.record()
+            v = dequantize_per_head_timewise(self.v_i8[layer_ind], self.scale_v[layer_ind])
+            if self._can_profile():
+                e1.record(); torch.cuda.synchronize(); self.dequant_ms += e0.elapsed_time(e1)
+        else:
+            v = self.v_bf16[layer_ind]
+        return k, v
 
     @torch.inference_mode()
     def upsert(self, k: torch.Tensor, v: torch.Tensor, layer: int):
@@ -455,7 +463,8 @@ class QuantizedStaticCache:
         """
         if getattr(self, "should_update", False):
             self.update(k, v, layer)
-            return self.get(layer)
+            # Avoid a second dequant by reading once via helper
+            return self._get_window_bf16(layer)
         else:
             return self.get(layer, new_k=k, new_v=v)
 
