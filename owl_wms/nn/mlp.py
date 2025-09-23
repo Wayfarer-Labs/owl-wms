@@ -13,11 +13,11 @@ class MLPCustom(nn.Module):
         nn.init.kaiming_normal_(self.fc1.weight)
         nn.init.kaiming_normal_(self.fc2.weight)
 
-        with torch.no_grad():
-            self.fc1.weight.data *= dim_in ** -0.5
-            self.fc2.weight.zero_()
-            self.fc1.bias.zero_()
-            self.fc2.bias.zero_()
+        self.fc1.weight.data *= dim_in ** -0.5
+        self.fc2.weight.data *= dim_middle ** -0.5
+
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.zeros_(self.fc2.bias)
 
     def forward(self, x):
         x = self.fc1(x)
