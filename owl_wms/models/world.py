@@ -6,6 +6,7 @@ from tensordict import TensorDict
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from .. import nn as owl_nn
 
@@ -51,6 +52,29 @@ class ControllerInputEmbedding(nn.Module):
         return self.mlp(controller_input)
 
 
+
+
+class CondHead(nn.Module):
+    """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
+    n_cond = 6
+
+    def __init__(self, config):
+        super().__init__()
+        self.bias_in = nn.Parameter(torch.zeros(config.d_model)) if config.noise_conditioning == "wan" else None
+        self.cond_proj = nn.Linear(config.d_model, self.n_cond * config.d_model, bias=True)
+
+        # AdaLN-Zero
+        with torch.no_grad():
+            self.cond_proj.weight.zero_()
+            self.cond_proj.bias.zero_()
+            if self.bias_in is not None:
+                self.bias_in.zero_()
+
+    def forward(self, cond):
+        cond = cond + self.bias_in if self.bias_in is not None else cond
+        return self.cond_proj(F.silu(cond)).chunk(self.n_cond, -1)
+
+
 class WorldDiTBlock(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -58,10 +82,18 @@ class WorldDiTBlock(nn.Module):
         self.attn = owl_nn.Attn(config, layer_idx)
         self.cross_attn = owl_nn.CrossAttention(config)
         self.mlp = owl_nn.MLP(config)
+        self.cond_head = CondHead(config)
 
-        dim = config.d_model
-        self.adaln = nn.ModuleList([owl_nn.AdaLN(dim) for _ in range(3)])
-        self.gate = nn.ModuleList([owl_nn.Gate(dim) for _ in range(3)])
+    @staticmethod
+    def cond_adaln(x, scale, bias):
+        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
+        y4 = owl_nn.rms_norm(x4) * (1 + scale.unsqueeze(2)) + bias.unsqueeze(2)
+        return eo.rearrange(y4, 'b n m d -> b (n m) d')
+
+    @staticmethod
+    def cond_gate(x, gate):
+        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=gate.size(1))
+        return eo.rearrange(x4 * gate.unsqueeze(2), 'b n m d -> b (n m) d')
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -69,10 +101,12 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
+        s0, b0, g0, s1, b1, g1 = self.cond_head(cond)
+
         residual = x
-        x = self.adaln[0](x, cond)
+        x = self.cond_adaln(x, s0, b0)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.gate[0](x, cond)
+        x = self.cond_gate(x, g0)
         x = x + residual
 
         """
@@ -90,9 +124,9 @@ class WorldDiTBlock(nn.Module):
         """
 
         residual = x
-        x = self.adaln[2](x, cond)
-        x = self.mlp(x)
-        x = self.gate[2](x, cond)
+        x = self.cond_adaln(x, s1, b1)
+        x = owl_nn.checkpoint(self.mlp, x) if self.config.gradient_checkpointing else self.mlp(x)
+        x = self.cond_gate(x, g1)
         x = x + residual
 
         return x
@@ -106,16 +140,10 @@ class WorldDiT(nn.Module):
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
         if self.config.noise_conditioning in ("dit_air", "wan"):
-            ref = self.blocks[0]
+            ref_proj = self.blocks[0].cond_head.cond_proj
             for blk in self.blocks[1:]:
-                blk.adaln, blk.gate = ref.adaln, ref.gate
-
-        if self.config.noise_conditioning == "wan":
-            self.conditioning_bias = nn.ParameterList(
-                [nn.Parameter(torch.zeros(config.d_model)) for _ in range(config.n_layers)]
-            )
-        else:
-            self.conditioning_bias = [None] * config.n_layers
+                blk.cond_head.cond_proj.weight = ref_proj.weight
+                blk.cond_head.cond_proj.bias = ref_proj.bias
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
         ####
@@ -136,9 +164,8 @@ class WorldDiT(nn.Module):
             t_pos=t_pos,
             device=x.device
         )
-        for block, block_mask, cond_bias in zip(self.blocks, block_masks, self.conditioning_bias):
-            cond_layer = cond + cond_bias if cond_bias is not None else cond
-            x = block(x, pos_ids, cond_layer, prompt_emb, ctrl_emb, block_mask, kv_cache)
+        for block, block_mask, in zip(self.blocks, block_masks):
+            x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
         return x
 
 

@@ -29,6 +29,8 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
+  gradient_checkpointing: false
+
 
 train:
   trainer_id: world
@@ -85,7 +87,7 @@ train:
     adamw_wd: 1.0e-4
     adamw_eps: 1.0e-15
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, gate, adaln]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, cond_proj]
 
   scheduler: null
 
