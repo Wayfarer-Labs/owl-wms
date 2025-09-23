@@ -8,8 +8,6 @@ class AdaLN(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.fc = nn.Linear(dim, 2 * dim)
-        nn.init.zeros_(self.fc.weight)
-        nn.init.zeros_(self.fc.bias)
 
     def forward(self, x, cond):
         # cond: [b, n, d], x: [b, n*m, d]
@@ -31,8 +29,6 @@ class Gate(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.fc_c = nn.Linear(dim, dim)
-        nn.init.zeros_(self.fc_c.weight)
-        nn.init.zeros_(self.fc_c.bias)
 
     def forward(self, x, cond):
         # cond: [b, n, d], x: [b, n*m, d]
