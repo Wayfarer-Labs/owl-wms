@@ -3,6 +3,7 @@ model:
 
   n_layers: 16
   n_heads: 16
+  n_kv_heads: 8
   d_model: 2048
 
   n_controller_inputs: 13

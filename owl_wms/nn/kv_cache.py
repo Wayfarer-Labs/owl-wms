@@ -102,7 +102,7 @@ class StaticKVCache(nn.Module):
         self.n_uncached = config.tokens_per_frame  # TODO: remove and change so we cache all but latest t_pos
 
         B = batch_size
-        H = config.n_heads
+        H = getattr(config, "n_kv_heads", config.n_heads)
         L = max_seq_len * config.tokens_per_frame
         Dh = config.d_model // config.n_heads
         NL = config.n_layers
