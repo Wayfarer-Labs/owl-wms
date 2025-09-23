@@ -7,7 +7,7 @@ model:
   d_model: 3072
 
   mlp_ratio: 4
-  mlp_fp8: true
+  mlp_fp8: false
 
   tokens_per_frame: 256
   height: 16
