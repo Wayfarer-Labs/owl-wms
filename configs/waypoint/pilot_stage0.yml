@@ -32,7 +32,7 @@ model:
   gated_attn: true
   ####
 
-  noise_conditioning: adaln
+  noise_conditioning: wan
 
 train:
   trainer_id: world
