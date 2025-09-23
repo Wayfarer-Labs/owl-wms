@@ -69,9 +69,6 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-        if self.config.noise_conditioning == "wan":
-            cond = cond + self.conditioning_bias
-
         residual = x
         x = self.adaln[0](x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
@@ -114,9 +111,9 @@ class WorldDiT(nn.Module):
                 blk.adaln, blk.gate = ref.adaln, ref.gate
 
         if self.config.noise_conditioning == "wan":
-            self.conditioning_bias = nn.ModuleList([
-                nn.Parameter(torch.zeros(config.d_model)) for _ in range(config.n_layers)
-            ])
+            self.conditioning_bias = nn.ParameterList(
+                [nn.Parameter(torch.zeros(config.d_model)) for _ in range(config.n_layers)]
+            )
         else:
             self.conditioning_bias = [None] * config.n_layers
 
