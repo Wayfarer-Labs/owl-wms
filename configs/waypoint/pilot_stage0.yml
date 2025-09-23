@@ -6,6 +6,9 @@ model:
   n_kv_heads: 12
   d_model: 3072
 
+  mlp_ratio: 4
+  mlp_fp8: true
+
   tokens_per_frame: 256
   height: 16
   width: 16

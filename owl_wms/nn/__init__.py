@@ -6,3 +6,4 @@ from .embeddings import TimestepEmbedding, ControlEmbedding
 from .mlp import MLP, MLPCustom
 from .modulation import cond_adaln, cond_gate, Gate, AdaLN
 from .normalization import rms_norm
+from .quantized_linear import QLinear
