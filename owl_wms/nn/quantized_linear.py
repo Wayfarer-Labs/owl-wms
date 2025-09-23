@@ -109,7 +109,6 @@ class QLinear(nn.Linear):
 
     def forward(self, x: Tensor):
         orig_shape = x.shape
-        x = x.to(self.out_dtype)
         bias = self.bias.to(self.out_dtype) if self.bias is not None else None
         x = torch.ops.owl.mm(
             x.flatten(0, -2),
