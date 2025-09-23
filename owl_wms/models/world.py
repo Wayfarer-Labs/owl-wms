@@ -62,8 +62,6 @@ class WorldDiTBlock(nn.Module):
         dim = config.d_model
         self.adaln = nn.ModuleList([owl_nn.AdaLN(dim) for _ in range(3)])
         self.gate = nn.ModuleList([owl_nn.Gate(dim) for _ in range(3)])
-        if self.config.noise_conditioning == "wan":
-            self.conditioning_bias = nn.Parameter(torch.zeros(dim))
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -77,7 +75,8 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = self.adaln[0](x, cond)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = x + self.gate[0](residual, cond)
+        x = self.gate[0](x, cond)
+        x = x + residual
 
         """
         if prompt_emb is not None:
@@ -96,7 +95,8 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = self.adaln[2](x, cond)
         x = self.mlp(x)
-        x = x + self.gate[2](residual, cond)
+        x = self.gate[2](x, cond)
+        x = x + residual
 
         return x
 
@@ -112,6 +112,13 @@ class WorldDiT(nn.Module):
             ref = self.blocks[0]
             for blk in self.blocks[1:]:
                 blk.adaln, blk.gate = ref.adaln, ref.gate
+
+        if self.config.noise_conditioning == "wan":
+            self.conditioning_bias = nn.ModuleList([
+                nn.Parameter(torch.zeros(config.d_model)) for _ in range(config.n_layers)
+            ])
+        else:
+            self.conditioning_bias = [None] * config.n_layers
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
         ####
@@ -132,8 +139,9 @@ class WorldDiT(nn.Module):
             t_pos=t_pos,
             device=x.device
         )
-        for block, block_mask in zip(self.blocks, block_masks):
-            x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+        for block, block_mask, cond_bias in zip(self.blocks, block_masks, self.conditioning_bias):
+            cond_layer = cond + cond_bias if cond_bias is not None else cond
+            x = block(x, pos_ids, cond_layer, prompt_emb, ctrl_emb, block_mask, kv_cache)
         return x
 
 
