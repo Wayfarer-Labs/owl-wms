@@ -68,7 +68,7 @@ class AttnMaskScheduler:
             t_pos=t_pos,
             doc_id=doc_id,
             q_offset=q_offset,
-            is_causal=self.config.causal,
+            is_causal=getattr(self.config, "causal", True),
             device=device,
         )
         local_bm = get_block_mask(window_len=self.config.local_window, **kwargs)
@@ -171,7 +171,6 @@ class CrossAttentionSameFrame(nn.Module):
         out = flex_attention(q, k, v, block_mask=block_mask)
         out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
         return self.o(out)
-
 
 
 class DiTBlock(nn.Module):

@@ -6,34 +6,27 @@ model:
   n_kv_heads: 12
   d_model: 3072
 
-  n_controller_inputs: 13
-
-  cfg_prob: 0.1
-
-  causal: true
-  uncond: true
-  backbone: dit
-
-  rope_impl: motion
-  rope_ats_delta: 2.0
-
   tokens_per_frame: 256
   height: 16
   width: 16
-
-  n_frames: 2048  # train frames
-  base_fps: 50
 
   local_window: 16
   global_window: 64
   global_attn_period: 4
 
-  ####
-  gradient_checkpointing: true
-  gated_attn: true
-  ####
+  n_frames: 2048  # num RoPE cached frames
+  base_fps: 50  # FPS must be divisible by this. atomic time unit is 1/base_fps
 
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  gated_attn: true
   noise_conditioning: wan
+
+  n_controller_inputs: 13
+
+  cfg_prob: 0.1  # TODO: implement, currently unused
+
 
 train:
   trainer_id: world
