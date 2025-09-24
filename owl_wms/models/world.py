@@ -150,6 +150,11 @@ class WorldDiT(nn.Module):
                 blk.cond_head.cond_proj.weight = ref_proj.weight
                 blk.cond_head.cond_proj.bias = ref_proj.bias
 
+        # Shared RoPE buffers
+        ref_rope = self.blocks[0].attn.rope
+        for blk in self.blocks[1:]:
+            blk.attn.rope = ref_rope
+
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
         ####
         # TODO: REMOVE, just an experiment
