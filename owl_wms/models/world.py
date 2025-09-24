@@ -122,12 +122,17 @@ class WorldDiTBlock(nn.Module):
             x = self.cross_attn_same_frame(x, context=ctrl_emb)
             x = self.gate1(x, cond) + residual
         """
+        def _mlp(x_, s, b, g):
+            residual = x_
+            x_ = self.cond_adaln(x_, s, b)
+            x_ = self.mlp(x_)
+            x_ = self.cond_gate(x_, g)
+            return x_ + residual
 
-        residual = x
-        x = self.cond_adaln(x, s1, b1)
-        x = owl_nn.checkpoint(self.mlp, x) if self.config.gradient_checkpointing else self.mlp(x)
-        x = self.cond_gate(x, g1)
-        x = x + residual
+        if self.config.gradient_checkpointing and self.training:
+            x = owl_nn.checkpoint(_mlp, x, s1, b1, g1)
+        else:
+            x = _mlp(x, s1, b1, g1)
 
         return x
 
