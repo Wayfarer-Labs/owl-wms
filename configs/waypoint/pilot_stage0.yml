@@ -1,11 +1,11 @@
 model:
   channels: 64
 
-  n_layers: 18
+  n_layers: 22
   n_heads: 32
   n_kv_heads: 16
   d_model: 4096
-  mlp_ratio: 4
+  mlp_ratio: 5
 
   tokens_per_frame: 256
   height: 16
