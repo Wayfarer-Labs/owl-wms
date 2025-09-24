@@ -15,7 +15,7 @@ model:
   global_window: 64
   global_attn_period: 4
 
-  n_frames: 2048  # num RoPE cached frames
+  n_frames: 16384  # num RoPE cached frames
   base_fps: 50  # FPS must be divisible by this. atomic time unit is 1/base_fps
 
   rope_impl: motion
