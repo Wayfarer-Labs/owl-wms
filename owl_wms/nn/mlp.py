@@ -27,8 +27,12 @@ class MLPCustom(nn.Module):
 
 
 class MLP(MLPCustom):
-    def __init__(self, config : 'TransformerConfig'):
-        super().__init__(config.d_model, config.d_model * 4, config.d_model)
+    def __init__(self, config):
+        super().__init__(
+            config.d_model,
+            config.d_model * getattr(config, "mlp_ratio", 4),
+            config.d_model
+        )
 
     def forward(self, x):
         x = self.fc1(x)
