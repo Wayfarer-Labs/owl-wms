@@ -125,7 +125,8 @@ class WorldDiTBlock(nn.Module):
 
         residual = x
         x = self.cond_adaln(x, s1, b1)
-        x = owl_nn.checkpoint(self.mlp, x) if self.config.gradient_checkpointing else self.mlp(x)
+        # x = owl_nn.checkpoint(self.mlp, x) if self.config.gradient_checkpointing else self.mlp(x)
+        x = self.mlp(x)
         x = self.cond_gate(x, g1)
         x = x + residual
 
@@ -164,8 +165,18 @@ class WorldDiT(nn.Module):
             t_pos=t_pos,
             device=x.device
         )
-        for block, block_mask, in zip(self.blocks, block_masks):
-            x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+
+        ckpt_ok = self.config.gradient_checkpointing and self.training and (kv_cache is None)
+        base = dict(pos_ids=pos_ids, cond=cond, prompt_emb=prompt_emb, ctrl_emb=ctrl_emb)
+
+        for block, bm, in zip(self.blocks, block_masks):
+            kw = {**base, "block_mask": bm}
+            if ckpt_ok:
+                kw["kv_cache"] = None
+                x = owl_nn.checkpoint(lambda x_, kw=kw: block(x_, **kw), x)  # only x is a ckpt arg
+            else:
+                kw["kv_cache"] = kv_cache
+                x = block(x, **kw)
         return x
 
 
