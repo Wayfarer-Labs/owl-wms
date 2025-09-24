@@ -1,10 +1,10 @@
 model:
   channels: 64
 
-  n_layers: 32
-  n_heads: 24
-  n_kv_heads: 12
-  d_model: 3072
+  n_layers: 18
+  n_heads: 32
+  n_kv_heads: 16
+  d_model: 4096
   mlp_ratio: 4
 
   tokens_per_frame: 256
