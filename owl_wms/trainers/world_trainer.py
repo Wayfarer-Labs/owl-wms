@@ -238,10 +238,12 @@ class WorldTrainer(BaseTrainer):
         timer.reset()
 
         # eval / sample step
-        if self.total_step_counter % self.train_cfg.sample_interval == 0:
+        if self.total_step_counter % self.train_cfg.sample_interval == 0 and self.total_step_counter > 0:
             eval_wandb_dict = self.eval_step(sampler)
+            sample_wandb_dict = self.sample_step(sampler)
             if self.rank == 0:
                 wandb_dict.update(eval_wandb_dict)
+                wandb_dict.update(sample_wandb_dict)
 
         if self.rank == 0:
             wandb.log(wandb_dict, step=self.total_step_counter)
@@ -260,6 +262,21 @@ class WorldTrainer(BaseTrainer):
             return torch.cat(bufs, dim=dim)
         else:
             dist.gather(tc, dst=0, group=self.pg_cpu)
+
+    def eval_step(self, sampler, do_sample=True):
+        ema_model = self.ema.ema_model
+        ema_model.eval()
+
+        eval_wandb_dict = {}
+
+        # Always reset the eval-loss DataLoader so each eval starts from the beginning
+        ema_val_loss = self.aggregate_eval_loss(ema_model, self.eval_loader())
+        if self.rank == 0:
+            eval_wandb_dict = {"eval_loss": ema_val_loss}
+
+        dist.barrier()
+
+        return eval_wandb_dict
 
     def aggregate_eval_loss(self, model, loader):
         target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
@@ -282,7 +299,7 @@ class WorldTrainer(BaseTrainer):
 
         return num / max(1.0, den)
 
-    def eval_step(self, sampler):
+    def sample_step(self, sampler):
         ema_model = self.ema.ema_model
         ema_model.eval()
 
@@ -330,15 +347,4 @@ class WorldTrainer(BaseTrainer):
                 torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
             )
         eval_wandb_dict = to_wandb_samples(video_out, mouse, btn, fps=fps) if self.rank == 0 else None
-
-        # ---- Eval Loss ----
-        # Always reset the eval-loss DataLoader so each eval starts from the beginning
-        ema_val_loss = self.aggregate_eval_loss(ema_model, self.eval_loader())
-        online_val_loss = self.aggregate_eval_loss(self.get_raw_model(self.model), self.eval_loader())
-        if self.rank == 0:
-            eval_wandb_dict["eval_loss"] = ema_val_loss
-            eval_wandb_dict["online_model_eval_loss"] = online_val_loss
-
-        dist.barrier()
-
         return eval_wandb_dict
