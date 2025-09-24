@@ -1,11 +1,15 @@
 model:
   channels: 64
 
+  ####
   n_layers: 22
   n_heads: 32
   n_kv_heads: 16
   d_model: 4096
   mlp_ratio: 5
+
+  gradient_checkpointing: true
+  ####
 
   tokens_per_frame: 256
   height: 16
@@ -27,8 +31,6 @@ model:
   n_controller_inputs: 13
 
   cfg_prob: 0.1  # TODO: implement, currently unused
-
-  gradient_checkpointing: true
 
 
 train:
