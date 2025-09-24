@@ -187,6 +187,7 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
         for k, t in stacked.items()
         if k in batch_columns
     }
+    stacked["doc_id"] = stacked["doc_id"].long()
     if latent_column:
         stacked["x"] = stacked.pop(latent_column)
     assert len(stacked) == len(batch_columns)
