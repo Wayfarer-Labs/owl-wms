@@ -29,7 +29,7 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
-  gradient_checkpointing: false
+  gradient_checkpointing: true
 
 
 train:
