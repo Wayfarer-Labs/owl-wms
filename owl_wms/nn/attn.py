@@ -100,7 +100,7 @@ class Attn(nn.Module):
         self.gated_attn = getattr(config, "gated_attn", False)
         if self.gated_attn:
             self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
-            nn.init.zeros_(self.gate.weight)
+            nn.init.zeros_(self.gate_proj.weight)
 
     def forward(self, x, pos_ids, bm, kv_cache=None):
         # Q, K, V proj -> QK-norm -> RoPE
