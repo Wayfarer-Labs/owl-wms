@@ -36,6 +36,6 @@ class MLP(MLPCustom):
 
     def forward(self, x):
         x = self.fc1(x)
-        x = F.relu(x)
+        x = F.silu(x)
         x = self.fc2(x)
         return x
