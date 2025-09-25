@@ -32,9 +32,10 @@ class MLP(MLPCustom):
             config.d_model * getattr(config, "mlp_ratio", 4),
             config.d_model
         )
+        self.fc2.weight.detach().zero_()
 
     def forward(self, x):
         x = self.fc1(x)
-        x = F.relu(x).square()
+        x = F.relu(x)
         x = self.fc2(x)
         return x
