@@ -1,4 +1,6 @@
 import json
+import threading
+import uuid
 import numpy as np
 from pathlib import Path
 from typing import List, Any
@@ -16,6 +18,7 @@ class NpyTable:
     def __init__(self, directory: str, columns: List[str] | None = None, array_columns: set[str] | None = None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
         # set schema / ensure consistent with existing schema
         self.schema_path = self.directory / "schema.json"
@@ -50,20 +53,27 @@ class NpyTable:
         if set(row) != set(self.columns):
             raise ValueError(f"Expected columns {self.columns}, got {list(row)}")
 
-        idx = len(self.manifest)
         entry = {}
         for key, val in row.items():
             if key in self.array_columns:
-                path = self.directory / f"{key}_{idx}.npy"
+                uid = uuid.uuid4().hex
+                final_path = self.directory / f"{key}_{uid}.npy"
+                tmp_path = final_path.with_suffix(".npy.tmp")
                 arr = np.asarray(val, order="C")
-                with open(path, "wb", buffering=8 << 20) as f:  # 8 MiB buffer
+                with open(tmp_path, "wb", buffering=8 << 20) as f:  # 8 MiB buffer
                     np.save(f, arr, allow_pickle=False)
-                entry[key] = f"{key}_{idx}.npy"
+                tmp_path.replace(final_path)  # atomic publish
+                entry[key] = final_path.name
             else:
                 entry[key] = val
 
-        self.manifest.append(entry)
-        self.manifest_path.write_text(json.dumps(self.manifest))
+        # Atomic manifest update under a lock
+        with self._lock:
+            idx = len(self.manifest)          # position this row will take
+            self.manifest.append(entry)
+            tmp = self.manifest_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self.manifest))
+            tmp.replace(self.manifest_path)   # atomic publish
         return idx
 
     def add_column(self, name: str, values, array: bool = False):
@@ -73,25 +83,51 @@ class NpyTable:
             vals = list(values)  # accept any iterable
         except TypeError as e:
             raise TypeError("values must be an iterable") from e
-        if len(vals) != len(self):
-            raise ValueError(f"Expected {len(self)} values, got {len(vals)}")
+        # ---- Phase 1: take a stable snapshot under the lock ----
+        with self._lock:
+            baseline_len = len(self.manifest)
+        if len(vals) != baseline_len:
+            raise ValueError(f"Expected {baseline_len} values, got {len(vals)}")
 
-        self.columns.append(name)
+        # ---- Phase 2: do the heavy I/O without holding the lock ----
+        # Pre-write array blobs (tmp -> replace) so they are ready before publication.
+        # Store the final file names we will reference in the manifest.
+        file_names: list[str | None] = [None] * baseline_len
         if array:
-            self.array_columns.add(name)
-
-        for i, (entry, val) in enumerate(zip(self.manifest, vals)):
-            if array:
-                path = self.directory / f"{name}_{i}.npy"
-                with open(path, "wb", buffering=8 << 20) as f:
+            for i, val in enumerate(vals):
+                final_path = self.directory / f"{name}_{i}.npy"
+                tmp_path = final_path.with_suffix(".npy.tmp")
+                with open(tmp_path, "wb", buffering=8 << 20) as f:
                     np.save(f, np.asarray(val, order="C"), allow_pickle=False)
-                entry[name] = path.name
-            else:
-                entry[name] = val
+                tmp_path.replace(final_path)  # atomic publish of the blob
+                file_names[i] = final_path.name
 
-        self.schema_path.write_text(json.dumps({"columns": self.columns,
-                                                "array_columns": list(self.array_columns)}))
-        self.manifest_path.write_text(json.dumps(self.manifest))
+        # ---- Phase 3: publish atomically under the lock ----
+        with self._lock:
+            # Abort if table changed between phases (e.g., append happened).
+            if len(self.manifest) != baseline_len:
+                raise RuntimeError("Table changed during add_column; retry the operation")
+
+            # Update schema in-memory
+            self.columns.append(name)
+            if array:
+                self.array_columns.add(name)
+
+            # Update manifest in-memory
+            for i, entry in enumerate(self.manifest):
+                if array:
+                    entry[name] = file_names[i]  # already written
+                else:
+                    entry[name] = vals[i]
+
+            manifest_tmp = self.manifest_path.with_suffix(".json.tmp")
+            manifest_tmp.write_text(json.dumps(self.manifest))
+            manifest_tmp.replace(self.manifest_path)
+
+            schema_tmp = self.schema_path.with_suffix(".json.tmp")
+            schema_tmp.write_text(json.dumps({"columns": self.columns,
+                                              "array_columns": list(self.array_columns)}))
+            schema_tmp.replace(self.schema_path)
 
     def __getitem__(self, key):
         if isinstance(key, str):
@@ -102,17 +138,23 @@ class NpyTable:
             raise KeyError(f"Invalid key: {key!r}")
 
     def get(self, columns: List[str], rows: List[int] | None = None) -> List[List[Any]]:
-        invalid = set(columns) - set(self.columns)
+        with self._lock:
+            manifest_snapshot = [e.copy() for e in self.manifest]
+            array_cols = set(self.array_columns)
+            directory = self.directory
+            columns_snapshot = list(self.columns)
+
+        invalid = set(columns) - set(columns_snapshot)
         if invalid:
             raise KeyError(f"Unknown columns requested: {invalid}")
 
-        rows = range(len(self.manifest)) if rows is None else rows
+        rows = range(len(manifest_snapshot)) if rows is None else rows
 
         return [
             [
-                np.load(self.directory / self.manifest[r][col], mmap_mode="r")
-                if col in self.array_columns
-                else self.manifest[r][col]
+                np.load(directory / manifest_snapshot[r][col], mmap_mode="r")
+                if col in array_cols
+                else manifest_snapshot[r][col]
                 for r in rows
             ]
             for col in columns
