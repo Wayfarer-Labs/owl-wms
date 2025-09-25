@@ -82,7 +82,7 @@ train:
 
   opt: Muon
   opt_kwargs:
-    lr: 1.0e-3
+    lr: 1.0e-4
     momentum: 0.95
     adamw_lr: 1.0e-4
     adamw_wd: 1.0e-4
