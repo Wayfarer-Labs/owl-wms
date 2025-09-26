@@ -29,3 +29,4 @@ class MLP(MLPCustom):
             config.d_model * getattr(config, "mlp_ratio", 4),
             config.d_model
         )
+        self.fc2.weight.detach().zero_()
