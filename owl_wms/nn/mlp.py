@@ -6,17 +6,14 @@ class MLPCustom(nn.Module):
     def __init__(self, dim_in, dim_middle, dim_out):
         super().__init__()
 
-        self.fc1 = nn.Linear(dim_in, dim_middle)
-        self.fc2 = nn.Linear(dim_middle, dim_out)
+        self.fc1 = nn.Linear(dim_in, dim_middle, bias=False)
+        self.fc2 = nn.Linear(dim_middle, dim_out, bias=False)
 
         nn.init.kaiming_normal_(self.fc1.weight)
         nn.init.kaiming_normal_(self.fc2.weight)
 
         self.fc1.weight.data *= dim_in ** -0.5
         self.fc2.weight.data *= dim_middle ** -0.5
-
-        nn.init.zeros_(self.fc1.bias)
-        nn.init.zeros_(self.fc2.bias)
 
     def forward(self, x):
         x = self.fc1(x)
