@@ -2,24 +2,14 @@ import torch
 import einops as eo
 from torch import nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from .normalization import rms_norm
-from .mlp import MLP
-
-
-from .modulation import AdaLN, Gate
 from .rope import get_rope
 
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 
 create_block_mask = torch.compile(create_block_mask)
 flex_attention = torch.compile(flex_attention)
-
-
-def checkpoint(function, *args, **kwargs):
-    kwargs.setdefault("use_reentrant", False)
-    return torch_checkpoint(function, *args, **kwargs)
 
 
 def get_block_mask(
@@ -175,53 +165,6 @@ class CrossAttentionSameFrame(nn.Module):
         out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
         return self.o(out)
 
-
-class DiTBlock(nn.Module):
-    def __init__(self, config, layer_idx):
-        super().__init__()
-
-        dim = config.d_model
-
-        self.attn = Attn(config, layer_idx)
-        self.mlp = MLP(config)
-
-        self.adaln1 = AdaLN(dim)
-        self.gate1 = Gate(dim)
-        self.adaln2 = AdaLN(dim)
-        self.gate2 = Gate(dim)
-
-    def forward(self, x, cond, block_mask, kv_cache=None):
-        residual = x
-        x = self.adaln1(x, cond)
-        x = self.attn(x, block_mask, kv_cache)
-        x = self.gate1(x, cond)
-        x = residual + x
-
-        residual = x
-        x = self.adaln2(x, cond)
-        x = self.mlp(x)
-        x = self.gate2(x, cond)
-        x = residual + x
-
-        return x
-
-
-class DiT(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.attn_masker = AttnMaskScheduler(config)
-        self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
-
-    def forward(self, x, cond, doc_id=None, kv_cache=None):
-        enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
-        block_masks = self.attn_masker(seq_len=x.size(1), doc_id=doc_id, kv_cache=kv_cache, device=x.device)
-        for block, block_mask in zip(self.blocks, block_masks):
-            if enable_ckpt:
-                x = checkpoint(block, x, cond, block_mask, kv_cache)
-            else:
-                x = block(x, cond, block_mask, kv_cache)
-        return x
 
 
 class SkipConnection(nn.Module):

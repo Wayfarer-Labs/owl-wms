@@ -2,12 +2,61 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .. import nn as owl_nn
 from ..nn.embeddings import TimestepEmbedding, ControlEmbedding
-from ..nn.attn import DiT, FinalLayer
+from ..nn.attn import AttnMaskScheduler
 
 import einops as eo
 from einops._torch_specific import allow_ops_in_compiled_graph
 allow_ops_in_compiled_graph()
+
+
+class DiTBlock(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+
+        dim = config.d_model
+
+        self.attn = owl_nn.Attn(config, layer_idx)
+        self.mlp = owl_nn.MLP(config)
+
+        self.adaln1 = owl_nn.AdaLN(dim)
+        self.gate1 = owl_nn.Gate(dim)
+        self.adaln2 = owl_nn.AdaLN(dim)
+        self.gate2 = owl_nn.Gate(dim)
+
+    def forward(self, x, cond, block_mask, kv_cache=None):
+        residual = x
+        x = self.adaln1(x, cond)
+        x = self.attn(x, block_mask, kv_cache)
+        x = self.gate1(x, cond)
+        x = residual + x
+
+        residual = x
+        x = self.adaln2(x, cond)
+        x = self.mlp(x)
+        x = self.gate2(x, cond)
+        x = residual + x
+
+        return x
+
+
+class DiT(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.attn_masker = AttnMaskScheduler(config)
+        self.blocks = nn.ModuleList([DiTBlock(config, idx) for idx in range(config.n_layers)])
+
+    def forward(self, x, cond, doc_id=None, kv_cache=None):
+        enable_ckpt = self.training and getattr(self.config, "gradient_checkpointing", False)
+        block_masks = self.attn_masker(seq_len=x.size(1), doc_id=doc_id, kv_cache=kv_cache, device=x.device)
+        for block, block_mask in zip(self.blocks, block_masks):
+            if enable_ckpt:
+                x = owl_nn.checkpoint(block, x, cond, block_mask, kv_cache)
+            else:
+                x = block(x, cond, block_mask, kv_cache)
+        return x
 
 
 class GameRFTCore(nn.Module):
@@ -33,7 +82,7 @@ class GameRFTCore(nn.Module):
 
         self.proj_in = nn.Conv3d(
             config.channels, config.d_model, kernel_size=patch_size, stride=patch_stride, bias=False, padding=0)
-        self.proj_out = FinalLayer(
+        self.proj_out = owl_nn.FinalLayer(
             config.d_model, config.channels, kernel_size=patch_size, stride=patch_stride, bias=True)
 
         self.uncond = config.uncond

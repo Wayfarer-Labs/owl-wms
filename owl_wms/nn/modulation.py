@@ -25,6 +25,7 @@ class AdaLN(nn.Module):
         x = rms_norm(x) * (1 + a) + b_
         return x
 
+
 class Gate(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -43,21 +44,13 @@ class Gate(nn.Module):
         return c * x
 
 
-def cond_adaln(x, scale, bias):
-    # scale,bias: [b, n, d], x: [b, n*m, d]
-    b, nm, d = *x.shape[:2], x.size(-1)
-    n = scale.size(1)
-    m = nm // n
-    # broadcast [b,n,d] → [b,n*m,d]
-    scale = scale.view(b, n, 1, d).expand(-1,-1,m,-1).reshape(b, nm, d)
-    bias  = bias .view(b, n, 1, d).expand(-1,-1,m,-1).reshape(b, nm, d)
-    x_norm = rms_norm(x)
-    return x_norm * (1 + scale) + bias
+class FinalLayer(nn.Module):
+    def __init__(self, d_model, channels, patch_size=1):
+        super().__init__()
+        self.norm = AdaLN(d_model)
+        self.act = nn.SiLU()
+        self.proj = nn.Linear(d_model, channels * patch_size * patch_size)
 
-def cond_gate(x, gate):
-    # gate: [b, n, d], x: [b, n*m, d]
-    b, nm, d = *x.shape[:2], x.size(-1)
-    n = gate.size(1)
-    m = nm // n
-    gate = gate.view(b, n, 1, d).expand(-1,-1,m,-1).reshape(b, nm, d)
-    return gate * x
+    def forward(self, x, cond):
+        x = self.norm(x, cond)
+        return self.proj(F.silu(x))

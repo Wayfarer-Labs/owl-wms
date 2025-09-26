@@ -1,9 +1,7 @@
-from .attn import checkpoint  # TODO: move elsewhere
-from .attn import FinalLayer  # TODO: move elsewhere
-
 from .attn import get_block_mask, AttnMaskScheduler, Attn, CrossAttention, CrossAttentionSameFrame
+from .checkpointing import checkpoint
 from .embeddings import TimestepEmbedding, ControlEmbedding
 from .mlp import MLP, MLPCustom
-from .modulation import cond_adaln, cond_gate, Gate, AdaLN
+from .modulation import Gate, AdaLN, FinalLayer
 from .normalization import rms_norm
 from .quantized_linear import QLinear

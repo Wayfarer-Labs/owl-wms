@@ -6,23 +6,6 @@ import math
 from .mlp import MLPCustom
 
 
-
-class LearnedPosEnc(nn.Module):
-    def __init__(self, n_seq, dim):
-        super().__init__()
-
-        self.n_seq = n_seq
-        self.p = nn.Parameter(torch.randn(n_seq,dim)*0.02)
-
-    def forward(self, x):
-        b,n,d = x.shape
-        if n < self.n_seq:
-            # Only add positional embeddings for the last n tokens
-            p = self.p[-n:].unsqueeze(0).repeat(b, 1, 1)
-        else:
-            p = self.p.unsqueeze(0).repeat(b, 1, 1)
-        return x + p
-
 class SinCosEmbed(nn.Module):
     def __init__(self, dim, theta=300, mult=1000):
         super().__init__()
@@ -70,6 +53,7 @@ class SinCosEmbed(nn.Module):
 
         return emb.to(orig_dtype)
 
+
 class TimestepEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -82,38 +66,6 @@ class TimestepEmbedding(nn.Module):
         x = self.mlp(x)
         return x
 
-class StepEmbedding(nn.Module):
-    def __init__(self, d_out, d_in=512, max_steps=128):
-        super().__init__()
-
-        self.mlp = MLPCustom(d_in, dim_middle = 4 * d_out, dim_out=d_out)
-        self.max_steps = max_steps
-        mult = 1000 / math.log2(max_steps)
-        self.sincos = SinCosEmbed(d_in, theta=300, mult=mult)
-
-    def forward(self, steps):
-        if not isinstance(steps, torch.Tensor):
-            steps = torch.tensor(steps, device=self.mlp.fc_uv.weight.device, dtype=self.mlp.fc_uv.weight.dtype)
-        if steps.ndim == 0:
-            steps = steps.unsqueeze(0)
-
-        # Map steps to [0, log2(max_steps)]
-        t = (math.log2(self.max_steps) - torch.log2(steps.float())).to(steps.dtype)
-        embs = self.sincos(t)
-        return self.mlp(embs)
-
-class ConditionEmbedding(nn.Module):
-    def __init__(self, n_classes, dim):
-        super().__init__()
-
-        self.embedding = nn.Embedding(n_classes, dim)
-        self.mlp = MLPCustom(dim, dim * 4, dim)
-
-    def forward(self, x):
-        # x is long tensor of [b,]
-        x = self.embedding(x)
-        x = self.mlp(x)
-        return x
 
 class MouseEmbedding(nn.Module):
     def __init__(self, dim_out, dim=512):
@@ -154,6 +106,7 @@ class MouseEmbedding(nn.Module):
         x = self.mlp(x)
         return x
 
+
 class ButtonEmbeddding(nn.Module):
     def __init__(self, n_buttons, dim_out, dim=512):
         super().__init__()
@@ -165,6 +118,7 @@ class ButtonEmbeddding(nn.Module):
         x = (x * 2) - 1
         x = self.proj(x)
         return x
+
 
 class ControlEmbedding(nn.Module):
     def __init__(self, n_buttons, dim_out, dim = 512):
