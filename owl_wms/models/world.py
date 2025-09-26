@@ -56,7 +56,7 @@ class ControllerInputEmbedding(nn.Module):
 
 class CondHead(nn.Module):
     """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
-    n_cond = 4
+    n_cond = 2
 
     def __init__(self, config):
         super().__init__()
@@ -98,7 +98,7 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = self.cond_adarmsnorm(x, s)
         x = self.mlp(x)
-        x = self.cond_gate(x, g)
+        #x = self.cond_gate(x, g)
         return x + residual
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
@@ -107,13 +107,13 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-        #layer_bias, s0, g0, s1, g1 = self.cond_head(cond)
-        s0, g0, s1, g1 = self.cond_head(cond)
+        #s0, g0, s1, g1 = self.cond_head(cond)
+        s0, s1 = self.cond_head(cond)
 
         residual = x
-        x = self.cond_adarmsnorm(x, s0)# + layer_bias.unsqueeze(1)
+        x = self.cond_adarmsnorm(x, s0)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.cond_gate(x, g0)
+        #x = self.cond_gate(x, g0)
         x = x + residual
 
         """
@@ -131,10 +131,7 @@ class WorldDiTBlock(nn.Module):
         """
 
         do_ckpt = self.config.gradient_checkpointing and self.training
-        if do_ckpt:
-            x = owl_nn.checkpoint(self.conditioned_mlp, x, s1, g1)
-        else:
-            x = self.conditioned_mlp(x, s1, g1)
+        x = owl_nn.maybe_ckpt(do_ckpt, self.conditioned_mlp, x, s1, None)
 
         return x
 
