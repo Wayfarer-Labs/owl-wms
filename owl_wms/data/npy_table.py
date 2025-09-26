@@ -39,9 +39,12 @@ class NpyTable:
         self.columns = columns
         self.array_columns = set(array_columns)
 
-        self.manifest_path = self.directory / "manifest.json"
+        self.manifest_path = self.directory / "manifest.jsonl"
         if self.manifest_path.exists():
-            self.manifest = json.loads(self.manifest_path.read_text())
+            self.manifest = [json.loads(entry) for entry in self.manifest_path.read_text().splitlines()]
+        elif (self.directory / "manifest.json").exists():
+            self.manifest = json.loads((self.directory / "manifest.json").read_text())
+            self.manifest_path.write_text("".join(f"{json.dumps(e)}\n" for e in self.manifest))
         else:
             self.manifest = []
 
@@ -71,9 +74,8 @@ class NpyTable:
         with self._lock:
             idx = len(self.manifest)          # position this row will take
             self.manifest.append(entry)
-            tmp = self.manifest_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(self.manifest))
-            tmp.replace(self.manifest_path)   # atomic publish
+            with open(self.manifest_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
         return idx
 
     def add_column(self, name: str, values, array: bool = False):
@@ -121,7 +123,7 @@ class NpyTable:
                     entry[name] = vals[i]
 
             manifest_tmp = self.manifest_path.with_suffix(".json.tmp")
-            manifest_tmp.write_text(json.dumps(self.manifest))
+            manifest_tmp.write_text("".join(f"{json.dumps(e)}\n" for e in self.manifest))
             manifest_tmp.replace(self.manifest_path)
 
             schema_tmp = self.schema_path.with_suffix(".json.tmp")
