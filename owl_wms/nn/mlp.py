@@ -17,14 +17,14 @@ class MLPCustom(nn.Module):
 
         self.mlp_glu = mlp_glu
         if self.mlp_glu:
-            self.gate_proj = nn.Linear(dim_in, dim_middle, bias=False)
-            nn.init.xavier_uniform_(self.gate_proj.weight)
+            self.glu_proj = nn.Linear(dim_in, dim_middle, bias=False)
+            nn.init.xavier_uniform_(self.glu_proj.weight)
 
     def forward(self, x):
         if not self.mlp_glu:
             x = F.silu(self.up_proj(x))
         else:
-            x = F.silu(self.up_proj(x)) * self.gate_proj(x)
+            x = F.silu(self.up_proj(x)) * self.glu_proj(x)
         return self.down_proj(x)
 
 
