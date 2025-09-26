@@ -56,7 +56,7 @@ class ControllerInputEmbedding(nn.Module):
 
 class CondHead(nn.Module):
     """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
-    n_cond = 6
+    n_cond = 4
 
     def __init__(self, config):
         super().__init__()
@@ -107,10 +107,11 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-        s0, _, g0, s1, _, g1 = self.cond_head(cond)
+        #layer_bias, s0, g0, s1, g1 = self.cond_head(cond)
+        s0, g0, s1, g1 = self.cond_head(cond)
 
         residual = x
-        x = self.cond_adarmsnorm(x, s0)
+        x = self.cond_adarmsnorm(x, s0)# + layer_bias.unsqueeze(1)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
         x = self.cond_gate(x, g0)
         x = x + residual
