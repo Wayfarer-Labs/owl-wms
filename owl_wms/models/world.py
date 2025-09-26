@@ -134,7 +134,7 @@ class WorldDiTBlock(nn.Module):
         if do_ckpt:
             x = owl_nn.checkpoint(self.conditioned_mlp, x, s1, g1)
         else:
-            self.conditioned_mlp(x, s1, g1)
+            x = self.conditioned_mlp(x, s1, g1)
 
         return x
 
