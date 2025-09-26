@@ -27,12 +27,15 @@ class MLPCustom(nn.Module):
 
 class MLP(MLPCustom):
     def __init__(self, config):
-        super().__init__(
-            config.d_model,
-            config.d_model * getattr(config, "mlp_ratio", 4),
-            config.d_model
-        )
-        self.fc2.weight.detach().zero_()
+        dim_middle = config.d_model * getattr(config, "mlp_ratio", 4)
+
+        super().__init__(config.d_model, dim_middle, config.d_model)
+
+        nn.init.kaiming_normal_(self.fc1.weight, mode='fan_in', nonlinearity='relu')
+        nn.init.normal_(self.fc2.weight, mean=0.0, std=1.0 / dim_middle**0.5)
+
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.zeros_(self.fc2.bias)
 
     def forward(self, x):
         x = self.fc1(x)
