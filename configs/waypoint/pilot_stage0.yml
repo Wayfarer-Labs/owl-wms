@@ -6,7 +6,7 @@ model:
   n_heads: 24
   n_kv_heads: 12
   d_model: 3072
-  mlp_ratio: 4
+  mlp_ratio: 2.66667
 
   gradient_checkpointing: false
   ####
