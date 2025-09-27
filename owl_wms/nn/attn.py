@@ -84,7 +84,6 @@ class Attn(nn.Module):
         qkv_out = (self.n_heads + 2 * self.n_kv_heads) * self.d_head
         self.qkv_proj = nn.Linear(config.d_model, qkv_out, bias=False)
         self.out_proj = nn.Linear(config.d_model, config.d_model, bias=False)
-        self.out_proj.weight.detach().zero_()
 
         self.rope = get_rope(config)
 

@@ -56,7 +56,7 @@ class ControllerInputEmbedding(nn.Module):
 
 class CondHead(nn.Module):
     """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
-    n_cond = 3
+    n_cond = 4
 
     def __init__(self, config):
         super().__init__()
@@ -86,8 +86,13 @@ class WorldDiTBlock(nn.Module):
 
     @staticmethod
     def adaRN(x, scale):
-        x = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
-        return eo.rearrange(owl_nn.rms_norm(x) * (1 + scale.unsqueeze(2)), 'b n m d -> b (n m) d')
+        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
+        return eo.rearrange(owl_nn.rms_norm(x4) * (1 + scale.unsqueeze(2)), 'b n m d -> b (n m) d')
+
+    @staticmethod
+    def adaGate(x, gate):
+        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=gate.size(1))
+        return eo.rearrange(x4 * gate.unsqueeze(2), 'b n m d -> b (n m) d')
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -95,12 +100,12 @@ class WorldDiTBlock(nn.Module):
         1) Frame->Text Cross Attention
         2) MLP
         """
-        layer_shift, attn_scale, mlp_scale = self.cond_head(cond)
+        scale0, gate0, scale1, gate1 = self.cond_head(cond)
 
-        x = x + layer_shift.repeat_interleave(x.shape[1] // layer_shift.shape[1], 1)
         residual = x
-        x = self.adaRN(x, attn_scale) +
+        x = self.adaRN(x, scale0)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
+        x = self.adaGate(x, gate0)
         x = x + residual
 
         """
@@ -116,11 +121,13 @@ class WorldDiTBlock(nn.Module):
             x = self.cross_attn_same_frame(x, context=ctrl_emb)
             x = self.gate1(x, cond) + residual
         """
-        def cond_mlp(x1, s1):
-            return self.mlp(self.adaRN(x1, s1)) + x1
+        def cond_mlp(x1, s1, g1):
+            return self.adaGate(
+                self.mlp(self.adaRN(x1, s1)), g1
+            ) + x1
 
         do_ckpt = self.config.gradient_checkpointing and self.training
-        x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, mlp_scale)
+        x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, scale1, gate1)
 
         return x
 
