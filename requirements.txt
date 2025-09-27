@@ -12,7 +12,7 @@ python-dotenv
 wandb[media]
 moviepy==1.0.3
 fvcore
-pynvml
+nvidia-ml-py
 vector-quantize-pytorch==1.22.17
 git+https://github.com/shahbuland/PerceptualSimilarity
 torchmetrics
