@@ -97,8 +97,9 @@ class WorldDiTBlock(nn.Module):
         """
         layer_shift, attn_scale, mlp_scale = self.cond_head(cond)
 
+        x = x + layer_shift.repeat_interleave(x.shape[1] // layer_shift.shape[1], 1)
         residual = x
-        x = self.adaRN(x, attn_scale) + layer_shift.repeat_interleave(x.shape[1] // layer_shift.shape[1], 1)
+        x = self.adaRN(x, attn_scale) +
         x = self.attn(x, pos_ids, block_mask, kv_cache)
         x = x + residual
 
