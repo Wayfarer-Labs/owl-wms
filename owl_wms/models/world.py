@@ -190,7 +190,7 @@ class WorldModel(nn.Module):
         self.config = config
         assert config.tokens_per_frame == config.height * config.width
 
-        self.denoise_step_emb = owl_nn.TimestepEmbedding(config.d_model)
+        self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model, fourier_dim=512, base=300.0, mode='orig')
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
 
         self.transformer = WorldDiT(config)
