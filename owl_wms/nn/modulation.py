@@ -9,6 +9,10 @@ class AdaLN(nn.Module):
         super().__init__()
         self.fc = nn.Linear(dim, 2 * dim)
 
+        # AdaLN-Zero
+        self.fc.weight.detach().zero_()
+        self.fc.bias.detach().zero_()
+
     def forward(self, x, cond):
         # cond: [b, n, d], x: [b, n*m, d]
         b, n, d = cond.shape
