@@ -2,7 +2,7 @@ model:
   channels: 64
 
   ####
-  n_layers: 18
+  n_layers: 14
   n_heads: 24
   n_kv_heads: 12
   d_model: 3072
