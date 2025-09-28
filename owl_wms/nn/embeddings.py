@@ -1,53 +1,33 @@
 import torch
 from torch import nn
+import math
 
 from .mlp import MLPCustom
 
 
 class NoiseConditioner(nn.Module):
-    """
-    Minimal timestep/noise conditioner.
-      h = TimestepEmbedding(dim, fourier_dim=512, base=10_000.0, mode='logit', scale=1.0)(sigma)
-    modes:
-      - 'logit'  : s = logit(clamp(sigma))
-      - 'logsnr' : s = -2*log(clamp(sigma))
-      - 'orig'   : s = sigma * scale        # matches your prior behavior (set base=300, scale=1000)
-      - 'rf_logsnr'  : s = 2*(log(1-σ) - log(σ))     # rectified-flow consistent
-      - 'cos_logsnr' : s = 2*(log(cos(π/2·σ)) - log(sin(π/2·σ)))  # cosine schedule scalar
-    Computes in fp32, casts back to input dtype. Accepts scalar/[B]/[B,N], returns [..., dim].
-    """
-    def __init__(self, dim, fourier_dim=512, base=10_000.0, mode='logit'):
+    """Sigma -> logSNR -> Fourier Features -> Dense"""
+    def __init__(self, dim, fourier_dim=512, base=10_000.0):
         super().__init__()
-        self.mode = mode
         assert fourier_dim % 2 == 0
         half = fourier_dim // 2
         self.freq = nn.Buffer(torch.logspace(0, -1, steps=half, base=base, dtype=torch.float32), persistent=False)
         self.mlp = MLPCustom(fourier_dim, dim * 4, dim)
 
-    def forward(self, s):
+    def forward(self, s, eps=torch.finfo(torch.float32).eps):
         assert self.freq.dtype == torch.float32
         orig_dtype, shape = s.dtype, s.shape
 
         with torch.autocast("cuda", enabled=False):
-            s = s.reshape(-1).float()
-            eps = torch.finfo(s.dtype).eps
+            s = s.reshape(-1).float()  # fp32 for fourier numerical stability
             s = s.clamp(eps, 1 - eps)
+            s = -2.0 * torch.logit(s)  # logSNR
 
-            if self.mode == 'logsnr':
-                s = -2.0 * torch.log(s)
-            elif self.mode == 'rf_logsnr':
-                s = 2.0 * (torch.log1p(-s) - torch.log(s))
-            elif self.mode == 'cos_logsnr':
-                s = 2.0 * (torch.log(torch.cos(0.5*torch.pi*s)) - torch.log(torch.sin(0.5*torch.pi*s)))
-            elif self.mode == 'orig':
-                s = 1000.0 * s
-            else:  # 'logit'
-                s = torch.logit(s)
-
+            # calculate fourier features
             phase = s[:, None] * self.freq[None, :]
             emb = torch.cat((torch.sin(phase), torch.cos(phase)), dim=-1)
-            if self.mode != "orig":
-                emb = 2.0**0.5 * emb
+            emb = emb * math.sqrt(2)  # Ensure unit variance
+
             emb = self.mlp(emb)
             return emb.view(*shape, -1).to(orig_dtype)
 
