@@ -55,6 +55,11 @@ class FinalLayer(nn.Module):
         self.act = nn.SiLU()
         self.proj = nn.Linear(d_model, channels * patch_size * patch_size)
 
+        # AdaLN-Zero
+        self.proj.weight.detach().zero_()
+        self.proj.bias.detach().zero_()
+
+
     def forward(self, x, cond):
         x = self.norm(x, cond)
         return self.proj(F.silu(x))
