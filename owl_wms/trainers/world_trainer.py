@@ -25,6 +25,11 @@ import torch._dynamo as dynamo
 dynamo.config.recompile_limit = 32
 
 
+# speed up fp32
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.set_float32_matmul_precision("high")
+
+
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
     def __init__(self, *args, **kwargs):

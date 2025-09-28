@@ -59,7 +59,6 @@ class FinalLayer(nn.Module):
         self.proj.weight.detach().zero_()
         self.proj.bias.detach().zero_()
 
-
     def forward(self, x, cond):
         x = self.norm(x, cond)
         return self.proj(F.silu(x))
