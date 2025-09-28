@@ -2,6 +2,6 @@ from .attn import get_block_mask, AttnMaskScheduler, Attn, CrossAttention, Cross
 from .checkpointing import checkpoint, maybe_ckpt
 from .embeddings import TimestepEmbedding, ControlEmbedding, NoiseConditioner
 from .mlp import MLP, MLPCustom
-from .modulation import Gate, AdaLN, FinalLayer
+from .modulation import Gate, AdaLN, FinalLayer, ada_rmsnorm, ada_gate
 from .normalization import rms_norm
 from .quantized_linear import QLinear

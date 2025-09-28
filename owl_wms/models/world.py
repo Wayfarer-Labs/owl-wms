@@ -56,7 +56,7 @@ class ControllerInputEmbedding(nn.Module):
 
 class CondHead(nn.Module):
     """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
-    n_cond = 4
+    n_cond = 6
 
     def __init__(self, config):
         super().__init__()
@@ -84,28 +84,18 @@ class WorldDiTBlock(nn.Module):
         self.mlp = owl_nn.MLP(config)
         self.cond_head = CondHead(config)
 
-    @staticmethod
-    def adaRN(x, scale):
-        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
-        return eo.rearrange(owl_nn.rms_norm(x4) * (1 + scale.unsqueeze(2)), 'b n m d -> b (n m) d')
-
-    @staticmethod
-    def adaGate(x, gate):
-        x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=gate.size(1))
-        return eo.rearrange(x4 * gate.unsqueeze(2), 'b n m d -> b (n m) d')
-
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
         0) Causal Frame Attention
-        1) Frame->Text Cross Attention
+        1) Frame->Text Cross Attention (TODO)
         2) MLP
         """
-        scale0, gate0, scale1, gate1 = self.cond_head(cond)
+        s0, b0, g0, s1, b1, g1 = self.cond_head(cond)
 
         residual = x
-        x = self.adaRN(x, scale0)
+        x = owl_nn.ada_rmsnorm(x, s0, b0)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = self.adaGate(x, gate0)
+        x = owl_nn.ada_gate(x, g0)
         x = x + residual
 
         """
@@ -121,13 +111,12 @@ class WorldDiTBlock(nn.Module):
             x = self.cross_attn_same_frame(x, context=ctrl_emb)
             x = self.gate1(x, cond) + residual
         """
-        def cond_mlp(x1, s1, g1):
-            return self.adaGate(
-                self.mlp(self.adaRN(x1, s1)), g1
-            ) + x1
+        def cond_mlp(xm, sm, bm, gm):
+            y = self.mlp(owl_nn.ada_rmsnorm(xm, sm, bm))
+            return xm + owl_nn.ada_gate(y, gm)
 
         do_ckpt = self.config.gradient_checkpointing and self.training
-        x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, scale1, gate1)
+        x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, s1, b1, g1)
 
         return x
 

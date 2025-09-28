@@ -1,6 +1,8 @@
 from torch import nn
 import torch.nn.functional as F
 
+import einops as eo
+
 from .normalization import rms_norm
 
 
@@ -55,10 +57,17 @@ class FinalLayer(nn.Module):
         self.act = nn.SiLU()
         self.proj = nn.Linear(d_model, channels * patch_size * patch_size)
 
-        # AdaLN-Zero
-        self.proj.weight.detach().zero_()
-        self.proj.bias.detach().zero_()
-
     def forward(self, x, cond):
         x = self.norm(x, cond)
         return self.proj(F.silu(x))
+
+
+def ada_rmsnorm(x, scale, bias):
+    x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
+    y4 = rms_norm(x4) * (1 + scale.unsqueeze(2)) + bias.unsqueeze(2)
+    return eo.rearrange(y4, 'b n m d -> b (n m) d')
+
+
+def ada_gate(x, gate):
+    x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=gate.size(1))
+    return eo.rearrange(x4 * gate.unsqueeze(2), 'b n m d -> b (n m) d')
