@@ -60,7 +60,11 @@ class WorldTrainer(BaseTrainer):
 
         self.prompt_encoder = PromptEncoder(self.train_cfg.prompt_encoder_model_id)
 
-        self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
+        # self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
+        from transformer_engine.common.recipe import Format, MXFP8BlockScaling
+        from transformer_engine.pytorch import fp8_autocast
+        recipe = MXFP8BlockScaling(fp8_format=Format.E4M3)
+        self.autocast_ctx = fp8_autocast(enabled=True, fp8_recipe=recipe)
 
         self.total_accum_steps = self.train_cfg.total_accum_steps
         assert self.total_accum_steps % self.world_size == 0
