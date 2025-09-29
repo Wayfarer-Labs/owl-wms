@@ -60,11 +60,12 @@ class WorldTrainer(BaseTrainer):
 
         self.prompt_encoder = PromptEncoder(self.train_cfg.prompt_encoder_model_id)
 
-        # self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
+        self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
+
         from transformer_engine.common.recipe import Format, MXFP8BlockScaling
         from transformer_engine.pytorch import fp8_autocast
-        recipe = MXFP8BlockScaling(fp8_format=Format.E4M3)
-        self.autocast_ctx = fp8_autocast(enabled=True, fp8_recipe=recipe)
+        self.te_autocast_ctx = fp8_autocast(enabled=True, fp8_recipe=MXFP8BlockScaling(fp8_format=Format.E4M3))
+        # fp8_recipe=DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="most_recent", margin=1))
 
         self.total_accum_steps = self.train_cfg.total_accum_steps
         assert self.total_accum_steps % self.world_size == 0
@@ -240,7 +241,8 @@ class WorldTrainer(BaseTrainer):
             v_target = x1 - x0
 
         with self.autocast_ctx:
-            v_pred = model(x_t, sigma, **kw)
+            with self.te_autocast_ctx:
+                v_pred = model(x_t, sigma, **kw)
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
@@ -323,10 +325,11 @@ class WorldTrainer(BaseTrainer):
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
         with self.autocast_ctx:
-            latent_vid = sampler(
-                ema_model, vid, prompt_emb, controller_inputs,
-                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-            )
+            with self.te_autocast_ctx:
+                latent_vid = sampler(
+                    ema_model, vid, prompt_emb, controller_inputs,
+                    fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
+                )
 
         if self.sampler_only_return_generated:
             latent_vid, controller_inputs = (
