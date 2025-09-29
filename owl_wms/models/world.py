@@ -245,7 +245,9 @@ class WorldModel(nn.Module):
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
-        assert fps.dim() == 1 and fps.dtype == torch.long and torch.all(self.config.base_fps % fps == 0)
+        assert fps.dim() == 1 and fps.dtype == torch.long
+        if not (self.config.base_fps % fps).eq(0).all():
+            raise ValueError(f"base_fps={int(self.config.base_fps)} seen_fps={torch.unique(fps.detach().cpu()).tolist()}")
         scale = (self.config.base_fps // fps).unsqueeze(1)
         return torch.arange(num_frames, device=device).unsqueeze(0) * scale
 

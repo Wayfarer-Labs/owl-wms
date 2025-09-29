@@ -42,6 +42,7 @@ class WindowedViewDataset(Dataset):
         include_truncated: bool = True,
         meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
+        base_fps: int | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
@@ -60,6 +61,13 @@ class WindowedViewDataset(Dataset):
             mask &= ~miss
         if not include_truncated:
             mask &= ~trunc
+        if base_fps is not None:
+            mask &= (base_fps % fps) == 0
+
+        sel = fps[mask]
+        bad = np.unique([f for f in sel if any(f % p for p in self.sampling_periods)])
+        if bad.size:
+            raise ValueError(f"bad fps for {self.sampling_periods}: {bad.tolist()}")
 
         self._docs = np.nonzero(mask)[0]
         self._lens = seq_len[mask].astype(np.int64)
@@ -193,13 +201,27 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     return stacked
 
 
-def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=None, sampling_periods: tuple = (1,)):
+def get_loader(
+        dataset_path,
+        seq_len,
+        batch_columns,
+        latent_column,
+        batch_size=1,
+        sampling_periods: tuple = (1,),
+        base_fps=None
+):
     assert batch_size == 1
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    ds = WindowedViewDataset(dataset_path, seq_len, array_columns=batch_columns, sampling_periods=sampling_periods)
+    ds = WindowedViewDataset(
+        dataset_path,
+        seq_len,
+        array_columns=batch_columns,
+        sampling_periods=sampling_periods,
+        base_fps=base_fps
+    )
 
     sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
     loader_kwargs = dict(sampler=sampler, shuffle=False)  # always shuffle in sampler

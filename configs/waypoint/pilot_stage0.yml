@@ -15,12 +15,12 @@ model:
   height: 16
   width: 16
 
-  local_window: 16
-  global_window: 64
+  local_window: 75  # 1/8 seconds
+  global_window: 4096  # ~3.4 seconds
   global_attn_period: 4
 
   n_frames: 16384  # num RoPE cached frames
-  base_fps: 50  # FPS must be divisible by this. atomic time unit is 1/base_fps
+  base_fps: 600  # FPS must be divisible by this. atomic time unit is 1/base_fps
 
   rope_impl: motion
   rope_ats_delta: 2.0
@@ -38,33 +38,81 @@ train:
 
   total_accum_steps: 8
 
-  data_id: sequence_packing
+  data_id: multi
   data_kwargs:
-    batch_size: 1
-    seq_len: 64
-    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
-    batch_columns: ["rgblatent", "fps"]
-    latent_column: "rgblatent"
-    sampling_periods: [1, 2]
+    defaults:
+      batch_size: 1
+      seq_len: 64
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      base_fps: 600
+    loaders:
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/egoexplore_360P/train/
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/epic_kitchens_100/train/
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/kinetics700/train/
+          sampling_periods: [1]
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/train/
+          sampling_periods: [1]
 
-  eval_data_id: cod
+  n_eval_loss_samples: 2048
+  eval_data_id: multi
   eval_data_kwargs:
-    batch_size: 1
-    seq_len: 128
-    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
-    batch_columns: ["rgblatent", "fps"]
-    latent_column: "rgblatent"
-    sampling_periods: [1, 2]
-  n_eval_loss_samples: 512
+    defaults:
+      batch_size: 1
+      seq_len: 128
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      base_fps: 600
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/egoexplore_360P/eval/
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/epic_kitchens_100/eval/
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/kinetics700/eval/
+          sampling_periods: [1]
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          sampling_periods: [1]
 
-  sample_data_id: cod
+  sample_data_id: multi
   sample_data_kwargs:
-    batch_size: 1
-    seq_len: 128
-    dataset_path: /mnt/data/waypoint_1/wm_npy/x512/epic_kitchens_100/
-    batch_columns: ["rgblatent", "fps"]
-    latent_column: "rgblatent"
-    sampling_periods: [1, 2]
+    defaults:
+      batch_size: 1
+      seq_len: 128
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      base_fps: 600
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/egoexplore_360P/eval/
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/epic_kitchens_100/eval/
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/kinetics700/eval/
+          sampling_periods: [1]
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          sampling_periods: [1]
 
   sampler_id: av_caching
   sampler_kwargs:
@@ -75,7 +123,7 @@ train:
   sampling_batch_size: 1
   num_seed_frames: 30
   num_generated_frames: 90
-  n_samples: 4
+  n_samples: 16
   eval_sample_dir: null
 
   epochs: 10000

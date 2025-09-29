@@ -1,6 +1,8 @@
 import random
 from typing import Iterator, Sequence
 
+import torch.distributed as dist
+
 
 class MultiLoader:
     def __init__(self, loaders: Sequence[object], seed: int = 0):
@@ -14,7 +16,12 @@ class MultiLoader:
     def __iter__(self) -> Iterator[object]:
         lengths = [len(ld) for ld in self.loaders]
         order = [i for i, L in enumerate(lengths) for _ in range(L)]  # proportional
-        random.Random(self._seed + self._epoch).shuffle(order)        # reshuffle each epoch
+        epoch_seed = self._seed + self._epoch
+        random.Random(epoch_seed).shuffle(order)                       # reshuffle each epoch
+        print(
+            f"MultiLoader: epoch={self._epoch} "
+            f"samples_per_loader={dict(enumerate(lengths))} total={sum(lengths)}",
+        )
         iters = [iter(ld) for ld in self.loaders]
         for i in order:
             try:
@@ -24,25 +31,29 @@ class MultiLoader:
         self._epoch += 1
 
 
-def get_loader(batch_size: int, **data_kwargs):
+# TODO: allow specification that all GPUs get samples from same subloader on the same step
+
+
+def get_loader(**data_kwargs):
     """
     Expects data_kwargs to be a dict like:
       {
         "batch_size": <default for sub-loaders>,    # optional
+        # optional defaults merged into each child data_kwargs (child overrides)
+        "defaults": { ... },
         "loaders": [
           {"data_id": str, "data_kwargs": { "batch_size": int, ... }},
           ...
         ],
-        # "seed": <int>  # optional
       }
 
-    - Prefers data_kwargs["batch_size"] over positional batch_size.
-    - Also respects per-sub-loader data_kwargs["batch_size"].
+    - Uses each child loader's own config (including its 'batch_size' if provided).
     """
-    assert batch_size == 1
+    seed = int(data_kwargs.pop("seed", 0))
+    if dist.is_available() and dist.is_initialized():
+        seed += 1234567 * dist.get_rank()
 
-    # Default per-sub-loader BS prefers data_kwargs.batch_size over positional arg
-    seed = int(data_kwargs.pop("seed", 0))  # you said you don’t want to set it; defaults to 0
+    defaults = dict(data_kwargs.pop("defaults", {}))
     loaders_cfg = data_kwargs.pop("loaders", None)
     if loaders_cfg is None:
         raise ValueError("For data_id='multi', set data_kwargs.loaders: [...]")
@@ -52,8 +63,6 @@ def get_loader(batch_size: int, **data_kwargs):
 
     subs = []
     for cfg in loaders_cfg:
-        sub_kwargs = dict(cfg.get("data_kwargs", {}))
-        # Pop per-loader batch_size from sub-kwargs to avoid arg collision
-        per_bs = int(sub_kwargs.pop("batch_size", 1))
-        subs.append(_base_get_loader(cfg["data_id"], per_bs, **sub_kwargs))
+        sub_kwargs = {**defaults, **dict(cfg.get("data_kwargs", {}))}
+        subs.append(_base_get_loader(cfg["data_id"], **sub_kwargs))
     return MultiLoader(subs, seed=seed)

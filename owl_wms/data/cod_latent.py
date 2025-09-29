@@ -36,6 +36,7 @@ class WindowedViewDataset(Dataset):
         include_truncated: bool = True,
         meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
+        base_fps: int | None = None
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
@@ -44,13 +45,15 @@ class WindowedViewDataset(Dataset):
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
-            self.array_columns = list(array_columns)
+            self.array_columns = [c for c in array_columns if c not in meta_cols]
 
         seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
         self.fps = fps
 
         self._index = []
-        for i, (L, miss, trunc) in enumerate(zip(seq_len, missing, truncated)):
+        for i, (L, miss, trunc, f) in enumerate(zip(seq_len, missing, truncated, fps)):
+            if base_fps is not None and (int(f) == 0 or base_fps % int(f) != 0):
+                continue
             if not include_missing_features and miss:
                 continue
             if not include_truncated and trunc:
@@ -98,11 +101,25 @@ def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
     return stacked
 
 
-def get_loader(batch_size, dataset_path, seq_len, batch_columns, latent_column=None, sampling_periods: tuple = (1,)):
+def get_loader(
+        batch_size,
+        dataset_path,
+        seq_len,
+        batch_columns,
+        latent_column=None,
+        sampling_periods: tuple = (1,),
+        base_fps=None,
+):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    ds = WindowedViewDataset(dataset_path, seq_len, sampling_periods)
+    ds = WindowedViewDataset(
+        dataset_path,
+        seq_len,
+        sampling_periods=sampling_periods,
+        array_columns=set(batch_columns),
+        base_fps=base_fps,
+    )
 
     if world_size > 1:
         sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
