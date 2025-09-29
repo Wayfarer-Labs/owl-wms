@@ -177,6 +177,7 @@ class WorldModel(nn.Module):
         super().__init__()
 
         self.config = config
+        assert config.tokens_per_frame == config.height * config.width
 
         self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
@@ -184,7 +185,6 @@ class WorldModel(nn.Module):
         self.transformer = WorldDiT(config)
 
         self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
-        assert config.tokens_per_frame == (config.height // ph) * (config.width // pw)
 
         if self.patch == (1, 1):
             self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
