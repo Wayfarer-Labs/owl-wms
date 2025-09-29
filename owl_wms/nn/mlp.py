@@ -3,6 +3,8 @@ import torch.nn.functional as F
 
 import transformer_engine.pytorch as te
 import torch._dynamo as dynamo
+from transformer_engine.common.recipe import Format, MXFP8BlockScaling, DelayedScaling
+from transformer_engine.pytorch import fp8_autocast
 
 
 class MLPCustom(nn.Module):
@@ -20,10 +22,11 @@ class MLPCustom(nn.Module):
 
     @dynamo.disable
     def forward(self, x):
-        x = self.fc1(x)
-        x = F.silu(x)
-        x = self.fc2(x)
-        return x
+        with fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(fp8_format=Format.E4M3)):
+            x = self.fc1(x)
+            x = F.silu(x)
+            x = self.fc2(x)
+            return x
 
 
 class MLP(MLPCustom):
