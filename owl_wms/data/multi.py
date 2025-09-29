@@ -32,6 +32,7 @@ class MultiLoader:
 
 
 # TODO: allow specification that all GPUs get samples from same subloader on the same step
+# Should be easy, just remove the seed change
 
 
 def get_loader(**data_kwargs):

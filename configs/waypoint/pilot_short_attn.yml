@@ -38,7 +38,7 @@ model:
 train:
   trainer_id: world
 
-  ELBO_loss: true
+  ELBO_loss: false
 
   total_accum_steps: 8
 
@@ -97,7 +97,7 @@ train:
   sampling_batch_size: 1
   num_seed_frames: 30
   num_generated_frames: 90
-  n_samples: 16
+  n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
   eval_sample_dir: null
 
   epochs: 10000
