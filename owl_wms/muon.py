@@ -27,7 +27,6 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
     adam_overrides = {
         "lr": kwargs.get("adamw_lr"),
         "betas": kwargs.get("adamw_betas"),
-        "eps": kwargs.get("adamw_eps"),
         "weight_decay": kwargs.get("adamw_wd"),
     }
     adam_group = {

@@ -46,7 +46,7 @@ train:
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]  # [1, 2]
-      base_fps: 600
+      base_fps: 600  # for filtering fps not compatible with the models base_fps
     loaders:
       - data_id: sequence_packing
         data_kwargs:
@@ -134,7 +134,6 @@ train:
     momentum: 0.95
     adamw_lr: 1.0e-4
     adamw_wd: 1.0e-4
-    adamw_eps: 1.0e-15
     adamw_betas: [0.9, 0.95]
     adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, cond_proj]
 

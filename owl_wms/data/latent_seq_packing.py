@@ -75,8 +75,6 @@ class WindowedViewDataset(Dataset):
 
         assert (self._lens > 0).all()
 
-        print(f"after filtering: {len(self._docs)} docs, lens min={self._lens.min()}, "
-              f"W={self.window_length * self.max_stride}")
         self._build_packing()  # deterministic first epoch
         uniq, counts = np.unique(self._fps.astype(int), return_counts=True)
         total = counts.sum()
