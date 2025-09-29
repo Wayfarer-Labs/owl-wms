@@ -177,45 +177,25 @@ class WorldModel(nn.Module):
         super().__init__()
 
         self.config = config
-        assert config.tokens_per_frame == config.height * config.width
 
         self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
 
         self.transformer = WorldDiT(config)
 
-        self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
-        self.proj_out = owl_nn.FinalLayer(config.d_model, config.channels)
+        self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
+        assert config.tokens_per_frame == (config.height // ph) * (config.width // pw)
 
-    def flat_forward(
-        self,
-        x: Tensor,
-        pos_ids: TensorDict,
-        sigma: Tensor,
-        prompt_emb: Optional[TensorDict] = None,
-        controller_inputs: Optional[Tensor] = None,
-        doc_id: Optional[Tensor] = None,
-        kv_cache=None
-    ):
-        assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
-        assert x.ndim == 3, "Requires x to be [B, S, C]"
-
-        # embed
-        cond = self.denoise_step_emb(sigma)  # [B, N, d]
-        ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
-
-        # patchify, fwd, unpatchify
-        x = self.proj_in(x)
-        x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
-        x = self.proj_out(x, cond)
-        return x
+        self.proj_in = nn.Conv2d(config.channels, config.d_model, kernel_size=(ph, pw), stride=(ph, pw), bias=False)
+        self.out_norm = owl_nn.AdaLN(config.d_model)
+        self.proj_out = nn.Linear(config.d_model, config.channels * ph * pw, bias=True)
 
     def forward(
         self,
         x: Tensor,
         sigma: Tensor,
         frame_timestamp: Optional[Tensor] = None,
-        fps: float = None,
+        fps: Optional[Tensor] = None,
         prompt_emb: Optional[TensorDict] = None,
         controller_inputs: Optional[Tensor] = None,
         doc_id: Optional[Tensor] = None,
@@ -225,23 +205,41 @@ class WorldModel(nn.Module):
         x: [B, N, C, H, W],
         sigma: [B, N]
         frame_timestamp: [B, N]
+        fps: [B]
         prompt_emb: [B, P, D]
         controller_inputs: [B, N, I]
         doc_id: [B, N]
         """
         B, N, C, H, W = x.shape
+        ph, pw = self.patch
+        assert (H % ph == 0) and (W % pw == 0), "H, W must be divisible by patch"
+        Hp, Wp = H // ph, W // pw
 
         assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
         if frame_timestamp is None:
             frame_timestamp = self.get_frame_timestamps(fps, N, x.device)
+        pos_ids = self.get_pos_ids(frame_timestamp, Hp, Wp)
 
-        pos_ids = self.get_pos_ids(frame_timestamp, H, W)
+        assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
         if doc_id is not None:
-            doc_id = doc_id.repeat_interleave(H * W, dim=1)
+            doc_id = doc_id.repeat_interleave(Hp * Wp, dim=1)
 
-        x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
-        x = self.flat_forward(x, pos_ids, sigma, prompt_emb, controller_inputs, doc_id, kv_cache)
-        x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
+        # embed
+        cond = self.denoise_step_emb(sigma)  # [B, N, d]
+        ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
+
+        # patchify
+        x = eo.rearrange(x, 'b n c h w -> (b n) c h w')
+        x = self.proj_in(x)
+        x = eo.rearrange(x, '(b n) d h w -> b (n h w) d', b=B, n=N)
+
+        # backbone fwd
+        x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
+
+        # unpatchify
+        x = self.proj_out(F.silu(self.out_norm(x, cond)))
+        x = eo.rearrange(x, 'b (n h w) (c ph pw) -> b n c (h ph) (w pw)', n=N, h=Hp, w=Wp, ph=ph, pw=pw)
+
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
