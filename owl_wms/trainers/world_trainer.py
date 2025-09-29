@@ -242,7 +242,12 @@ class WorldTrainer(BaseTrainer):
 
         with self.autocast_ctx:
             v_pred = model(x_t, sigma, **kw)
-        return F.mse_loss(v_pred, v_target)
+
+        if getattr(self.train_cfg, "ELBO_loss", False):
+            w = (sigma / (1.0 - sigma)).pow(2).view(B, N, 1, 1, 1)
+            return ((v_pred - v_target) ** 2 * w).mean()
+        else:
+            return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
