@@ -1,0 +1,132 @@
+model:
+  channels: 64
+
+  ####
+  n_layers: 14
+  n_heads: 24
+  n_kv_heads: 12
+  d_model: 3072
+  mlp_ratio: 4
+
+  gradient_checkpointing: false
+  ####
+
+  tokens_per_frame: 256
+  height: 16
+  width: 16
+
+  base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
+  local_window: 4
+  global_window: 16
+  global_attn_period: 4
+
+  n_frames: 8192  # num RoPE cached frames, doesn't impact model behavior
+
+
+  rope_impl: motion
+  rope_ats_delta: 2.0
+
+  gated_attn: true
+  noise_conditioning: wan
+
+  n_controller_inputs: 13
+
+  cfg_prob: 0.1  # TODO: implement, currently unused
+
+
+train:
+  trainer_id: world
+
+  total_accum_steps: 8
+
+  data_id: multi
+  data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 64
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      legal_fps: [30]
+    loaders:
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/train/
+          sampling_periods: [1]
+
+  n_eval_loss_samples: 2048
+  eval_data_id: multi
+  eval_data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 128
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      legal_fps: [30]
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          sampling_periods: [1]
+
+  sample_data_id: multi
+  sample_data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 128
+      batch_columns: ["rgblatents", "fps"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]  # [1, 2]
+      legal_fps: [30]
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          sampling_periods: [1]
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 16
+    cfg_scale: 1.0
+    noise_prev: 0.2
+    only_return_generated: false
+  sampling_batch_size: 1
+  num_seed_frames: 30
+  num_generated_frames: 90
+  n_samples: 16
+  eval_sample_dir: null
+
+  epochs: 10000
+
+  opt: Muon
+  opt_kwargs:
+    lr: 1.0e-3
+    momentum: 0.95
+    adamw_lr: 1.0e-4
+    adamw_wd: 1.0e-4
+    adamw_betas: [0.9, 0.95]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, cond_proj]
+
+  scheduler: null
+
+  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0
+  output_path: /mnt/data/waypoint_1/models/pilot_stage0
+  resume_ckpt: null
+
+  sample_interval: 4000
+  save_interval: 10000
+
+  vae_id: null
+  vae_batch_size: 4
+
+  vae_scale: 0.73
+  vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/rgb_only.yml
+  vae_ckpt_path: /mnt/data/lapp0/vaes/waypoint_1_f32c64_8res_rgb_only_decoder.pt
+
+  prompt_encoder_model_id: google/umt5-xl
+
+wandb:
+  name: louiscastricato  # lapp0-andrew-lapp
+  project: waypoint_1  # owl
+  run_name: ${oc.env:RUN_NAME}

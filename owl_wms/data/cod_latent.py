@@ -1,5 +1,7 @@
 from .npy_table import NpyTable
 
+import numpy as np
+
 import random
 from functools import partial
 import torch
@@ -36,7 +38,7 @@ class WindowedViewDataset(Dataset):
         include_truncated: bool = True,
         meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
-        base_fps: int | None = None
+        legal_fps: list[int] | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
@@ -52,7 +54,7 @@ class WindowedViewDataset(Dataset):
 
         self._index = []
         for i, (L, miss, trunc, f) in enumerate(zip(seq_len, missing, truncated, fps)):
-            if base_fps is not None and (int(f) == 0 or base_fps % int(f) != 0):
+            if legal_fps is not None and int(f) not in legal_fps:
                 continue
             if not include_missing_features and miss:
                 continue
@@ -63,6 +65,10 @@ class WindowedViewDataset(Dataset):
                 if start + max(self.sampling_periods) * window_length <= L:
                     self._index.append((i, start))
 
+        uniq, counts = np.unique(np.asarray(self.fps, int), return_counts=True)
+        total = counts.sum()
+        dist_str = ", ".join([f"{int(u)}: {c/total:.3g}" for u, c in zip(uniq, counts)])
+        print(f"fps distribution: [{dist_str}]")
         print(f"{len(self._index)} samples qualified out of {len(seq_len)} total videos")
 
     def __len__(self):
@@ -108,7 +114,7 @@ def get_loader(
         batch_columns,
         latent_column=None,
         sampling_periods: tuple = (1,),
-        base_fps=None,
+        legal_fps=None,
 ):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
@@ -118,7 +124,7 @@ def get_loader(
         seq_len,
         sampling_periods=sampling_periods,
         array_columns=set(batch_columns),
-        base_fps=base_fps,
+        legal_fps=legal_fps,
     )
 
     if world_size > 1:

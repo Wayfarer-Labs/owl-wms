@@ -42,7 +42,7 @@ class WindowedViewDataset(Dataset):
         include_truncated: bool = True,
         meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
-        base_fps: int | None = None,
+        legal_fps: list[int] | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
@@ -61,8 +61,8 @@ class WindowedViewDataset(Dataset):
             mask &= ~miss
         if not include_truncated:
             mask &= ~trunc
-        if base_fps is not None:
-            mask &= (base_fps % fps) == 0
+        if legal_fps is not None:
+            mask &= np.isin(fps, legal_fps)
 
         sel = fps[mask]
         bad = np.unique([f for f in sel if any(f % p for p in self.sampling_periods)])
@@ -75,7 +75,13 @@ class WindowedViewDataset(Dataset):
 
         assert (self._lens > 0).all()
 
+        print(f"after filtering: {len(self._docs)} docs, lens min={self._lens.min()}, "
+              f"W={self.window_length * self.max_stride}")
         self._build_packing()  # deterministic first epoch
+        uniq, counts = np.unique(self._fps.astype(int), return_counts=True)
+        total = counts.sum()
+        dist_str = ", ".join([f"{int(u)}: {c / total:.3g}" for u, c in zip(uniq, counts)])
+        print(f"fps distribution: [{dist_str}]")
         print(f"{len(self._slices)} packed windows over {len(self._docs)} documents")
 
     def set_epoch(self, epoch: int):
@@ -208,7 +214,8 @@ def get_loader(
         latent_column,
         batch_size=1,
         sampling_periods: tuple = (1,),
-        base_fps=None
+        legal_fps=None,
+
 ):
     assert batch_size == 1
 
@@ -220,7 +227,7 @@ def get_loader(
         seq_len,
         array_columns=batch_columns,
         sampling_periods=sampling_periods,
-        base_fps=base_fps
+        legal_fps=legal_fps,
     )
 
     sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
