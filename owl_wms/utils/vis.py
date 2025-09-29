@@ -8,7 +8,7 @@ import os
 import numpy as np
 
 
-def draw_frame(frame, mouse, button, fps_label=None):
+def draw_frame(frame, mouse, button, fps_label=None, noise_prev=None):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
@@ -67,6 +67,14 @@ def draw_frame(frame, mouse, button, fps_label=None):
         x = frame.shape[1] - tw - 5   # 5px right margin
         y = 5 + th                    # 5px top margin
         cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # Just below, noise_prev
+        if noise_prev is not None:
+            np_val = float(noise_prev)
+            nlabel = f"noise_prev:{np_val:.2f}" if isinstance(np_val, float) else f"noise_prev:{np_val}"
+            (ntw, nth), _ = cv2.getTextSize(nlabel, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            nx = frame.shape[1] - ntw - 5
+            ny = y + nth + 4           # 4px gap under FPS
+            cv2.putText(frame, nlabel, (nx, ny), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     # Convert back to RGB for display
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -74,7 +82,7 @@ def draw_frame(frame, mouse, button, fps_label=None):
     return frame
 
 
-def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None):
+def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None, noise_prev=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
@@ -87,7 +95,7 @@ def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None):
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            drawn = draw_frame(frame, mouse, button, fps_label=per_sample_fps[i])
+            drawn = draw_frame(frame, mouse, button, fps_label=per_sample_fps[i], noise_prev=noise_prev[i])
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)
