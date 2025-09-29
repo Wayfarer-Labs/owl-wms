@@ -19,15 +19,24 @@ def get_block_mask(
     q_offset: int = 0,
     is_causal: bool = True,
     first_frm_sink: bool = True,
+    prev_attn: bool = True,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
     q_len = kv_len - q_offset
-    t_first = t_pos.amin(dim=-1) if first_frm_sink else None
 
     assert 0 <= q_offset < kv_len, "kv cache cannot exceed total tokens"
     if not is_causal:
         assert q_offset == 0, "kv caching not supported with bidirectional"
+
+    # EXPERIMENTAL
+    t_first = t_pos.amin(dim=-1) if first_frm_sink else None
+
+    if prev_attn:
+        _minv = torch.iinfo(t_pos.dtype).min
+        prev_t = torch.where(t_pos.unsqueeze(-2) < t_pos.unsqueeze(-1), t_pos.unsqueeze(-2), _minv).amax(-1)
+        prev_t = torch.where(prev_t == _minv, t_pos, prev_t)
+    # ########
 
     def mask_mod(b, h, q, kv):
         abs_q = q + q_offset  # offset for kv caching
@@ -37,10 +46,13 @@ def get_block_mask(
         window_mask = (t_q - t_kv).abs() < window_len if window_len is not None else True  # sliding window
         same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True
 
-        # First frame always a sink - TODO: Remove hardcoding
+        # EXPERIMENTAL
         sink_mask = (t_kv == t_first[b]) if first_frm_sink else False
+        # prev_mask: for half of heads, only attend to previous token
+        prev_mask = (t_kv == t_q) | (t_kv == prev_t[b, abs_q]) | (h % 2 == 0) if prev_attn else True
+        # ########
 
-        return base_mask & window_mask & same_doc_mask | sink_mask
+        return (base_mask & window_mask & same_doc_mask & prev_mask) | sink_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
