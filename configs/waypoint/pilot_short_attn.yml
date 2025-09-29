@@ -38,7 +38,7 @@ model:
 train:
   trainer_id: world
 
-  ELBO_loss: true
+  ELBO_loss: false
 
   total_accum_steps: 8
 
