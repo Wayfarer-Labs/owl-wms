@@ -66,14 +66,20 @@ class WorldTrainer(BaseTrainer):
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        from transformer_engine.common.recipe import Format, MXFP8BlockScaling
-        from transformer_engine.pytorch import fp8_autocast
-        self.te_autocast_ctx = fp8_autocast(enabled=True, fp8_recipe=MXFP8BlockScaling(fp8_format=Format.E4M3))
-        # fp8_recipe=DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="most_recent", margin=1))
-
         self.total_accum_steps = self.train_cfg.total_accum_steps
         assert self.total_accum_steps % self.world_size == 0
         self.accum_steps_per_device = self.total_accum_steps // self.world_size
+
+    @property
+    def te_autocast_ctx(self):
+        from transformer_engine.common.recipe import Format, MXFP8BlockScaling
+        from transformer_engine.pytorch import fp8_autocast
+
+        # TODO: try the below
+        # DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="most_recent", margin=1))
+        # recipe.DelayedScaling()
+
+        return fp8_autocast(enabled=True, fp8_recipe=MXFP8BlockScaling(fp8_format=Format.E4M3))
 
     @staticmethod
     def get_raw_model(model):
