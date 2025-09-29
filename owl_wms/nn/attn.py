@@ -18,10 +18,12 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
+    first_frm_sink: bool = True,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
     q_len = kv_len - q_offset
+    t_first = t_pos.amin(dim=-1) if first_frm_sink else None
 
     assert 0 <= q_offset < kv_len, "kv cache cannot exceed total tokens"
     if not is_causal:
@@ -35,7 +37,10 @@ def get_block_mask(
         window_mask = (t_q - t_kv).abs() < window_len if window_len is not None else True  # sliding window
         same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True
 
-        return base_mask & window_mask & same_doc_mask
+        # First frame always a sink - TODO: Remove hardcoding
+        sink_mask = (t_kv == t_first[b]) if first_frm_sink else False
+
+        return base_mask & window_mask & same_doc_mask | sink_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
