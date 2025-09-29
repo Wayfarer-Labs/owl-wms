@@ -70,20 +70,6 @@ class WorldTrainer(BaseTrainer):
         assert self.total_accum_steps % self.world_size == 0
         self.accum_steps_per_device = self.total_accum_steps // self.world_size
 
-    @property
-    def te_autocast_ctx(self):
-        import contextlib
-        return contextlib.nullcontext()
-        #from transformer_engine.common.recipe import Format, MXFP8BlockScaling, DelayedScaling
-        #from transformer_engine.pytorch import fp8_autocast
-
-        # TODO: try the below
-        # DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="most_recent", margin=1))
-        # recipe.DelayedScaling()
-
-        # return fp8_autocast(enabled=True, fp8_recipe=MXFP8BlockScaling(fp8_format=Format.E4M3))
-        #return fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(fp8_format=Format.E4M3))
-
     @staticmethod
     def get_raw_model(model):
         return getattr(model, "module", model)
@@ -253,7 +239,7 @@ class WorldTrainer(BaseTrainer):
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 
-        with self.autocast_ctx, self.te_autocast_ctx:
+        with self.autocast_ctx:
             v_pred = model(x_t, sigma, **kw)
         return F.mse_loss(v_pred, v_target)
 
@@ -336,7 +322,7 @@ class WorldTrainer(BaseTrainer):
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
-        with self.autocast_ctx, self.te_autocast_ctx:
+        with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
                 fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
