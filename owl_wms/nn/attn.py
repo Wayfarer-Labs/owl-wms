@@ -18,7 +18,7 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    first_frm_sink: bool = False,
+    first_frm_sink: bool = True,
     prev_attn: bool = False,
     device="cpu"
 ):
