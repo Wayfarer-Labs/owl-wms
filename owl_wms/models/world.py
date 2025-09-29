@@ -230,7 +230,9 @@ class WorldModel(nn.Module):
 
         if self.patch == (1, 1):
             x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
-            x = self.flat_forward(x, pos_ids, sigma, prompt_emb, controller_inputs, doc_id, kv_cache)
+            x = self.proj_in(x)
+            x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
+            x = self.proj_out(F.silu(self.out_norm(x, cond)))
             x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         else:
             # patchify
