@@ -18,7 +18,7 @@ class AVCachingSampler:
     :param cfg_scale: Must be 1.0
     :param noise_prev: Noise previous frame
     """
-    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, noise_prev: float = 0.2) -> None:
+    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, noise_prev: Optional[float] = None) -> None:
         if cfg_scale != 1.0:
             raise NotImplementedError("cfg_scale must be 1.0 until updated to handle")
         self.n_steps = n_steps
@@ -32,6 +32,7 @@ class AVCachingSampler:
         prompt_emb: Optional[TensorDict],
         controller_input: Optional[Tensor],
         fps: Tensor,
+        noise_prev: Tensor,
         num_frames: int = 120,
     ):
         """Generate `num_frames` new frames and return updated tensors."""
@@ -57,7 +58,7 @@ class AVCachingSampler:
                 model, prompt_emb, kv_cache,
                 x, prev_ctrl, curr_ctrl,
                 prev_ts=prev_ts, curr_ts=curr_ts,
-                dt=dt,
+                dt=dt, noise_prev=noise_prev
             )
 
             latents.append(x)
@@ -77,13 +78,14 @@ class AVCachingSampler:
         prev_ts: torch.Tensor,
         curr_ts: torch.Tensor,
         dt: torch.Tensor,
+        noise_prev: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
         B = prev_video.size(0)
 
         # Partially re-noise history
-        prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), self.noise_prev)
-        t_prev = prev_video.new_full((B, prev_vid.size(1)), self.noise_prev)
+        prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), noise_prev)
+        t_prev = prev_video.new_full((B, prev_vid.size(1)), noise_prev)
 
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
