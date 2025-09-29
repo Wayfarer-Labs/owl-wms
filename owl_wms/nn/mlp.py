@@ -2,6 +2,7 @@ from torch import nn
 import torch.nn.functional as F
 
 import transformer_engine.pytorch as te
+import torch._dynamo as dynamo
 
 
 class MLPCustom(nn.Module):
@@ -17,6 +18,7 @@ class MLPCustom(nn.Module):
         self.fc1.weight.data *= dim_in ** -0.5
         self.fc2.weight.data *= dim_middle ** -0.5
 
+    @dynamo.disable
     def forward(self, x):
         x = self.fc1(x)
         x = F.silu(x)
