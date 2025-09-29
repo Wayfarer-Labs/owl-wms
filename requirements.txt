@@ -25,8 +25,14 @@ wandb[media]
 torchtyping
 git+https://github.com/KellerJordan/Muon
 
+--extra-index-url https://pypi.nvidia.com
+transformer-engine
+
 # WorldModel deps
 diffusers
 tensordict
 transformers
 ftfy
+
+# has to be installed last for some reason?
+transformer_engine[pytorch]
