@@ -14,7 +14,6 @@ model:
   tokens_per_frame: 256
   height: 16
   width: 16
-  patch: 1, 1
 
   local_window: 75  # 1/8 seconds
   global_window: 4096  # ~3.4 seconds
