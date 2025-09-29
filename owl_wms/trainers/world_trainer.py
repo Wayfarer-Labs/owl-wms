@@ -30,6 +30,10 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
 
 
+# TODO: replace with itertools.batched in python3.13
+batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
+
+
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
     def __init__(self, *args, **kwargs):
@@ -187,7 +191,7 @@ class WorldTrainer(BaseTrainer):
 
         for epoch in range(self.train_cfg.epochs):
             for mini_batches in tqdm.tqdm(
-                    itertools.batched(self.train_loader, n=self.accum_steps_per_device),
+                    batched(self.train_loader, n=self.accum_steps_per_device),
                     total=len(self.train_loader) // self.accum_steps_per_device,
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
@@ -240,9 +244,8 @@ class WorldTrainer(BaseTrainer):
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 
-        with self.autocast_ctx:
-            with self.te_autocast_ctx:
-                v_pred = model(x_t, sigma, **kw)
+        with self.autocast_ctx, self.te_autocast_ctx:
+            v_pred = model(x_t, sigma, **kw)
         return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
@@ -324,12 +327,11 @@ class WorldTrainer(BaseTrainer):
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
-        with self.autocast_ctx:
-            with self.te_autocast_ctx:
-                latent_vid = sampler(
-                    ema_model, vid, prompt_emb, controller_inputs,
-                    fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-                )
+        with self.autocast_ctx, self.te_autocast_ctx:
+            latent_vid = sampler(
+                ema_model, vid, prompt_emb, controller_inputs,
+                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
+            )
 
         if self.sampler_only_return_generated:
             latent_vid, controller_inputs = (
