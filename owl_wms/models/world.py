@@ -186,7 +186,11 @@ class WorldModel(nn.Module):
         self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
         assert config.tokens_per_frame == (config.height // ph) * (config.width // pw)
 
-        self.proj_in = nn.Conv2d(config.channels, config.d_model, kernel_size=(ph, pw), stride=(ph, pw), bias=False)
+        if self.patch == (1, 1):
+            self.proj_in = nn.Linear(config.channels, config.d_model, bias=False)
+        else:
+            self.proj_in = nn.Conv2d(config.channels, config.d_model, kernel_size=(ph, pw), stride=(ph, pw), bias=False)
+
         self.out_norm = owl_nn.AdaLN(config.d_model)
         self.proj_out = nn.Linear(config.d_model, config.channels * ph * pw, bias=True)
 
