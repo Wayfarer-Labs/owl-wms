@@ -330,17 +330,11 @@ class WorldTrainer(BaseTrainer):
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
-        noise_prev = torch.tensor(
-            random.Random(self.rank / 1234 + self.total_step_counter).choice(
-                [0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4]
-            ),
-            device=vid.device
-        )
         with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
                 fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-                noise_prev=noise_prev
+                noise_prev=self.train_cfg.noise_prev
             )
 
         if self.sampler_only_return_generated:
@@ -366,10 +360,6 @@ class WorldTrainer(BaseTrainer):
             if self.rank == 0:
                 fps = fps.view(-1).tolist()
 
-        noise_prev_log = self._gather_concat_cpu(noise_prev.view(1))
-        if self.rank == 0:
-            noise_prev_log = noise_prev_log.view(-1).tolist()
-
         # TODO: clean this hack
         mouse, btn = None, None
         if eval_batch.get("controller_inputs") is not None:
@@ -378,7 +368,7 @@ class WorldTrainer(BaseTrainer):
                 torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
             )
         eval_wandb_dict = (
-            to_wandb_samples(video_out, mouse, btn, fps=fps, noise_prev=noise_prev_log)
+            to_wandb_samples(video_out, mouse, btn, fps=fps, noise_prev=self.train_cfg.noise_prev)
             if self.rank == 0 else None
         )
         return eval_wandb_dict

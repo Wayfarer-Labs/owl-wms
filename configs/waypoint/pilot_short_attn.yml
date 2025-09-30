@@ -39,6 +39,7 @@ train:
   trainer_id: world
 
   ELBO_loss: false
+  noise_prev: 0.2
 
   total_accum_steps: 8
 
@@ -92,7 +93,6 @@ train:
   sampler_kwargs:
     n_steps: 16
     cfg_scale: 1.0
-    noise_prev: 0.2
     only_return_generated: false
   sampling_batch_size: 1
   num_seed_frames: 30

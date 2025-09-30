@@ -18,11 +18,10 @@ class AVCachingSampler:
     :param cfg_scale: Must be 1.0
     :param noise_prev: Noise previous frame
     """
-    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, noise_prev: Optional[float] = None) -> None:
+    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0) -> None:
         if cfg_scale != 1.0:
             raise NotImplementedError("cfg_scale must be 1.0 until updated to handle")
         self.n_steps = n_steps
-        self.noise_prev = noise_prev
 
     @torch.inference_mode()
     def __call__(
