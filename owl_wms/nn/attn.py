@@ -19,7 +19,7 @@ def get_block_mask(
     q_offset: int = 0,
     is_causal: bool = True,
     first_frm_sink: bool = False,
-    prev_attn: bool = True,
+    prev_attn: bool = False,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
