@@ -232,8 +232,8 @@ class WorldTrainer(BaseTrainer):
         B, N = x0.size(0), x0.size(1)
 
         with torch.no_grad():
-            sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)
-            # sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()
+            # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: Uniform
+            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()
             eps = torch.finfo(sigma.dtype).eps
             sigma = sigma.clamp(eps, 1 - eps)
 
@@ -246,6 +246,7 @@ class WorldTrainer(BaseTrainer):
 
         if getattr(self.train_cfg, "ELBO_loss", False):
             w = (sigma / (1.0 - sigma)).pow(2).view(B, N, 1, 1, 1)
+            w = w / (w.mean().detach() + 1e-12)
             return ((v_pred - v_target) ** 2 * w).mean()
         else:
             return F.mse_loss(v_pred, v_target)
