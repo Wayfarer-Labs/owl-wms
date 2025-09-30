@@ -244,6 +244,10 @@ class WorldTrainer(BaseTrainer):
         with self.autocast_ctx:
             v_pred = model(x_t, sigma, **kw)
 
+            # Experimental
+            v_pred, v_target = v_pred[:, 1:], v_target[:, 1:]
+            # ########
+
         if getattr(self.train_cfg, "ELBO_loss", False):
             w = (sigma / (1.0 - sigma)).pow(2).view(B, N, 1, 1, 1)
             w = w / (w.mean().detach() + 1e-12)

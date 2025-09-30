@@ -109,7 +109,7 @@ train:
     adamw_lr: 1.0e-4
     adamw_wd: 1.0e-4
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [proj_in, proj_out, ctrl_emb]
+    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, cond_proj]
 
   scheduler: null
 
