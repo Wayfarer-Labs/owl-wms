@@ -109,7 +109,7 @@ train:
     adamw_lr: 1.0e-4
     adamw_wd: 1.0e-4
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [ctrl_emb]
+    adamw_keys: [ctrl_emb, .]
 
   scheduler: null
 

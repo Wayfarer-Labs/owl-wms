@@ -46,5 +46,8 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
         **{k: v for k, v in muon_overrides.items() if v is not None},
     }
 
+    groups = [adam_group, muon_group]
+    groups = [g for g in groups if g["params"]]
+
     OptimizerCls = SingleDeviceMuonWithAuxAdam if world_size == 1 else MuonWithAuxAdam
-    return OptimizerCls([adam_group, muon_group])
+    return OptimizerCls(groups)
