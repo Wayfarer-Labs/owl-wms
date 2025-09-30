@@ -98,8 +98,9 @@ class Attn(nn.Module):
 
         self.enable_gqa = self.n_heads != self.n_kv_heads
 
-        qkv_out = (self.n_heads + 2 * self.n_kv_heads) * self.d_head
-        self.qkv_proj = nn.Linear(config.d_model, qkv_out, bias=False)
+        self.q_proj = nn.Linear(config.d_model, self.n_heads * self.d_head, bias=False)
+        self.k_proj = nn.Linear(config.d_model, self.n_kv_heads * self.d_head, bias=False)
+        self.v_proj = nn.Linear(config.d_model, self.n_kv_heads * self.d_head, bias=False)
         self.out_proj = nn.Linear(config.d_model, config.d_model, bias=False)
 
         self.rope = get_rope(config)
@@ -111,8 +112,9 @@ class Attn(nn.Module):
 
     def forward(self, x, pos_ids, bm, kv_cache=None):
         # Q, K, V proj -> QK-norm -> RoPE
-        qkv = eo.rearrange(self.qkv_proj(x), "b t (g d) -> b g t d", d=self.d_head)
-        q, k, v = qkv.split([self.n_heads, self.n_kv_heads, self.n_kv_heads], dim=1)
+        q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads, d=self.d_head)
+        k = eo.rearrange(self.k_proj(x), "b t (h d) -> b h t d", h=self.n_kv_heads, d=self.d_head)
+        v = eo.rearrange(self.v_proj(x), "b t (h d) -> b h t d", h=self.n_kv_heads, d=self.d_head)
         q, k = rms_norm(q), rms_norm(k)
         q, k = self.rope(q, pos_ids), self.rope(k, pos_ids)
 

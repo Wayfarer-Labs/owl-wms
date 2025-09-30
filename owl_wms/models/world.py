@@ -61,18 +61,20 @@ class CondHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.bias_in = nn.Parameter(torch.zeros(config.d_model)) if config.noise_conditioning == "wan" else None
-        self.cond_proj = nn.Linear(config.d_model, self.n_cond * config.d_model, bias=True)
+        self.cond_proj = nn.ModuleList(
+            [nn.Linear(config.d_model, config.d_model, bias=False) for _ in range(self.n_cond)]
+        )
 
         # AdaLN-Zero
-        with torch.no_grad():
-            self.cond_proj.weight.zero_()
-            self.cond_proj.bias.zero_()
-            if self.bias_in is not None:
-                self.bias_in.zero_()
+        if self.bias_in is not None:
+            self.bias_in.detach().zero_()
+        for p in self.cond_proj:
+            p.weight.detach().zero_()
 
     def forward(self, cond):
         cond = cond + self.bias_in if self.bias_in is not None else cond
-        return self.cond_proj(F.silu(cond)).chunk(self.n_cond, -1)
+        h = F.silu(cond)
+        return tuple(p(h) for p in self.cond_proj)
 
 
 class WorldDiTBlock(nn.Module):
@@ -131,8 +133,8 @@ class WorldDiT(nn.Module):
         if self.config.noise_conditioning in ("dit_air", "wan"):
             ref_proj = self.blocks[0].cond_head.cond_proj
             for blk in self.blocks[1:]:
-                blk.cond_head.cond_proj.weight = ref_proj.weight
-                blk.cond_head.cond_proj.bias = ref_proj.bias
+                for blk_mod, ref_mod in zip(blk.cond_head.cond_proj, ref_proj):
+                    blk_mod.weight = ref_mod.weight
 
         # Shared RoPE buffers
         ref_rope = self.blocks[0].attn.rope
