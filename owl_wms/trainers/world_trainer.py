@@ -244,8 +244,8 @@ class WorldTrainer(BaseTrainer):
         with self.autocast_ctx:
             v_pred = model(x_t, sigma, **kw)
 
-            # Experimental
-            v_pred, v_target = v_pred[:, 1:], v_target[:, 1:]
+            # Experimental: Don't predict first frame
+            # v_pred, v_target = v_pred[:, 1:], v_target[:, 1:]
             # ########
 
         if getattr(self.train_cfg, "ELBO_loss", False):

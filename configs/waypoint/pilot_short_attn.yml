@@ -27,7 +27,7 @@ model:
   rope_impl: motion
   rope_ats_delta: 2.0
 
-  gated_attn: true
+  gated_attn: false
   noise_conditioning: wan
 
   n_controller_inputs: 13
