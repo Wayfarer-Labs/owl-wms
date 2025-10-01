@@ -141,7 +141,7 @@ class WorldDiT(nn.Module):
         for blk in self.blocks[1:]:
             blk.attn.rope = ref_rope
 
-    def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None):
+    def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
         ####
         # TODO: REMOVE, just an experiment
         if ctrl_emb is not None:
@@ -158,6 +158,7 @@ class WorldDiT(nn.Module):
             doc_id=doc_id,
             kv_cache=kv_cache,
             t_pos=t_pos,
+            curr_frame_mask=curr_frame_mask,
             device=x.device
         )
         for block, block_mask, in zip(self.blocks, block_masks):
@@ -200,18 +201,17 @@ class WorldModel(nn.Module):
         self,
         x: Tensor,
         sigma: Tensor,
-        frame_timestamp: Optional[Tensor] = None,
-        fps: Optional[Tensor] = None,
+        frame_timestamp: Tensor,
         prompt_emb: Optional[TensorDict] = None,
         controller_inputs: Optional[Tensor] = None,
         doc_id: Optional[Tensor] = None,
-        kv_cache=None
+        kv_cache=None,
+        curr_frame_mask: Optional[Tensor] = None,
     ):
         """
         x: [B, N, C, H, W],
         sigma: [B, N]
         frame_timestamp: [B, N]
-        fps: [B]
         prompt_emb: [B, P, D]
         controller_inputs: [B, N, I]
         doc_id: [B, N]
@@ -221,10 +221,11 @@ class WorldModel(nn.Module):
         assert (H % ph == 0) and (W % pw == 0), "H, W must be divisible by patch"
         Hp, Wp = H // ph, W // pw
 
-        assert (fps is None) != (frame_timestamp is None), "Must specify fps or frame timestamps"
-        if frame_timestamp is None:
-            frame_timestamp = self.get_frame_timestamps(fps, N, x.device)
         pos_ids = self.get_pos_ids(frame_timestamp, Hp, Wp)
+
+        if curr_frame_mask is not None:
+            torch._assert(curr_frame_mask.size(1) == N, "curr_frame_mask must be frame-length")
+            curr_frame_mask = curr_frame_mask.repeat_interleave(Hp * Wp, 1)
 
         assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
         if doc_id is not None:
@@ -237,7 +238,7 @@ class WorldModel(nn.Module):
         if self.patch == (1, 1):
             x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
             x = self.proj_in(x)
-            x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
+            x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
             x = self.proj_out(F.silu(self.out_norm(x, cond)))
             x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         else:
@@ -246,7 +247,7 @@ class WorldModel(nn.Module):
             x = self.proj_in(x)
             x = eo.rearrange(x, '(b n) d h w -> b (n h w) d', b=B, n=N)
             # backbone fwd
-            x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache)
+            x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
             # unpatchify
             x = self.proj_out(F.silu(self.out_norm(x, cond)))
             x = eo.rearrange(x, 'b (n h w) (c ph pw) -> b n c (h ph) (w pw)', n=N, h=Hp, w=Wp, ph=ph, pw=pw)

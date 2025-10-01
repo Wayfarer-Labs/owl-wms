@@ -237,12 +237,35 @@ class WorldTrainer(BaseTrainer):
             eps = torch.finfo(sigma.dtype).eps
             sigma = sigma.clamp(eps, 1 - eps)
 
+            # Sequence of "current frames" noised at random uniform levels
             x1 = torch.randn_like(x0)  # gaussian @ sigma 1.0
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
             v_target = x1 - x0
 
+            # Construct sequence of slightly-noised previous frames
+            sigma_p = x0.new_full((B, N), self.train_cfg.noise_prev)
+            x1_p = torch.randn_like(x0)
+            x_p = x0 + (x1_p - x0) * sigma_p.view(B, N, 1, 1, 1)
+
+            # mask for static / sampled noise
+            curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
+
+        # Build timestamps from fps for N, then duplicate to 2N; also duplicate doc_id if present
+        fps = kw.pop("fps")  # assume fps is provided
+        frame_timestamp = getattr(model, "module", model).get_frame_timestamps(fps, N, x0.device)  # [B, N]
+        frame_timestamp = frame_timestamp.repeat(1, 2)  # [B, 2N]
+        if "doc_id" in kw and kw["doc_id"] is not None:
+            kw["doc_id"] = kw["doc_id"].repeat(1, 2)  # [B, 2N]
+
         with self.autocast_ctx:
-            v_pred = model(x_t, sigma, **kw)
+            v_pred = model(
+                torch.cat([x_t, x_p], dim=1),
+                torch.cat([sigma, sigma_p], dim=1),
+                curr_frame_mask=curr_frame_mask,
+                frame_timestamp=frame_timestamp,
+                **kw
+            )
+            v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
             # Experimental: Don't predict first frame
             # v_pred, v_target = v_pred[:, 1:], v_target[:, 1:]

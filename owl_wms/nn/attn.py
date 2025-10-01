@@ -20,6 +20,7 @@ def get_block_mask(
     is_causal: bool = True,
     first_frm_sink: bool = True,
     prev_attn: bool = False,
+    curr_frame_mask=None,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
@@ -36,6 +37,9 @@ def get_block_mask(
         _minv = torch.iinfo(t_pos.dtype).min
         prev_t = torch.where(t_pos.unsqueeze(-2) < t_pos.unsqueeze(-1), t_pos.unsqueeze(-2), _minv).amax(-1)
         prev_t = torch.where(prev_t == _minv, t_pos, prev_t)
+
+    if curr_frame_mask is not None:
+        assert q_offset == 0
     # ########
 
     def mask_mod(b, h, q, kv):
@@ -47,12 +51,24 @@ def get_block_mask(
         same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True
 
         # EXPERIMENTAL
+        ##############
+        # sink_mask: attend to first frame always
         sink_mask = (t_kv == t_first[b]) if first_frm_sink else False
+
         # prev_mask: for half of heads, only attend to previous token
         prev_mask = (t_kv == t_q) | (t_kv == prev_t[b, abs_q]) | (h % 2 == 0) if prev_attn else True
+
+        # current prev attn: previous frames are noised at a contant level, current frames noised at random level
+        # matches inference behavior
+        if curr_frame_mask is not None:
+            is_curr_q = curr_frame_mask[b, abs_q]
+            is_curr_kv = curr_frame_mask[b, kv]
+            prev_curr_mask = (~is_curr_q & ~is_curr_kv) | (is_curr_q & ((t_kv == t_q) == is_curr_kv))
+        else:
+            prev_curr_mask = True
         # ########
 
-        return (base_mask & window_mask & same_doc_mask & prev_mask) | sink_mask
+        return ((base_mask & window_mask & same_doc_mask & prev_mask) | sink_mask) & prev_curr_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
@@ -63,7 +79,7 @@ class AttnMaskScheduler:
         self.config = config
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
-    def __call__(self, seq_len, doc_id, kv_cache, device, t_pos):
+    def __call__(self, seq_len, doc_id, kv_cache, device, t_pos, curr_frame_mask=None):
         q_offset = t_pos.shape[-1] - seq_len
         torch._assert(q_offset >= 0, "negative q_offset")
         if kv_cache is not None:
@@ -76,6 +92,7 @@ class AttnMaskScheduler:
             doc_id=doc_id,
             q_offset=q_offset,
             is_causal=getattr(self.config, "causal", True),
+            curr_frame_mask=curr_frame_mask,
             device=device,
         )
         local_bm = get_block_mask(window_len=self.config.local_window, **kwargs)
