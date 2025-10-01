@@ -23,9 +23,8 @@ model:
 
   n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
 
-  rope_impl: ortho
-  # rope_impl: motion
-  # rope_ats_delta: 2.0
+  rope_impl: motion
+  rope_ats_delta: 2.0
 
   gated_attn: true
   noise_conditioning: wan
