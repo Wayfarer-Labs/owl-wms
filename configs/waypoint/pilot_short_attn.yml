@@ -2,10 +2,10 @@ model:
   channels: 64
 
   ####
-  n_layers: 14
-  n_heads: 24
-  n_kv_heads: 12
-  d_model: 3072
+  n_layers: 28
+  n_heads: 16
+  n_kv_heads: 8
+  d_model: 2048
   mlp_ratio: 4
 
   gradient_checkpointing: false
@@ -21,8 +21,7 @@ model:
   global_window: 16
   global_attn_period: 4
 
-  n_frames: 8192  # num RoPE cached frames, doesn't impact model behavior
-
+  n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
 
   rope_impl: motion
   rope_ats_delta: 2.0
@@ -39,18 +38,19 @@ train:
   trainer_id: world
 
   ELBO_loss: false
+  inference_matching: false
   noise_prev: 0.2
 
-  total_accum_steps: 8
+  total_accum_steps: 16
 
   data_id: multi
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
-      sampling_periods: [1]  # [1, 2]
+      sampling_periods: [1]
       legal_fps: [30]
     loaders:
       - data_id: sequence_packing
@@ -66,7 +66,7 @@ train:
       seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
-      sampling_periods: [1]  # [1, 2]
+      sampling_periods: [1]
       legal_fps: [30]
     loaders:
       - data_id: cod
@@ -81,7 +81,7 @@ train:
       seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
-      sampling_periods: [1]  # [1, 2]
+      sampling_periods: [1]
       legal_fps: [30]
     loaders:
       - data_id: cod
@@ -96,7 +96,7 @@ train:
     only_return_generated: false
   sampling_batch_size: 1
   num_seed_frames: 30
-  num_generated_frames: 90
+  num_generated_frames: 150
   n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
   eval_sample_dir: null
 
@@ -108,8 +108,9 @@ train:
     momentum: 0.95
     adamw_lr: 1.0e-4
     adamw_wd: 1.0e-4
+    adamw_eps: 1.0e-8
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [proj_in, proj_out, denoise_step_emb, ctrl_emb, cond_proj]
+    adamw_keys: [proj_in, proj_out, _emb, cond_proj, out_norm, gate_proj]
 
   scheduler: null
 

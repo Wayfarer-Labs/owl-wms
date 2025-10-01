@@ -28,6 +28,7 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
         "lr": kwargs.get("adamw_lr"),
         "betas": kwargs.get("adamw_betas"),
         "weight_decay": kwargs.get("adamw_wd"),
+        "eps": kwargs.get("adamw_eps"),
     }
     adam_group = {
         "params": adam_params,
