@@ -117,7 +117,7 @@ train:
   output_path: /mnt/data/waypoint_1/models/pilot_stage0
   resume_ckpt: null
 
-  sample_interval: 8000
+  sample_interval: 500
   save_interval: 10000
 
   vae_id: null
