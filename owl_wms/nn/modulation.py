@@ -9,11 +9,10 @@ from .normalization import rms_norm
 class AdaLN(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.fc = nn.Linear(dim, 2 * dim)
+        self.fc = nn.Linear(dim, 2 * dim, bias=False)
 
         # AdaLN-Zero
         self.fc.weight.detach().zero_()
-        self.fc.bias.detach().zero_()
 
     def forward(self, x, cond):
         # cond: [b, n, d], x: [b, n*m, d]
@@ -35,7 +34,7 @@ class AdaLN(nn.Module):
 class Gate(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.fc_c = nn.Linear(dim, dim)
+        self.fc_c = nn.Linear(dim, dim, bias=False)
 
     def forward(self, x, cond):
         # cond: [b, n, d], x: [b, n*m, d]
