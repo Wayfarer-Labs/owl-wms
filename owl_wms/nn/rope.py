@@ -9,6 +9,8 @@ allow_ops_in_compiled_graph()
 
 def get_rope_cls(cls_name):
     cls_name = cls_name.lower()
+    if cls_name == "old_ortho":
+        return OldOrthoRoPE
     if cls_name == "ortho":
         return OrthoRoPE
     elif cls_name == "motion":
@@ -58,7 +60,7 @@ class RoPE(nn.Module):
         raise NotImplementedError
 
 
-class OrthoRoPE(RoPE):
+class OldOrthoRoPE(RoPE):
     """
     RoPE for rotation across orthogonal axes: time, height, and width
     """
@@ -82,6 +84,28 @@ class OrthoRoPE(RoPE):
 
         freqs = torch.cat([vid_freqs, aud_freqs], dim=1).flatten(0, 1)
         return freqs[..., ::2]  # subsampling
+
+
+class OrthoRoPE(RoPE):
+    """
+    RoPE for rotation across orthogonal axes: time, height, and width
+    Time: Geometric Spectrum -- rotates 1/2 of head dim
+    Height / Width: Linear Spectrum -- rotates 1/4th of head dim each (1/2 combined)
+    (Note: No subsampling applied in this implementation)
+    """
+    def get_freqs(self, config):
+        H, W, T = config.height, config.width, config.n_frames
+        head_dim = config.d_model // config.n_heads
+        max_freq = getattr(config, 'rope_hw_max_freq', 32)  # should never be smaller than H
+
+        freq_t = RotaryEmbedding(dim=head_dim // 4, freqs_for='lang')\
+            .forward(torch.arange(T))
+        freq_xy = RotaryEmbedding(dim=head_dim // 8, freqs_for='pixel', max_freq=max_freq)\
+            .get_axial_freqs(H, W)
+        return torch.cat([
+            eo.repeat(freq_t, 't d -> (t h w) d', h=H, w=W),
+            eo.repeat(freq_xy, 'h w d -> (t h w) d', t=T)
+        ], dim=-1)
 
 
 class MotionRoPE(RoPE):
