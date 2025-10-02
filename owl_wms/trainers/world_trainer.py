@@ -125,8 +125,8 @@ class WorldTrainer(BaseTrainer):
     @torch.no_grad()
     def attn_window_update(self):
         # step -> (local_window, global_window)
-        online_updates = {0: (1, 1), 10000: (2, 1), 15000: (4, 2)}
-        ema_updates = {0: (1, 1), 12000: (2, 1), 18000: (4, 2)}
+        online_updates = {0: (1, 1), 1000: (1, 2), 2000: (1, 3)}
+        ema_updates =    {0: (1, 1), 2000: (1, 2), 3000: (1, 3)}
         assert False, "Need to assert that the final step window is equal to model config"
 
         def apply(model, local_window, global_window):
@@ -369,52 +369,50 @@ class WorldTrainer(BaseTrainer):
         ema_model = self.ema.ema_model
         ema_model.eval()
 
-        # ---- Generate Samples ----
+        # ---- Batch & labels ----
         eval_batch = self.prep_batch(next(self.sample_loader))
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
-
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
+        lw = int(ema_model.transformer.local_window.item())
+        gw = int(ema_model.transformer.global_window.item())
+        fps = int(eval_batch["fps"])
+
+        def mk_labels(fps_val: int, n: int):
+            base = {"noise_prev": self.train_cfg.noise_prev, "local attn": lw, "global attn": gw}
+            return [{"fps": fps_val, **base} for _ in range(n)]
+
+        labels = mk_labels(fps, vid.size(0))
+
+        # ---- Generate ----
         with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
-                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-                noise_prev=self.train_cfg.noise_prev
+                labels=labels, num_frames=self.train_cfg.num_generated_frames
             )
 
         if self.sampler_only_return_generated:
-            latent_vid, controller_inputs = (
-                x[:, vid.size(1):] if x is not None else None for x in (latent_vid, controller_inputs)
-            )
+            latent_vid = None if latent_vid is None else latent_vid[:, vid.size(1):]
+            controller_inputs = None if controller_inputs is None else controller_inputs[:, vid.size(1):]
 
         video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
 
-        # ---- Optionally Save Latent Artifacts ----
+        # ---- Optional latent artifact ----
         if getattr(self.train_cfg, "eval_sample_dir", None):
-            latent_vid = self._gather_concat_cpu(latent_vid)
+            lat_cpu = self._gather_concat_cpu(latent_vid)
             if self.rank == 0:
-                eval_dir = Path(self.train_cfg.eval_sample_dir)
-                eval_dir.mkdir(parents=True, exist_ok=True)
-                torch.save(latent_vid, eval_dir / f"vid.{self.total_step_counter}.pt")
+                out_dir = Path(self.train_cfg.eval_sample_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(lat_cpu, out_dir / f"vid.{self.total_step_counter}.pt")
 
-        # ---- Generate Media Artifacts ----
-        video_out, controller_inputs = map(self._gather_concat_cpu, (video_out, controller_inputs))
+        # ---- Gather & log ----
+        video_out = self._gather_concat_cpu(video_out)
+        ci = self._gather_concat_cpu(controller_inputs)
+        mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
 
-        if isinstance(eval_batch["fps"], torch.Tensor):
-            fps = self._gather_concat_cpu(eval_batch["fps"])
-            if self.rank == 0:
-                fps = fps.view(-1).tolist()
-
-        # TODO: clean this hack
-        mouse, btn = None, None
-        if eval_batch.get("controller_inputs") is not None:
-            mouse, btn = map(
-                self._gather_concat_cpu,
-                torch.split(eval_batch["controller_inputs"], [2, 11], dim=-1)
-            )
-        eval_wandb_dict = (
-            to_wandb_samples(video_out, mouse, btn, fps=fps, noise_prev=[self.train_cfg.noise_prev] * len(fps))
-            if self.rank == 0 else None
-        )
-        return eval_wandb_dict
+        if self.rank == 0:
+            n_out = 0 if video_out is None else video_out.size(0)
+            labels_out = mk_labels(fps, n_out)
+            return to_wandb_samples(video_out, mouse, btn, labels=labels_out)
+        return None

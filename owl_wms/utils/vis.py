@@ -8,7 +8,7 @@ import os
 import numpy as np
 
 
-def draw_frame(frame, mouse, button, fps_label=None, noise_prev=None):
+def draw_frame(frame, mouse, button, labels=None):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
@@ -60,21 +60,17 @@ def draw_frame(frame, mouse, button, fps_label=None, noise_prev=None):
             text_y = y_pos - 5  # 5px above box
             cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-    # Top-right FPS label
-    if fps_label is not None:
-        label = f"FPS:{fps_label}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-        x = frame.shape[1] - tw - 5   # 5px right margin
-        y = 5 + th                    # 5px top margin
-        cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    # Just below, noise_prev
-        if noise_prev is not None:
-            np_val = float(noise_prev)
-            nlabel = f"noise_prev:{np_val:.2f}" if isinstance(np_val, float) else f"noise_prev:{np_val}"
-            (ntw, nth), _ = cv2.getTextSize(nlabel, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            nx = frame.shape[1] - ntw - 5
-            ny = y + nth + 4           # 4px gap under FPS
-            cv2.putText(frame, nlabel, (nx, ny), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # Top-right labels (draw in dict order)
+    if labels:
+        x_margin, y_margin, gap = 5, 5, 4
+        y = y_margin
+        for k, v in labels.items():
+            text = f"{k}: {v}"
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            x = frame.shape[1] - tw - x_margin
+            y += th
+            cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            y += gap
 
     # Convert back to RGB for display
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -82,20 +78,20 @@ def draw_frame(frame, mouse, button, fps_label=None, noise_prev=None):
     return frame
 
 
-def draw_frames(frames, mouse_inputs, button_inputs, fps_label=None, noise_prev=None):
+def draw_frames(frames, mouse_inputs, button_inputs, labels=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
     b, n = frames.shape[:2]
     out_frames = []
-    per_sample_fps = fps_label if isinstance(fps_label, list) else [fps_label] * b
+    labels_list = labels if isinstance(labels, list) else [labels] * b
     for i in range(b):
         batch_frames = []
         for j in range(n):
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            drawn = draw_frame(frame, mouse, button, fps_label=per_sample_fps[i], noise_prev=noise_prev[i])
+            drawn = draw_frame(frame, mouse, button, labels=labels_list[i])
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)
