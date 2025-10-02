@@ -67,9 +67,8 @@ class WorldTrainer(BaseTrainer):
 
         self.autocast_ctx = torch.amp.autocast('cuda', torch.bfloat16)
 
-        self.total_accum_steps = self.train_cfg.total_accum_steps
-        assert self.total_accum_steps % self.world_size == 0
-        self.accum_steps_per_device = self.total_accum_steps // self.world_size
+        assert self.train_cfg.total_accum_steps % self.world_size == 0
+        self.accum_steps_per_device = self.train_cfg.total_accum_steps // self.world_size
 
     @staticmethod
     def get_raw_model(model):
@@ -291,7 +290,7 @@ class WorldTrainer(BaseTrainer):
         timer.reset()
 
         # eval / sample step
-        if self.total_step_counter % self.train_cfg.sample_interval == 0 and self.total_step_counter > 0:
+        if self.total_step_counter % self.train_cfg.sample_interval == 0:
             eval_wandb_dict = self.eval_step(sampler)
             sample_wandb_dict = self.sample_step(sampler)
             if self.rank == 0:
