@@ -83,7 +83,6 @@ class WorldDiTBlock(nn.Module):
         super().__init__()
         self.config = config
         self.attn = owl_nn.Attn(config, layer_idx)
-        self.cross_attn = owl_nn.CrossAttention(config)
         self.mlp = owl_nn.MLP(config)
         self.cond_head = CondHead(config)
 
@@ -101,22 +100,10 @@ class WorldDiTBlock(nn.Module):
         x = owl_nn.ada_gate(x, g0)
         x = x + residual
 
-        """
-        if prompt_emb is not None:
-            residual = x
-            x = self.adaln1(x, cond)
-            x = self.cross_attn(x, context=prompt_emb["emb"], context_pad_mask=prompt_emb["pad_mask"])
-            x = self.gate1(x, cond) + residual
-
-        if ctrl_emb is not None:
-            residual = x
-            x = self.adaln1(x, cond)
-            x = self.cross_attn_same_frame(x, context=ctrl_emb)
-            x = self.gate1(x, cond) + residual
-        """
         def cond_mlp(xm, sm, bm, gm):
-            y = self.mlp(owl_nn.ada_rmsnorm(xm, sm, bm))
-            return xm + owl_nn.ada_gate(y, gm)
+            res = xm
+            xm = self.mlp(owl_nn.ada_rmsnorm(xm, sm, bm))
+            return owl_nn.ada_gate(xm, gm) + res
 
         do_ckpt = self.config.gradient_checkpointing and self.training
         x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, s1, b1, g1)
@@ -197,7 +184,7 @@ class WorldModel(nn.Module):
             self.patchify = nn.Sequential(
                 Rearrange('b n c h w -> b (n h w) c'),
                 nn.Linear(C, D, bias=False),
-            )
+            )  # Faster path for (1, 1)
         else:
             self.patchify = nn.Sequential(
                 Rearrange('b n c h w -> (b n) c h w'),
