@@ -383,13 +383,12 @@ class WorldTrainer(BaseTrainer):
             base = {"noise_prev": self.train_cfg.noise_prev, "local attn": lw, "global attn": gw}
             return [{"fps": fps_val, **base} for _ in range(n)]
 
-        labels = mk_labels(fps, vid.size(0))
-
         # ---- Generate ----
         with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
-                labels=labels, num_frames=self.train_cfg.num_generated_frames
+                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
+                noise_prev=self.train_cfg.noise_prev
             )
 
         if self.sampler_only_return_generated:
