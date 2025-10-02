@@ -2,6 +2,7 @@ from typing import Optional, List
 from torch import Tensor
 
 import einops as eo
+from einops.layers.torch import Rearrange
 from tensordict import TensorDict
 
 import torch
@@ -188,9 +189,27 @@ class WorldModel(nn.Module):
         self.transformer = WorldDiT(config)
 
         self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
-        self.proj_in = nn.Conv2d(config.channels, config.d_model, kernel_size=(ph, pw), stride=(ph, pw), bias=False)
+
+        C, D, H, W = config.channels, config.d_model, config.height, config.width
+        Hp, Wp = H // ph, W // pw
+
+        if self.patch == (1, 1):
+            self.patchify = nn.Sequential(
+                Rearrange('b n c h w -> b (n h w) c'),
+                nn.Linear(C, D, bias=False),
+            )
+        else:
+            self.patchify = nn.Sequential(
+                Rearrange('b n c h w -> (b n) c h w'),
+                nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
+                Rearrange('(b n) d hp wp -> b (n hp wp) d', hp=Hp, wp=Wp),
+            )
+        self.unpatchify = nn.Sequential(
+            nn.Linear(D, C * ph * pw, bias=True),
+            Rearrange('b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)', hp=Hp, wp=Wp, ph=ph, pw=pw),
+            )
+
         self.out_norm = owl_nn.AdaLN(config.d_model)
-        self.proj_out = nn.Linear(config.d_model, config.channels * ph * pw, bias=True)
 
     def forward(
         self,
@@ -230,16 +249,10 @@ class WorldModel(nn.Module):
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
-        # patchify
-        x = eo.rearrange(x, 'b n c h w -> (b n) c h w')
-        x = self.proj_in(x)
-        x = eo.rearrange(x, '(b n) d h w -> b (n h w) d', b=B, n=N)
-        # backbone fwd
+        x = self.patchify(x)
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
-        # unpatchify
-        x = self.proj_out(F.silu(self.out_norm(x, cond)))
-        x = eo.rearrange(x, 'b (n h w) (c ph pw) -> b n c (h ph) (w pw)', n=N, h=Hp, w=Wp, ph=ph, pw=pw)
-
+        x = F.silu(self.out_norm(x, cond))
+        x = self.unpatchify(x)
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):

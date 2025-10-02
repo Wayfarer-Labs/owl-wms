@@ -110,7 +110,7 @@ train:
     adamw_wd: 1.0e-2
     adamw_eps: 1.0e-8
     adamw_betas: [0.9, 0.999]
-    adamw_keys: [proj_in, proj_out, _emb, cond_proj, out_norm, gate_proj]
+    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj]
 
   scheduler: null
 
