@@ -82,6 +82,9 @@ class AVCachingSampler:
         return torch.cat(latents, dim=1)
 
     @torch.compile
+    def fwd(self, model, *args, **kwargs):
+        return model(*args, **kwargs)[:, -1:]
+
     def denoise_frame(
         self,
         model,
@@ -117,14 +120,15 @@ class AVCachingSampler:
                 vid, ctrl, frame_ts = new_vid, curr_ctrl, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
-            eps = model(
+            eps = self.fwd(
+                model,
                 vid,
                 sigma=sigma,
                 frame_timestamp=frame_ts,
                 prompt_emb=prompt_emb,
                 controller_inputs=ctrl,
                 kv_cache=kv_cache
-            )[:, -1:],  # only the new frame’s eps
+            )[:, -1:]  # only the new frame’s eps
 
             new_vid = self.scheduler.step(
                 model_output=eps,
