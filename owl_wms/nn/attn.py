@@ -67,7 +67,7 @@ class AttnMaskScheduler:
         self.config = config
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
-    def __call__(self, seq_len, doc_id, kv_cache, device, t_pos, curr_frame_mask=None):
+    def __call__(self, seq_len, doc_id, kv_cache, device, t_pos, curr_frame_mask=None, *, local_window, global_window):
         q_offset = t_pos.shape[-1] - seq_len
         torch._assert(q_offset >= 0, "negative q_offset")
         if kv_cache is not None:
@@ -83,8 +83,8 @@ class AttnMaskScheduler:
             curr_frame_mask=curr_frame_mask,
             device=device,
         )
-        local_bm = get_block_mask(window_len=self.config.local_window, **kwargs)
-        global_bm = get_block_mask(window_len=self.config.global_window, **kwargs)
+        local_bm = get_block_mask(window_len=local_window, **kwargs)
+        global_bm = get_block_mask(window_len=global_window, **kwargs)
         return [
             global_bm if (i % self.global_period) == 0 else local_bm
             for i in range(self.config.n_layers)

@@ -117,6 +117,9 @@ class WorldDiT(nn.Module):
         super().__init__()
         self.config = config
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
+        self.local_window = nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
+        self.global_window = nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
+
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
         if self.config.noise_conditioning in ("dit_air", "wan"):
@@ -148,7 +151,9 @@ class WorldDiT(nn.Module):
             kv_cache=kv_cache,
             t_pos=t_pos,
             curr_frame_mask=curr_frame_mask,
-            device=x.device
+            device=x.device,
+            local_window=self.local_window,
+            global_window=self.global_window,
         )
         for block, block_mask, in zip(self.blocks, block_masks):
             x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
