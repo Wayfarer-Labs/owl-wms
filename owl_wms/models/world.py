@@ -175,15 +175,14 @@ class WorldModel(nn.Module):
 
         self.transformer = WorldDiT(config)
 
-        self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
+        self.patch = tuple(getattr(config, "patch", (1, 1)))
 
         C, D = config.channels, config.d_model
-
         self.patchify = nn.Sequential(
             Rearrange('b n c h w -> (b n) c h w'),
-            nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
+            nn.Conv2d(C, D, kernel_size=self.patch, stride=self.patch, bias=False),
         )
-        self.unpatchify = nn.Linear(D, C * ph * pw, bias=True)
+        self.unpatchify = nn.Linear(D, C * math.prod(self.patch), bias=True)
         self.out_norm = owl_nn.AdaLN(config.d_model)
 
     def forward(

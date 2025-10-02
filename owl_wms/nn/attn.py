@@ -18,7 +18,6 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    prev_attn: bool = False,
     curr_frame_mask=None,
     device="cpu"
 ):
@@ -30,11 +29,6 @@ def get_block_mask(
         assert q_offset == 0, "kv caching not supported with bidirectional"
 
     # EXPERIMENTAL
-    if prev_attn:
-        _minv = torch.iinfo(t_pos.dtype).min
-        prev_t = torch.where(t_pos.unsqueeze(-2) < t_pos.unsqueeze(-1), t_pos.unsqueeze(-2), _minv).amax(-1)
-        prev_t = torch.where(prev_t == _minv, t_pos, prev_t)
-
     if curr_frame_mask is not None:
         assert q_offset == 0
     # ########
@@ -49,9 +43,6 @@ def get_block_mask(
 
         # EXPERIMENTAL
         ##############
-        # prev_mask: for half of heads, only attend to previous token
-        prev_mask = (t_kv == t_q) | (t_kv == prev_t[b, abs_q]) | (h % 2 == 0) if prev_attn else True
-
         # current prev attn: previous frames are noised at a contant level, current frames noised at random level
         # matches inference behavior
         if curr_frame_mask is not None:
@@ -62,7 +53,7 @@ def get_block_mask(
             prev_curr_mask = True
         # ########
 
-        return (base_mask & window_mask & same_doc_mask & prev_mask & prev_curr_mask)
+        return base_mask & window_mask & same_doc_mask & prev_curr_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
