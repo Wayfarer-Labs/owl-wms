@@ -177,17 +177,13 @@ class WorldModel(nn.Module):
 
         self.patch = (ph, pw) = tuple(getattr(config, "patch", (1, 1)))
 
-        C, D, H, W = config.channels, config.d_model, config.height, config.width
-        Hp, Wp = H // ph, W // pw
+        C, D = config.channels, config.d_model
 
         self.patchify = nn.Sequential(
             Rearrange('b n c h w -> (b n) c h w'),
             nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
         )
-        self.unpatchify = nn.Sequential(
-            nn.Linear(D, C * ph * pw, bias=True),
-            Rearrange('b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)', hp=Hp, wp=Wp, ph=ph, pw=pw),
-        )
+        self.unpatchify = nn.Linear(D, C * ph * pw, bias=True)
         self.out_norm = owl_nn.AdaLN(config.d_model)
 
     def forward(
@@ -231,7 +227,11 @@ class WorldModel(nn.Module):
         x = eo.rearrange(self.patchify(x), '(b n) d hp wp -> b (n hp wp) d', b=B, n=N)
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
         x = F.silu(self.out_norm(x, cond))
-        x = self.unpatchify(x)
+        x = eo.rearrange(
+            self.unpatchify(x),
+            'b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)',
+            n=N, hp=Hp, wp=Wp, ph=ph, pw=pw
+        )
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
