@@ -99,7 +99,7 @@ class AVCachingSampler:
 
         # Partially re-noise history
         prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), noise_prev)
-        t_prev = prev_video.new_full((B, prev_vid.size(1)), noise_prev)
+        sigma_prev = prev_video.new_full((B, prev_vid.size(1)), noise_prev)
 
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
@@ -107,13 +107,14 @@ class AVCachingSampler:
         for step, (t, s) in enumerate(zip(self.timesteps[:-1], self.sigmas[:-1])):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
+            sigma = s.expand(B, 1)
             if step == 0:
                 vid = torch.cat([prev_vid, new_vid], dim=1)
-                sigma = torch.cat([t_prev, s.expand(B, 1)], dim=1)  # TODO: rename sigma
+                sigma = torch.cat([sigma_prev, sigma], dim=1)  # TODO: rename sigma
                 ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
                 frame_ts = torch.cat([prev_ts, curr_ts], dim=0)
             else:
-                vid, sigma, ctrl, frame_ts = new_vid, s.expand(B, 1), curr_ctrl, curr_ts
+                vid, ctrl, frame_ts = new_vid, curr_ctrl, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
             eps = model(
@@ -123,13 +124,13 @@ class AVCachingSampler:
                 prompt_emb=prompt_emb,
                 controller_inputs=ctrl,
                 kv_cache=kv_cache
-            )
+            )[:, -1:],  # only the new frame’s eps
+
             new_vid = self.scheduler.step(
-                model_output=eps[:, -1:],  # only the new frame’s eps
+                model_output=eps,
                 timestep=t,
                 sample=new_vid,
                 **self.sched_step_kw
             ).prev_sample
 
-        # Clean frame will be cached automatically in the *next* step‑0
         return new_vid
