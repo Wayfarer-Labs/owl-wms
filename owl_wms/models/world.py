@@ -183,7 +183,7 @@ class WorldModel(nn.Module):
         self.patchify = nn.Sequential(
             Rearrange('b n c h w -> (b n) c h w'),
             nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
-            Rearrange('(b n) d hp wp -> b (n hp wp) d', hp=Hp, wp=Wp),
+            Rearrange('(b n) d hp wp -> b (n hp wp) d', n=config.num_frames, hp=Hp, wp=Wp)
         )
         self.unpatchify = nn.Sequential(
             nn.Linear(D, C * ph * pw, bias=True),
