@@ -20,8 +20,7 @@ class NoiseConditioner(nn.Module):
 
         with torch.autocast("cuda", enabled=False):
             s = s.reshape(-1).float()  # fp32 for fourier numerical stability
-            s = s.clamp(eps, 1 - eps)
-            s = -2.0 * torch.logit(s)  # logSNR
+            s = s * 1000  # expressive rotation range
 
             # calculate fourier features
             phase = s[:, None] * self.freq[None, :]

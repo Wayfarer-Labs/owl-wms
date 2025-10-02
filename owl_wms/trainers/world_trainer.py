@@ -230,8 +230,8 @@ class WorldTrainer(BaseTrainer):
         B, N = x0.size(0), x0.size(1)
 
         with torch.no_grad():
-            sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)
-            # sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # Optional: Sigmoid(N(0,1))
+            # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
+            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
             eps = torch.finfo(sigma.dtype).eps
             sigma = sigma.clamp(eps, 1 - eps)
 
