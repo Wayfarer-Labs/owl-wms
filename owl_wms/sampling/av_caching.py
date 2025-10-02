@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from ..nn.kv_cache import StaticKVCache
 
-from .schedulers import get_sd3_euler
+from diffusers import FlowMatchEulerDiscreteScheduler
 
 
 class AVCachingSampler:
@@ -18,10 +18,25 @@ class AVCachingSampler:
     :param cfg_scale: Must be 1.0
     :param noise_prev: Noise previous frame
     """
-    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0) -> None:
+    def __init__(self, n_steps: int = 16, cfg_scale: float = 1.0, sched_kw=None, sched_step_kw=None) -> None:
         if cfg_scale != 1.0:
             raise NotImplementedError("cfg_scale must be 1.0 until updated to handle")
-        self.n_steps = n_steps
+
+        self.scheduler = FlowMatchEulerDiscreteScheduler(shift=3.0)
+        self.sched_step_kw = sched_step_kw or {}
+
+        # self.scheduler = FlowMatchHeunDiscreteScheduler(shift=3.0)
+        # self.sched_step_kw = sched_step_kw or {}
+
+        # self.scheduler = UniPCMultistepScheduler(
+        #     prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=3.0, timestep_spacing="trailing")
+        # )
+        # self.sched_step_kw = {}  # must be empty for unipc
+
+        self.scheduler.set_timesteps(n_steps)
+        self.sigmas = self.scheduler.sigmas
+        self.timesteps = self.scheduler.timesteps
+
 
     @torch.inference_mode()
     def __call__(
@@ -37,7 +52,8 @@ class AVCachingSampler:
         """Generate `num_frames` new frames and return updated tensors."""
         init_len = x.size(1)
 
-        dt = get_sd3_euler(self.n_steps).to(device=x.device, dtype=x.dtype)
+        self.sigmas = self.sigmas.to(x.device, x.dtype)
+        self.timesteps = self.timesteps.to(x.device, x.dtype)
 
         seq_len = init_len + num_frames
         kv_cache = StaticKVCache(model.config, max_seq_len=seq_len, batch_size=x.size(0), dtype=x.dtype).to(x.device)
@@ -57,7 +73,7 @@ class AVCachingSampler:
                 model, prompt_emb, kv_cache,
                 x, prev_ctrl, curr_ctrl,
                 prev_ts=prev_ts, curr_ts=curr_ts,
-                dt=dt, noise_prev=noise_prev
+                noise_prev=noise_prev
             )
 
             latents.append(x)
@@ -76,7 +92,6 @@ class AVCachingSampler:
         curr_ctrl: torch.Tensor,
         prev_ts: torch.Tensor,
         curr_ts: torch.Tensor,
-        dt: torch.Tensor,
         noise_prev: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
@@ -88,18 +103,17 @@ class AVCachingSampler:
 
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
-        t_new = t_prev.new_ones(B, 1)
 
-        for step in range(self.n_steps):
+        for step, (t, s) in enumerate(zip(self.timesteps[:-1], self.sigmas[:-1])):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
             if step == 0:
                 vid = torch.cat([prev_vid, new_vid], dim=1)
-                sigma = torch.cat([t_prev, t_new], dim=1)  # TODO: rename sigma
+                sigma = torch.cat([t_prev, s.expand(B, 1)], dim=1)  # TODO: rename sigma
                 ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
                 frame_ts = torch.cat([prev_ts, curr_ts], dim=0)
             else:
-                vid, sigma, ctrl, frame_ts = new_vid, t_new, curr_ctrl, curr_ts
+                vid, sigma, ctrl, frame_ts = new_vid, s.expand(B, 1), curr_ctrl, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
             eps = model(
@@ -110,8 +124,12 @@ class AVCachingSampler:
                 controller_inputs=ctrl,
                 kv_cache=kv_cache
             )
-            new_vid -= eps[:, -1:] * dt[step]  # only update the new frame
-            t_new -= dt[step]
+            new_vid = self.scheduler.step(
+                model_output=eps[:, -1:],  # only the new frame’s eps
+                timestep=t,
+                sample=new_vid,
+                **self.sched_step_kw
+            ).prev_sample
 
         # Clean frame will be cached automatically in the *next* step‑0
         return new_vid
