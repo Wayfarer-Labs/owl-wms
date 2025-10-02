@@ -62,7 +62,7 @@ def get_block_mask(
             prev_curr_mask = True
         # ########
 
-        return (base_mask & window_mask & same_doc_mask & prev_mask & prev_curr_mask) | sink_mask
+        return (base_mask & window_mask & same_doc_mask & prev_mask & prev_curr_mask)
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
