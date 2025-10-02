@@ -118,7 +118,7 @@ class Attn(nn.Module):
 
         self.gated_attn = getattr(config, "gated_attn", False)
         if self.gated_attn:
-            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+            self.gate_proj = nn.Linear(self.n_heads, self.n_heads, bias=False)  # sparse attn gate
             nn.init.zeros_(self.gate_proj.weight)
 
     def forward(self, x, pos_ids, bm, kv_cache=None):
@@ -135,8 +135,10 @@ class Attn(nn.Module):
 
         # SDPA -> Attention Gate -> Out Proj
         y = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa)
+        if self.gated_attn:
+            gates = torch.sigmoid(self.gate_proj(x[..., :self.n_heads]))  # (b, t, h)
+            y = y * gates.permute(0, 2, 1).unsqueeze(-1)                  # (b, h, t, d)
         y = eo.rearrange(y, "b h t d -> b t (h d)")
-        y = (y * self.gate_proj(x).sigmoid()) if self.gated_attn else y
         y = self.out_proj(y)
         return y
 

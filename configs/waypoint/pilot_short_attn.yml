@@ -3,9 +3,9 @@ model:
 
   ####
   n_layers: 28
-  n_heads: 16
-  n_kv_heads: 8
-  d_model: 2048
+  n_heads: 20
+  n_kv_heads: 10
+  d_model: 2560
   mlp_ratio: 4
 
   gradient_checkpointing: false
@@ -23,8 +23,7 @@ model:
 
   n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
 
-  rope_impl: motion
-  rope_ats_delta: 2.0
+  rope_impl: ortho
 
   gated_attn: true
   noise_conditioning: wan
@@ -47,7 +46,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 128
+      seq_len: 64
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -91,7 +90,7 @@ train:
 
   sampler_id: av_caching
   sampler_kwargs:
-    n_steps: 16
+    n_steps: 40
     cfg_scale: 1.0
     only_return_generated: false
   sampling_batch_size: 1
@@ -118,7 +117,7 @@ train:
   output_path: /mnt/data/waypoint_1/models/pilot_stage0
   resume_ckpt: null
 
-  sample_interval: 2000
+  sample_interval: 8000
   save_interval: 10000
 
   vae_id: null
