@@ -3,7 +3,6 @@ from pathlib import Path
 import tqdm
 import wandb
 import itertools
-import random
 
 import torch
 import torch.nn.functional as F

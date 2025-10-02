@@ -22,6 +22,7 @@ class AVCachingSampler:
         if cfg_scale != 1.0:
             raise NotImplementedError("cfg_scale must be 1.0 until updated to handle")
 
+        self.n_steps = n_steps
         self.scheduler = FlowMatchEulerDiscreteScheduler(shift=3.0)
         self.sched_step_kw = sched_step_kw or {}
 
@@ -34,9 +35,6 @@ class AVCachingSampler:
         # self.sched_step_kw = {}  # must be empty for unipc
 
         self.scheduler.set_timesteps(n_steps)
-        self.sigmas = self.scheduler.sigmas
-        self.timesteps = self.scheduler.timesteps
-
 
     @torch.inference_mode()
     def __call__(
@@ -51,9 +49,6 @@ class AVCachingSampler:
     ):
         """Generate `num_frames` new frames and return updated tensors."""
         init_len = x.size(1)
-
-        self.sigmas = self.sigmas.to(x.device, x.dtype)
-        self.timesteps = self.timesteps.to(x.device, x.dtype)
 
         seq_len = init_len + num_frames
         kv_cache = StaticKVCache(model.config, max_seq_len=seq_len, batch_size=x.size(0), dtype=x.dtype).to(x.device)
@@ -107,10 +102,12 @@ class AVCachingSampler:
         # Create new pure-noise frame
         new_vid = torch.randn_like(prev_video[:, :1])
 
-        for step, (t, s) in enumerate(zip(self.timesteps[:-1], self.sigmas[:-1])):
+        self.scheduler.set_timesteps(self.n_steps)
+
+        for step in range(self.n_steps):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
-            sigma = s.expand(B, 1)
+            sigma = self.scheduler.sigmas[step].expand(B, 1).to(prev_video.device, prev_video.dtype)
             if step == 0:
                 vid = torch.cat([prev_vid, new_vid], dim=1)
                 sigma = torch.cat([sigma_prev, sigma], dim=1)  # TODO: rename sigma
@@ -132,7 +129,7 @@ class AVCachingSampler:
 
             new_vid = self.scheduler.step(
                 model_output=eps,
-                timestep=t,
+                timestep=self.scheduler.timesteps[step],
                 sample=new_vid,
                 **self.sched_step_kw
             ).prev_sample
