@@ -18,7 +18,7 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    first_frm_sink: bool = False,
+    first_frm_sink: bool = True,
     prev_attn: bool = False,
     curr_frame_mask=None,
     device="cpu"
@@ -31,8 +31,6 @@ def get_block_mask(
         assert q_offset == 0, "kv caching not supported with bidirectional"
 
     # EXPERIMENTAL
-    t_first = t_pos.amin(dim=-1) if first_frm_sink else None
-
     if prev_attn:
         _minv = torch.iinfo(t_pos.dtype).min
         prev_t = torch.where(t_pos.unsqueeze(-2) < t_pos.unsqueeze(-1), t_pos.unsqueeze(-2), _minv).amax(-1)
@@ -53,7 +51,7 @@ def get_block_mask(
         # EXPERIMENTAL
         ##############
         # sink_mask: attend to first frame always
-        sink_mask = (t_kv == t_first[b]) if first_frm_sink else False
+        sink_mask = (doc_id[b, kv] == -1) if first_frm_sink else False
 
         # prev_mask: for half of heads, only attend to previous token
         prev_mask = (t_kv == t_q) | (t_kv == prev_t[b, abs_q]) | (h % 2 == 0) if prev_attn else True
@@ -68,7 +66,7 @@ def get_block_mask(
             prev_curr_mask = True
         # ########
 
-        return ((base_mask & window_mask & same_doc_mask & prev_mask) | sink_mask) & prev_curr_mask
+        return (base_mask & window_mask & same_doc_mask & prev_mask & prev_curr_mask) | sink_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
@@ -124,8 +122,7 @@ class Attn(nn.Module):
 
         self.gated_attn = getattr(config, "gated_attn", False)
         if self.gated_attn:
-            self.gate_proj = nn.Linear(self.n_heads, self.n_heads, bias=False)  # sparse gate
-            # self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+            self.gate_proj = nn.Linear(config.d_model, config.d_model, bias=False)
             nn.init.zeros_(self.gate_proj.weight)
 
     def forward(self, x, pos_ids, bm, kv_cache=None):
@@ -142,10 +139,8 @@ class Attn(nn.Module):
 
         # SDPA -> Attention Gate -> Out Proj
         y = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa)
-        if self.gated_attn:
-            gates = torch.sigmoid(self.gate_proj(x[..., :self.n_heads]))  # (b, t, h)
-            y = y * gates.permute(0, 2, 1).unsqueeze(-1)                  # (b, h, t, d)
         y = eo.rearrange(y, "b h t d -> b t (h d)")
+        y = (y * self.gate_proj(x).sigmoid()) if self.gated_attn else y
         y = self.out_proj(y)
         return y
 
