@@ -180,22 +180,15 @@ class WorldModel(nn.Module):
         C, D, H, W = config.channels, config.d_model, config.height, config.width
         Hp, Wp = H // ph, W // pw
 
-        if self.patch == (1, 1):
-            self.patchify = nn.Sequential(
-                Rearrange('b n c h w -> b (n h w) c'),
-                nn.Linear(C, D, bias=False),
-            )  # Faster path for (1, 1)
-        else:
-            self.patchify = nn.Sequential(
-                Rearrange('b n c h w -> (b n) c h w'),
-                nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
-                Rearrange('(b n) d hp wp -> b (n hp wp) d', hp=Hp, wp=Wp),
-            )
+        self.patchify = nn.Sequential(
+            Rearrange('b n c h w -> (b n) c h w'),
+            nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
+            Rearrange('(b n) d hp wp -> b (n hp wp) d', hp=Hp, wp=Wp),
+        )
         self.unpatchify = nn.Sequential(
             nn.Linear(D, C * ph * pw, bias=True),
             Rearrange('b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)', hp=Hp, wp=Wp, ph=ph, pw=pw),
-            )
-
+        )
         self.out_norm = owl_nn.AdaLN(config.d_model)
 
     def forward(
