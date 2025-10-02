@@ -184,7 +184,6 @@ class WorldModel(nn.Module):
 
         self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
-        self.bos_emb = nn.Parameter(torch.zeros(1, config.tokens_per_frame, config.d_model))
 
         self.transformer = WorldDiT(config)
 
@@ -222,14 +221,6 @@ class WorldModel(nn.Module):
         assert (H % ph == 0) and (W % pw == 0), "H, W must be divisible by patch"
         Hp, Wp = H // ph, W // pw
 
-        frame_timestamp = F.pad(frame_timestamp, (1, 0), value=0)
-        sigma = F.pad(sigma, (1, 0), value=0)
-        if controller_inputs is not None:
-            controller_inputs = F.pad(controller_inputs, (0, 0, 1, 0), value=0)
-        if doc_id is None:
-            doc_id = torch.zeros(B, N + 1, device=x.device, dtype=torch.long)
-        doc_id = F.pad(doc_id, (1, 0), value=-1)
-        N = N + 1
         pos_ids = self.get_pos_ids(frame_timestamp, Hp, Wp)
 
         if curr_frame_mask is not None:
@@ -247,10 +238,9 @@ class WorldModel(nn.Module):
         if self.patch == (1, 1):
             x = eo.rearrange(x, 'b n c h w -> b (n h w) c')
             x = self.proj_in(x)
-            x = torch.cat([self.bos_emb.expand(B, -1, -1), x], dim=1)  ####
             x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
             x = self.proj_out(F.silu(self.out_norm(x, cond)))
-            x = eo.rearrange(x, 'b (n h w) c -> b n c h w', n=N, h=H, w=W)
+            x = eo.rearrange(x, 'b (n h w) c -> b n c h w', h=H, w=W)
         else:
             # patchify
             x = eo.rearrange(x, 'b n c h w -> (b n) c h w')
@@ -262,7 +252,7 @@ class WorldModel(nn.Module):
             x = self.proj_out(F.silu(self.out_norm(x, cond)))
             x = eo.rearrange(x, 'b (n h w) (c ph pw) -> b n c (h ph) (w pw)', n=N, h=Hp, w=Wp, ph=ph, pw=pw)
 
-        return x[:, 1:]  # remove bos embedding
+        return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
         assert fps.dim() == 1 and fps.dtype == torch.long
