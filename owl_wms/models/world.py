@@ -183,7 +183,6 @@ class WorldModel(nn.Module):
         self.patchify = nn.Sequential(
             Rearrange('b n c h w -> (b n) c h w'),
             nn.Conv2d(C, D, kernel_size=(ph, pw), stride=(ph, pw), bias=False),
-            Rearrange('(b n) d hp wp -> b (n hp wp) d', n=config.num_frames, hp=Hp, wp=Wp)
         )
         self.unpatchify = nn.Sequential(
             nn.Linear(D, C * ph * pw, bias=True),
@@ -229,7 +228,7 @@ class WorldModel(nn.Module):
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
-        x = self.patchify(x)
+        x = eo.rearrange(self.patchify(x), '(b n) d hp wp -> b (n hp wp) d', b=B, n=N)
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
         x = F.silu(self.out_norm(x, cond))
         x = self.unpatchify(x)
