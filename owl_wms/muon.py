@@ -7,7 +7,7 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
     override muon.py defaults; anything omitted is left out of the group so the
     optimizer applies its own defaults.
     """
-    adamw_keys = kwargs.get("adamw_keys", [])
+    adamw_keys = set(kwargs.get("adamw_keys", []))
 
     # normalize names like before
     named = {n.replace("._orig_mod", ""): p for n, p in model.named_parameters()}
@@ -20,34 +20,39 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
         )
 
     # split
-    adam_params = [p for n, p in named.items() if any(k in n for k in adamw_keys) or p.ndim < 2]
-    muon_params = [p for n, p in named.items() if not any(k in n for k in adamw_keys) and p.ndim >= 2]
-
+    adam_params = [p for n, p in named.items() if "gate_proj" not in n and (any(k in n for k in adamw_keys) or p.ndim < 2)]
+    muon_params = [p for n, p in named.items() if "gate_proj" not in n and not any(k in n for k in adamw_keys) and p.ndim >= 2]
     # only include overrides that are not None
     adam_overrides = {
         "lr": kwargs.get("adamw_lr"),
         "betas": kwargs.get("adamw_betas"),
         "weight_decay": kwargs.get("adamw_wd"),
         "eps": kwargs.get("adamw_eps"),
-    }
-    adam_group = {
-        "params": adam_params,
         "use_muon": False,
-        **{k: v for k, v in adam_overrides.items() if v is not None},
     }
+    adam_overrides = {k: v for k, v in adam_overrides.items() if v is not None}
 
     muon_overrides = {
         "lr": kwargs.get("lr"),
         "momentum": kwargs.get("momentum"),
         "weight_decay": kwargs.get("weight_decay"),
-    }
-    muon_group = {
-        "params": muon_params,
         "use_muon": True,
-        **{k: v for k, v in muon_overrides.items() if v is not None},
     }
+    muon_overrides = {k: v for k, v in muon_overrides.items() if v is not None}
 
-    groups = [adam_group, muon_group]
+    adam_group = {"params": adam_params, **adam_overrides}
+    muon_group = {"params": muon_params, **muon_overrides}
+
+    ####
+    gate_params = [p for n, p in named.items() if "gate_proj" in n]
+    gate_group = {
+        "params": gate_params,
+        **{k: v for k, v in adam_overrides.items() if k != "lr"},
+        **({"lr": adam_overrides["lr"] * 0.1} if "lr" in adam_overrides else {}),
+    }
+    ####
+
+    groups = [adam_group, muon_group, gate_group]
     groups = [g for g in groups if g["params"]]
 
     OptimizerCls = SingleDeviceMuonWithAuxAdam if world_size == 1 else MuonWithAuxAdam
