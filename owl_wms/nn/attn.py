@@ -18,7 +18,6 @@ def get_block_mask(
     doc_id: torch.Tensor | None = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    first_frm_sink: bool = False,
     prev_attn: bool = False,
     curr_frame_mask=None,
     device="cpu"
@@ -50,9 +49,6 @@ def get_block_mask(
 
         # EXPERIMENTAL
         ##############
-        # sink_mask: attend to first frame always
-        sink_mask = (doc_id[b, kv] == -1) if first_frm_sink else False
-
         # prev_mask: for half of heads, only attend to previous token
         prev_mask = (t_kv == t_q) | (t_kv == prev_t[b, abs_q]) | (h % 2 == 0) if prev_attn else True
 
