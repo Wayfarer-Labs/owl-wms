@@ -112,18 +112,32 @@ class WorldTrainer(BaseTrainer):
             del state  # free memory
 
     @torch.no_grad()
-    def update_buffer(self, name: str, value: torch.Tensor, value_ema: torch.Tensor | None = None):
-        """Set the buffer `name` (e.g. 'core.transformer.foo') across ranks and EMA."""
-        online = self.model.module if isinstance(self.model, DDP) else self.model
-        buf_online = online.get_buffer(name)
-        buf_ema = self.ema.ema_model.get_buffer(name)
-
+    def set_buffer(self, model: torch.nn.Module, name: str, value: torch.Tensor):
+        """Set buffer `name` on `model` (supports dotted paths), in-place; broadcast same buffer to all devices"""
+        mod = model.module if isinstance(model, DDP) else model
+        sub, sep, buf = name.rpartition(".")
+        target = (mod.get_submodule(sub) if sep else mod).get_buffer(buf if sep else name)
         if self.rank == 0:
-            buf_online.copy_(value.to(buf_online))
+            target.copy_(value.to(device=target.device, dtype=target.dtype))
         if self.world_size > 1:
-            dist.broadcast(buf_online, 0)
+            dist.broadcast(target, src=0)
 
-        buf_ema.copy_(buf_online)
+    @torch.no_grad()
+    def attn_window_update(self):
+        # step -> (local_window, global_window)
+        online_updates = {0: (1, 1), 10000: (2, 1), 15000: (4, 2)}
+        ema_updates = {0: (1, 1), 12000: (2, 1), 18000: (4, 2)}
+        assert False, "Need to assert that the final step window is equal to model config"
+
+        def apply(model, local_window, global_window):
+            self.set_buffer(model, "transformer.local_window", torch.tensor(local_window, dtype=torch.int32))
+            self.set_buffer(model, "transformer.global_window", torch.tensor(global_window, dtype=torch.int32))
+
+        step = self.total_step_counter
+        if step in online_updates:
+            apply(self.model, *online_updates[step])
+        if step in ema_updates:
+            apply(self.ema.ema_model, *ema_updates[step])
 
     def prep_batch(self, batch):
         """Move to cuda, and if necessary use encoder to convert rgb to latent (x)"""
@@ -190,9 +204,10 @@ class WorldTrainer(BaseTrainer):
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
+                self.attn_window_update()
+
                 train_loss = self.train_step(mini_batches)
                 metrics.log('train_loss', train_loss)
-
                 self.ema.update()
 
                 self.log_step(metrics, timer, sampler)
