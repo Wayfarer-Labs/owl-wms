@@ -1,3 +1,6 @@
+from typing import Optional
+from torch import Tensor
+
 import torch
 import einops as eo
 from torch import nn
@@ -13,12 +16,12 @@ flex_attention = torch.compile(flex_attention)
 
 
 def get_block_mask(
-    t_pos: torch.Tensor,
-    window_len: int | None = None,
-    doc_id: torch.Tensor | None = None,
+    t_pos: Tensor,
+    window_len: Optional[Tensor] = None,
+    doc_id: Optional[Tensor] = None,
     q_offset: int = 0,
     is_causal: bool = True,
-    curr_frame_mask=None,
+    curr_frame_mask: Optional[Tensor] = None,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
