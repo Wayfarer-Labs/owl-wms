@@ -135,7 +135,8 @@ class WorldTrainer(BaseTrainer):
     @torch.no_grad()
     def attn_window_update(self):
         # step -> (local_window, global_window)
-        online_updates = {0: (1, 1), 50000: (2, 4), 100000: (3, 9), 150000: (4, 16)}
+        # online_updates = {0: (1, 1), 50000: (2, 4), 100000: (3, 9), 150000: (4, 16)}
+        online_updates = {0: (2, 4), 50_000: (3, 9), 100_000: (4, 16)}
         ema_updates = online_updates
         # TODO: Need to assert that the final step window is equal to model config
 
@@ -273,8 +274,8 @@ class WorldTrainer(BaseTrainer):
                 x1_p = torch.randn_like(x0)
                 x_p = x0 + (x1_p - x0) * sigma_p.view(B, N, 1, 1, 1)
 
-                x_t = torch.cat([x_t, x_p], dim=1),
-                sigma = torch.cat([sigma, sigma_p], dim=1),
+                x_t = torch.cat([x_t, x_p], dim=1)
+                sigma = torch.cat([sigma, sigma_p], dim=1)
 
                 # mask for static / sampled noise
                 curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)

@@ -37,8 +37,8 @@ train:
   trainer_id: world
 
   ELBO_loss: false
-  inference_matching: false
-  noise_prev: 0.2
+  inference_matching: true
+  noise_prev: 0.0
 
   total_accum_steps: 32
 
