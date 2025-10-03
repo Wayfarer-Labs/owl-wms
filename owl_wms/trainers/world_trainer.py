@@ -92,7 +92,7 @@ class WorldTrainer(BaseTrainer):
 
         # Online model, EMA, Optimizer
         self.model = self.model.cuda()
-        self.quantize(self.model)
+        # self.quantize(self.model)
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
@@ -114,19 +114,12 @@ class WorldTrainer(BaseTrainer):
             del state  # free memory
 
     def quantize(self, model):
-        from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig
+        from torchao.float8 import convert_to_float8_training
 
-        def mx_friendly_linears(mod, fqn):
-            return isinstance(mod, nn.Linear) and (mod.in_features % 32 == 0)
+        def only_mlp(mod: nn.Module, fqn: str) -> bool:
+            return isinstance(mod, nn.Linear) and (fqn == "mlp" or fqn.endswith(".mlp") or ".mlp." in fqn)
 
-        cfg = Float8DynamicActivationFloat8WeightConfig(
-            round_scales_to_power_of_2=True,
-            pad_inner_dim=False,
-            emulate=False,
-        )
-
-        quantize_(self.model, cfg, filter_fn=mx_friendly_linears)
-
+        convert_to_float8_training(self.model, filter_fn=only_mlp)
 
     @torch.no_grad()
     def set_buffer(self, model: torch.nn.Module, name: str, value: torch.Tensor):
