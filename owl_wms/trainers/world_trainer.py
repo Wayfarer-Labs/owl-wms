@@ -125,9 +125,9 @@ class WorldTrainer(BaseTrainer):
     @torch.no_grad()
     def attn_window_update(self):
         # step -> (local_window, global_window)
-        online_updates = {0: (1, 1), 1000: (1, 2), 2000: (1, 3)}
-        ema_updates =    {0: (1, 1), 2000: (1, 2), 3000: (1, 3)}
-        # TODO: assert False, "Need to assert that the final step window is equal to model config"
+        online_updates = {0: (1, 1), 50000: (2, 4), 100000: (3, 9), 150000: (4, 16)}
+        ema_updates = online_updates
+        # TODO: Need to assert that the final step window is equal to model config
 
         def apply(model, local_window, global_window):
             self.set_buffer(model, "transformer.local_window", torch.tensor(local_window, dtype=torch.int32))
@@ -204,7 +204,7 @@ class WorldTrainer(BaseTrainer):
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
-                # self.attn_window_update()
+                self.attn_window_update()
 
                 train_loss = self.train_step(mini_batches)
                 metrics.log('train_loss', train_loss)
