@@ -116,10 +116,12 @@ class WorldTrainer(BaseTrainer):
     def quantize(self, model):
         from torchao.float8 import convert_to_float8_training
 
-        def only_mlp(mod: nn.Module, fqn: str) -> bool:
-            return isinstance(mod, nn.Linear) and (fqn == "mlp" or fqn.endswith(".mlp") or ".mlp." in fqn)
+        def fp8_eligible(mod, fqn):
+            if not isinstance(mod, nn.Linear):
+                return False
+            return (mod.in_features % 32) == 0
 
-        convert_to_float8_training(self.model, module_filter_fn=only_mlp)
+        convert_to_float8_training(self.model, module_filter_fn=fp8_eligible)
 
     @torch.no_grad()
     def set_buffer(self, model: torch.nn.Module, name: str, value: torch.Tensor):
