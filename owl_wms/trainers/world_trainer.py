@@ -410,8 +410,12 @@ class WorldTrainer(BaseTrainer):
         ci = self._gather_concat_cpu(controller_inputs)
         mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
 
+        num_gt_frames = 0 if self.sampler_only_return_generated else self.train_cfg.num_seed_frames
+
         if self.rank == 0:
             n_out = 0 if video_out is None else video_out.size(0)
             labels_out = mk_labels(fps, n_out)
-            return to_wandb_samples(video_out, mouse, btn, labels=labels_out)
+            return to_wandb_samples(
+                video_out, mouse, btn, labels=labels_out, num_gt_frames=num_gt_frames
+            )
         return None

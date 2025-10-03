@@ -8,7 +8,19 @@ import os
 import numpy as np
 
 
-def draw_frame(frame, mouse, button, labels=None):
+def _put_text_with_box(img, text, x, y, fg, bg=(0,0,0), alpha=0.6,
+                       font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.6, thick=2, pad=4):
+    (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
+    x0, y0, x1, y1 = x - pad, y - th - pad, x + tw + pad, y + bl + pad
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), bg, -1)
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+    cv2.putText(img, text, (x, y), font, scale, (0,0,0), thick + 2, cv2.LINE_AA)
+    cv2.putText(img, text, (x, y), font, scale, fg, thick, cv2.LINE_AA)
+    return (tw, th, bl)
+
+
+def draw_frame(frame, mouse, button, labels=None, is_gt=None):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
@@ -60,16 +72,28 @@ def draw_frame(frame, mouse, button, labels=None):
             text_y = y_pos - 5  # 5px above box
             cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
+    # Top-right badge ("GT" orange or "AI" green), then labels
+    x_margin, y_margin, gap = 5, 5, 4
+    y = y_margin
+    if is_gt is not None:
+        badge = "GT" if is_gt else "AI"
+        color = (0,165,255) if is_gt else (0,255,0)  # BGR: orange or green
+        (tw, th), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        x = frame.shape[1] - tw - x_margin
+        y += th
+        _put_text_with_box(frame, badge, x, y, fg=color, bg=(0,0,0), alpha=0.6,
+                           font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.7, thick=2)
+        y += gap
+
     # Top-right labels (draw in dict order)
     if labels:
-        x_margin, y_margin, gap = 5, 5, 4
-        y = y_margin
         for k, v in labels.items():
             text = f"{k}: {v}"
             (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             x = frame.shape[1] - tw - x_margin
             y += th
-            cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            _put_text_with_box(frame, text, x, y, fg=(255,255,255), bg=(0,0,0), alpha=0.6,
+                               font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.6, thick=2)
             y += gap
 
     # Convert back to RGB for display
@@ -78,7 +102,7 @@ def draw_frame(frame, mouse, button, labels=None):
     return frame
 
 
-def draw_frames(frames, mouse_inputs, button_inputs, labels=None):
+def draw_frames(frames, mouse_inputs, button_inputs, labels=None, n_gt_frames=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
@@ -91,7 +115,8 @@ def draw_frames(frames, mouse_inputs, button_inputs, labels=None):
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            drawn = draw_frame(frame, mouse, button, labels=labels_list[i])
+            is_gt = (j < n_gt_frames) if n_gt_frames is not None else None
+            drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt)
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)
