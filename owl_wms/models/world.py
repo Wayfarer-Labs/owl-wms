@@ -84,7 +84,7 @@ class WorldDiTBlock(nn.Module):
         super().__init__()
         self.config = config
         self.attn = owl_nn.Attn(config, layer_idx)
-        self.mlp = owl_nn.QMLP(config)
+        self.mlp = owl_nn.MLP(config)
         self.cond_head = CondHead(config)
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
