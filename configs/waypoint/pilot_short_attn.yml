@@ -40,7 +40,7 @@ train:
   inference_matching: false
   noise_prev: 0.2
 
-  total_accum_steps: 16
+  total_accum_steps: 32
 
   data_id: multi
   data_kwargs:
