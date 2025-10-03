@@ -72,28 +72,37 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None):
             text_y = y_pos - 5  # 5px above box
             cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-    # Top-right badge ("GT" orange or "AI" green), then labels
-    x_margin, y_margin, gap = 5, 5, 4
-    y = y_margin
+    # Top-right badge ("GT"/"AI") + labels inside ONE semi-transparent box
+    x_margin, y_margin, gap, pad = 5, 5, 4, 6
+    lines = []
     if is_gt is not None:
-        badge = "GT" if is_gt else "AI"
-        color = (0,165,255) if is_gt else (0,255,0)  # BGR: orange or green
-        (tw, th), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        x = frame.shape[1] - tw - x_margin
-        y += th
-        _put_text_with_box(frame, badge, x, y, fg=color, bg=(0,0,0), alpha=0.6,
-                           font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.7, thick=2)
-        y += gap
-
-    # Top-right labels (draw in dict order)
+        lines.append(( "GT" if is_gt else "AI",
+                       (0,165,255) if is_gt else (0,255,0),
+                       0.7, 2))
     if labels:
         for k, v in labels.items():
-            text = f"{k}: {v}"
-            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            x = frame.shape[1] - tw - x_margin
-            y += th
-            _put_text_with_box(frame, text, x, y, fg=(255,255,255), bg=(0,0,0), alpha=0.6,
-                               font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.6, thick=2)
+            lines.append((f"{k}: {v}", (255,255,255), 0.6, 2))
+    if lines:
+        # Measure block
+        sizes = [cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, sc, th)[0] for (t,_,sc,th) in lines]
+        max_w = max(w for (w,h) in sizes)
+        total_h = sum(h for (w,h) in sizes) + gap*(len(lines)-1)
+        x_right = frame.shape[1] - x_margin
+        x_text = x_right - max_w
+        y_text = y_margin
+        # Draw single background box
+        x0, y0 = x_text - pad, y_text - pad
+        x1, y1 = x_right + pad, y_text + total_h + pad
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x0, y0), (x1, y1), (0,0,0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        # Draw texts with outline
+        y = y_text
+        for (text, color, sc, th), (tw, thh) in zip(lines, sizes):
+            y += thh
+            x = x_right - tw
+            cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, sc, (0,0,0), th+2, cv2.LINE_AA)
+            cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, sc, color, th, cv2.LINE_AA)
             y += gap
 
     # Convert back to RGB for display
