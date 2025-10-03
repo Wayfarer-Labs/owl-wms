@@ -102,7 +102,7 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None):
     return frame
 
 
-def draw_frames(frames, mouse_inputs, button_inputs, labels=None, n_gt_frames=None):
+def draw_frames(frames, mouse_inputs, button_inputs, labels=None, num_gt_frames=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
@@ -115,7 +115,7 @@ def draw_frames(frames, mouse_inputs, button_inputs, labels=None, n_gt_frames=No
             frame = frames[i,j]
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
-            is_gt = (j < n_gt_frames) if n_gt_frames is not None else None
+            is_gt = (j < num_gt_frames) if num_gt_frames is not None else None
             drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt)
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
