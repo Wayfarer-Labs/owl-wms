@@ -114,14 +114,23 @@ class WorldTrainer(BaseTrainer):
             del state  # free memory
 
     def quantize(self, model):
-        from torchao.float8 import convert_to_float8_training
+        from torchao.quantization import quantize_, Float8DynamicActivationFloat8WeightConfig
 
-        def fp8_eligible(mod, fqn):
-            if not isinstance(mod, nn.Linear):
-                return False
-            return (mod.in_features % 32) == 0
+        def mx_linears(mod, fqn):
+            return isinstance(mod, nn.Linear) and (mod.in_features % 32 == 0)
 
-        convert_to_float8_training(self.model, module_filter_fn=fp8_eligible)
+        cfg = Float8DynamicActivationFloat8WeightConfig(
+            # prefer fast accumulation in forward; keep stability in grads
+            gemm_config_output={"use_fast_accum": True},
+            gemm_config_grad_input={"use_fast_accum": False},
+            gemm_config_grad_weight={"use_fast_accum": False},
+            # steer scales toward power-of-two to better match MX kernels
+            round_scales_to_power_of_2=True,
+            # optionally pad odd inner dims if you must quantize them
+            pad_inner_dim=False,   # keep False if you want pure %32 selection only
+            emulate=False,         # ensure you’re not emulating FP8 on the host
+        )
+        quantize_(self.model, cfg, filter_fn=mx_linears)
 
     @torch.no_grad()
     def set_buffer(self, model: torch.nn.Module, name: str, value: torch.Tensor):
