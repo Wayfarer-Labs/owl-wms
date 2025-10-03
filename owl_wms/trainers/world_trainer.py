@@ -5,6 +5,7 @@ import wandb
 import itertools
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
@@ -91,6 +92,7 @@ class WorldTrainer(BaseTrainer):
 
         # Online model, EMA, Optimizer
         self.model = self.model.cuda()
+        self.quantize(self.model)
         if self.world_size > 1:
             self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
@@ -110,6 +112,14 @@ class WorldTrainer(BaseTrainer):
             self.total_step_counter = int(state.get("steps", 0))
 
             del state  # free memory
+
+    def quantize(self, model):
+        from torchao.float8 import convert_to_float8_training
+
+        def only_mlp(mod: nn.Module, fqn: str) -> bool:
+            return isinstance(mod, nn.Linear) and (fqn == "mlp" or fqn.endswith(".mlp") or ".mlp." in fqn)
+
+        convert_to_float8_training(self.model, module_filter_fn=only_mlp)
 
     @torch.no_grad()
     def set_buffer(self, model: torch.nn.Module, name: str, value: torch.Tensor):
