@@ -271,8 +271,8 @@ class WorldTrainer(BaseTrainer):
             sigma = sigma.clamp(eps, 1 - eps)
 
             # Sequence of "current frames" noised at random uniform levels
-            x1 = torch.randn_like(x0)  # gaussian @ sigma 1.0
-            x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp to noise level @ sigma
+            x1 = torch.randn_like(x0)  # gaussian noise
+            x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp(gt, noise) to level @ sigma
             v_target = x1 - x0
 
             frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)  # [B, N]
@@ -306,16 +306,7 @@ class WorldTrainer(BaseTrainer):
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
-            # Experimental: Don't predict first frame
-            # v_pred, v_target = v_pred[:, 1:], v_target[:, 1:]
-            # ########
-
-        if getattr(self.train_cfg, "ELBO_loss", False):
-            w = (sigma / (1.0 - sigma)).pow(2).view(B, N, 1, 1, 1)
-            w = w / (w.mean().detach() + 1e-12)
-            return ((v_pred - v_target) ** 2 * w).mean()
-        else:
-            return F.mse_loss(v_pred, v_target)
+        return F.mse_loss(v_pred, v_target)
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
