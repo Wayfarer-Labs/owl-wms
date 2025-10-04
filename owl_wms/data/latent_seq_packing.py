@@ -1,3 +1,5 @@
+from typing import Optional
+
 from .npy_table import NpyTable
 
 from functools import partial
@@ -47,7 +49,7 @@ class WindowedViewDataset(Dataset):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
         self.sampling_periods = sampling_periods
-        self.max_stride = max(self.sampling_periods)
+        self.legal_fps = legal_fps
 
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
@@ -62,18 +64,35 @@ class WindowedViewDataset(Dataset):
         if not include_truncated:
             mask &= ~trunc
         if legal_fps is not None:
-            mask &= np.isin(fps, legal_fps)
+            # keep clips whose fps is exactly in legal_fps OR divisible to one of them
+            div_ok = np.zeros_like(fps, dtype=bool)
+            for t in legal_fps:
+                div_ok |= (fps % t) == 0
+            mask &= div_ok
 
         sel = fps[mask]
-        bad = np.unique([f for f in sel if any(f % p for p in self.sampling_periods)])
-        if bad.size:
-            raise ValueError(f"bad fps for {self.sampling_periods}: {bad.tolist()}")
+        if legal_fps is None:
+            bad = np.unique([f for f in sel if any(f % p for p in self.sampling_periods)])
+            if bad.size:
+                raise ValueError(f"bad fps for {self.sampling_periods}: {bad.tolist()}")
 
         self._docs = np.nonzero(mask)[0]
         self._lens = seq_len[mask].astype(np.int64)
         self._fps = fps[mask].astype(np.float32)
 
         assert (self._lens > 0).all()
+
+        # choose packing stride
+        if legal_fps is None:
+            self.max_stride = max(self.sampling_periods)
+        else:
+            # largest per-clip subsampling stride that yields a legal fps
+            max_stride = 1
+            for f in self._fps.astype(int):
+                for t in legal_fps:
+                    if f % t == 0:
+                        max_stride = max(max_stride, f // t)
+            self.max_stride = int(max_stride)
 
         self._build_packing()  # deterministic first epoch
         uniq, counts = np.unique(self._fps.astype(int), return_counts=True)
@@ -114,7 +133,15 @@ class WindowedViewDataset(Dataset):
 
         seed_doc, seed_lo, _ = self._slices[idx][0]
         rng = random.Random(((int(seed_doc) << 32) + int(seed_lo)) ^ epoch)  # now varies by epoch
-        stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
+
+        base_fps = int(self._fps_perm[seed_doc])
+        if self.legal_fps is None:
+            stride = self.sampling_periods[rng.randrange(len(self.sampling_periods))]
+        else:
+            choices = [base_fps // t for t in self.legal_fps if base_fps % t == 0]
+            assert choices, f"no valid stride for fps {base_fps} and legal_fps {self.legal_fps}"
+            stride = choices[rng.randrange(len(choices))]
+
         phase = rng.randrange(stride)
         # unbiased subwindow shift within the strided view
         W = self.window_length * self.max_stride
@@ -128,8 +155,7 @@ class WindowedViewDataset(Dataset):
         }
         doc_full = np.asarray(doc_id, dtype=np.int64)
         out["doc_id"] = torch.from_numpy(doc_full[start::stride][: self.window_length]).long()
-        # per-doc fps from first segment, adjusted by stride (float)
-        base_fps = int(self._fps_perm[seed_doc])
+
         assert base_fps % stride == 0, f"base fps {base_fps} must be divisible by stride {stride}"
         fps_val = base_fps // stride
         out["fps"] = torch.tensor(fps_val, dtype=torch.long)
@@ -211,7 +237,7 @@ def get_loader(
         batch_columns,
         latent_column,
         batch_size=1,
-        sampling_periods: tuple = (1,),
+        sampling_periods: Optional[tuple] = None,
         legal_fps=None,
 
 ):
@@ -220,6 +246,8 @@ def get_loader(
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
 
+    if legal_fps is not None:
+        sampling_periods = None
     ds = WindowedViewDataset(
         dataset_path,
         seq_len,

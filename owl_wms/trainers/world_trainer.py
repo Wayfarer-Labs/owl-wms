@@ -135,7 +135,9 @@ class WorldTrainer(BaseTrainer):
     @torch.no_grad()
     def attn_window_update(self):
         bi_warmup = getattr(self.train_cfg, "bidirectional_warmup", None)
-        if bi_warmup is None or bi_warmup == 0 or bi_warmup == self.total_step_counter:
+        if bi_warmup is None:
+            return
+        elif bi_warmup == 0 or bi_warmup == self.total_step_counter:
             self.model.module.transformer.attn_masker.config.causal = True
         elif self.total_step_counter == 0:
             self.model.module.transformer.attn_masker.config.causal = False
