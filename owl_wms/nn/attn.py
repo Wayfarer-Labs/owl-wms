@@ -38,11 +38,11 @@ def get_block_mask(
 
     def mask_mod(b, h, q, kv):
         abs_q = q + q_offset  # offset for kv caching
-        t_q, t_kv = t_pos[b, abs_q], t_pos[b, kv]  # timestep of q / kv
+        t_q, t_kv = t_pos[b, abs_q], t_pos[b, kv]  # timestamp of q / kv
 
         base_mask = (t_kv <= t_q) if is_causal else True  # causal / bidirectional
         window_mask = (t_q - t_kv).abs() < window_len if window_len is not None else True  # sliding window
-        same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True
+        same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True  # for sequence packing
 
         # EXPERIMENTAL
         ##############
@@ -65,6 +65,7 @@ class AttnMaskScheduler:
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.config.causal = getattr(self.config, "causal", True)
         self.global_period = getattr(self.config, "global_attn_period", 4)
 
     def __call__(self, seq_len, doc_id, kv_cache, device, t_pos, curr_frame_mask=None, *, local_window, global_window):
@@ -79,7 +80,7 @@ class AttnMaskScheduler:
             t_pos=t_pos,
             doc_id=doc_id,
             q_offset=q_offset,
-            is_causal=getattr(self.config, "causal", True),
+            is_causal=self.config.causal,
             curr_frame_mask=curr_frame_mask,
             device=device,
         )
