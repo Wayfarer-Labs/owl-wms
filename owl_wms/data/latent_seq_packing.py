@@ -172,6 +172,10 @@ class WindowedViewDataset(Dataset):
         self._slices = self.get_window_slices(perm, shift)
         self._fps_perm = self._fps[perm]
 
+        # keep only windows whose docs all share the same native fps
+        self._slices = [s for s in self._slices if len({int(self._fps_perm[d]) for d, _, _ in s}) == 1]
+        assert self._slices, "No homogeneous-fps windows left; relax constraints or repack."
+
     def get_window_slices(self, perm, shift):
         """
         Pack a permutation of `lengths` into fixed-width `window`s.
