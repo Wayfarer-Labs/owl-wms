@@ -45,9 +45,15 @@ class WindowedViewDataset(Dataset):
         meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
         array_columns: set | None = None,
         legal_fps: list[int] | None = None,
+        trim: Optional[float] = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
+
+        self.trim = trim or 0.0
+        if not (0.0 <= self.trim < 0.5):
+            raise ValueError(f"trim must be in [0.0, 0.5), got {self.trim}")
+
         self.sampling_periods = sampling_periods
         self.legal_fps = legal_fps
 
@@ -204,11 +210,14 @@ class WindowedViewDataset(Dataset):
 
         g0 = np.repeat(start, n_win)
 
+        trim = np.floor(lens * self.trim).astype(np.int64)
+        trim_r = np.repeat(trim, n_win)
+
         # window edges in original coordinates
         left = win_id * W - shift
         right = (win_id + 1) * W - shift
-        s_idx = np.maximum(g0, left) - g0
-        e_idx = np.minimum(g0 + np.repeat(lens, n_win), right) - g0
+        s_idx = np.maximum(g0 + trim_r, left) - g0
+        e_idx = np.minimum(g0 + np.repeat(lens, n_win) - trim_r, right) - g0
 
         # `win_id` is already non-decreasing → just split where it changes
         cuts = np.flatnonzero(np.diff(win_id)) + 1
@@ -243,6 +252,7 @@ def get_loader(
         batch_size=1,
         sampling_periods: Optional[tuple] = None,
         legal_fps=None,
+        trim=0.02,
 
 ):
     assert batch_size == 1
@@ -258,6 +268,7 @@ def get_loader(
         array_columns=batch_columns,
         sampling_periods=sampling_periods,
         legal_fps=legal_fps,
+        trim=trim,
     )
 
     sampler = AutoEpochDistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True)
