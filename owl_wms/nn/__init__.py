@@ -3,5 +3,5 @@ from .checkpointing import checkpoint, maybe_ckpt
 from .embeddings import TimestepEmbedding, ControlEmbedding, NoiseConditioner
 from .mlp import MLP, MLPCustom, QMLP
 from .modulation import Gate, AdaLN, FinalLayer, ada_rmsnorm, ada_gate
-from .normalization import rms_norm
+from .normalization import layer_norm, rms_norm
 from .quantized_linear import QLinear

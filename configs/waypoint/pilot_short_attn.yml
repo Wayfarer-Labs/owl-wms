@@ -18,7 +18,7 @@ model:
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 48
+  global_window: 64
   global_attn_period: 4
 
   n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
@@ -37,9 +37,9 @@ train:
   trainer_id: world
 
   ELBO_loss: false
-  inference_matching: true
-  noise_prev: 0.01
-  bidirectional_warmup: 50_000
+  inference_matching: false
+  noise_prev: 0.2
+  bidirectional_warmup: null
 
   total_accum_steps: 32
 
@@ -47,7 +47,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -96,7 +96,7 @@ train:
     only_return_generated: false
   sampling_batch_size: 1
   num_seed_frames: 30
-  num_generated_frames: 150
+  num_generated_frames: 90
   n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
   eval_sample_dir: null
 

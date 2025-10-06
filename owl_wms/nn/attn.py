@@ -22,6 +22,7 @@ def get_block_mask(
     q_offset: int = 0,
     is_causal: bool = True,
     curr_frame_mask: Optional[Tensor] = None,
+    attn_sink: bool = True,
     device="cpu"
 ):
     kv_len = t_pos.shape[-1]
@@ -42,7 +43,14 @@ def get_block_mask(
 
         base_mask = (t_kv <= t_q) if is_causal else True  # causal / bidirectional
         window_mask = (t_q - t_kv).abs() < window_len if window_len is not None else True  # sliding window
-        same_doc_mask = doc_id[b, abs_q] == doc_id[b, kv] if doc_id is not None else True  # for sequence packing
+
+        # for sequence packing
+        if doc_id is not None:
+            same_doc_mask = (doc_id[b, abs_q] == doc_id[b, kv]) | (doc_id[b, kv] == -42)  # -42 is magic global for sink
+        else:
+            same_doc_mask = True
+
+        sink_mask = (t_pos[b, kv] == 0) if attn_sink else False
 
         # EXPERIMENTAL
         ##############
@@ -56,7 +64,7 @@ def get_block_mask(
             prev_curr_mask = True
         # ########
 
-        return base_mask & window_mask & same_doc_mask & prev_curr_mask
+        return (base_mask & window_mask & same_doc_mask & prev_curr_mask) | sink_mask
 
     return create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
