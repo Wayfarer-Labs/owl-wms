@@ -60,7 +60,12 @@ class AVCachingSampler:
 
         latents = [x]
 
-        # initialize running noised history once at noise_prev
+        # snap noise_prev to nearest scheduler sigma (excluding the last value) and use it everywhere
+        _sigmas = self.scheduler.sigmas.to(x.device, x.dtype)
+        _sigmas_wo_last = _sigmas[:-1]
+        noise_prev = _sigmas_wo_last[torch.argmin((_sigmas_wo_last - torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)).abs()).item()]
+
+        # initialize running noised history once at snapped noise_prev
         hist = torch.lerp(x, torch.randn_like(x), noise_prev)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
@@ -98,13 +103,14 @@ class AVCachingSampler:
     ):
         """Run all denoising steps for new frame"""
         B = hist.size(0)
-        # History is already noised at noise_prev (prepared in __call__)
-        sigma_prev = hist.new_full((B, hist.size(1)), float(noise_prev))
+        # History is already noised at snapped noise_prev (prepared in __call__)
+        sigma_prev = hist.new_full((B, hist.size(1)), torch.as_tensor(noise_prev, device=hist.device, dtype=hist.dtype))
         # Create new pure-noise frame
         new_vid = torch.randn_like(hist[:, :1])
 
         self.scheduler.set_timesteps(self.n_steps)
         hist_new = None
+
         for step in range(self.n_steps):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
@@ -136,14 +142,9 @@ class AVCachingSampler:
                 **self.sched_step_kw
             ).prev_sample
 
-            # On-the-fly snapshot at noise_prev using scalar sigmas
-            sigmas = self.scheduler.sigmas
-            s_in = float(sigmas[step])
-            s_out = float(sigmas[step + 1]) if step + 1 < self.n_steps else 0.0
-            sp = float(noise_prev)
-            if s_in >= sp >= s_out:
-                t = (sp - s_out) / ((s_in - s_out) + 1e-8)
-                hist_new = torch.lerp(pre, new_vid, t)
+            # capture solver state exactly at snapped noise_prev (no interpolation)
+            if hist_new is None and torch.isclose(self.scheduler.sigmas[step].to(noise_prev.device, noise_prev.dtype), noise_prev, rtol=1e-5, atol=1e-8):
+                hist_new = pre
 
         assert hist_new is not None, "noise_prev must lie within the scheduler sigma range."
 
