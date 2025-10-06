@@ -59,16 +59,20 @@ class AVCachingSampler:
         prev_ts = frame_timestamps[0, :init_len]
 
         latents = [x]
+
+        # initialize running noised history once at noise_prev
+        hist = torch.lerp(x, torch.randn_like(x), noise_prev)
+
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = init_len + idx
             curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
             curr_ts = frame_timestamps[0, start:start + 1]
 
-            x = self.denoise_frame(
+            x, hist = self.denoise_frame(
                 model, prompt_emb, kv_cache,
-                x, prev_ctrl, curr_ctrl,
+                hist, prev_ctrl, curr_ctrl,
                 prev_ts=prev_ts, curr_ts=curr_ts,
-                noise_prev=noise_prev
+                noise_prev=noise_prev,
             )
 
             latents.append(x)
@@ -78,14 +82,14 @@ class AVCachingSampler:
 
     @torch.compile
     def fwd(self, model, *args, **kwargs):
-        return model(*args, **kwargs)[:, -1:]
+        return model(*args, **kwargs)
 
     def denoise_frame(
         self,
         model,
         prompt_emb,
         kv_cache: StaticKVCache,
-        prev_video: torch.Tensor,
+        hist: torch.Tensor,
         prev_ctrl: torch.Tensor,
         curr_ctrl: torch.Tensor,
         prev_ts: torch.Tensor,
@@ -93,23 +97,20 @@ class AVCachingSampler:
         noise_prev: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
-        B = prev_video.size(0)
-
-        # Partially re-noise history
-        prev_vid = torch.lerp(prev_video, torch.randn_like(prev_video), noise_prev)
-        sigma_prev = prev_video.new_full((B, prev_vid.size(1)), noise_prev)
-
+        B = hist.size(0)
+        # History is already noised at noise_prev (prepared in __call__)
+        sigma_prev = hist.new_full((B, hist.size(1)), float(noise_prev))
         # Create new pure-noise frame
-        new_vid = torch.randn_like(prev_video[:, :1])
+        new_vid = torch.randn_like(hist[:, :1])
 
         self.scheduler.set_timesteps(self.n_steps)
-
+        hist_new = None
         for step in range(self.n_steps):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
-            sigma = self.scheduler.sigmas[step].expand(B, 1).to(prev_video.device, prev_video.dtype)
+            sigma = self.scheduler.sigmas[step].expand(B, 1).to(hist.device, hist.dtype)
             if step == 0:
-                vid = torch.cat([prev_vid, new_vid], dim=1)
+                vid = torch.cat([hist, new_vid], dim=1)
                 sigma = torch.cat([sigma_prev, sigma], dim=1)  # TODO: rename sigma
                 ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
                 frame_ts = torch.cat([prev_ts, curr_ts], dim=0)
@@ -117,6 +118,7 @@ class AVCachingSampler:
                 vid, ctrl, frame_ts = new_vid, curr_ctrl, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
+            pre = new_vid
             eps = self.fwd(
                 model,
                 vid,
@@ -134,4 +136,15 @@ class AVCachingSampler:
                 **self.sched_step_kw
             ).prev_sample
 
-        return new_vid
+            # On-the-fly snapshot at noise_prev using scalar sigmas
+            sigmas = self.scheduler.sigmas
+            s_in = float(sigmas[step])
+            s_out = float(sigmas[step + 1]) if step + 1 < self.n_steps else 0.0
+            sp = float(noise_prev)
+            if s_in >= sp >= s_out:
+                t = (sp - s_out) / ((s_in - s_out) + 1e-8)
+                hist_new = torch.lerp(pre, new_vid, t)
+
+        assert hist_new is not None, "noise_prev must lie within the scheduler sigma range."
+
+        return new_vid, hist_new
