@@ -179,9 +179,6 @@ class WorldModel(nn.Module):
         self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
 
-        self.sink_emb = nn.Parameter(torch.zeros(1, 1, config.d_model, dtype=torch.float32))
-        self.sink_emb.detach().normal_()
-
         self.transformer = WorldDiT(config)
 
         self.patch = tuple(getattr(config, "patch", (1, 1)))
@@ -233,15 +230,7 @@ class WorldModel(nn.Module):
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         x = eo.rearrange(self.patchify(x), '(b n) d hp wp -> b (n hp wp) d', b=B, n=N)
-
-        assert curr_frame_mask is None
-        x, pos_ids, doc_id = self.apply_attention_sink(x, pos_ids, doc_id, kv_cache)
-
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
-
-        if not (kv_cache is not None and torch.any(getattr(kv_cache, "kv_offset", 0) > 0)):
-            x = x[:, 1:]  # remove sink token we just added
-
         x = F.silu(self.out_norm(x, cond))
         x = eo.rearrange(
             self.unpatchify(x),
@@ -249,26 +238,6 @@ class WorldModel(nn.Module):
             n=N, hp=Hp, wp=Wp, ph=ph, pw=pw
         )
         return x
-
-    def apply_attention_sink(self, x, pos_ids, doc_id, kv_cache):
-        B = x.size(0)
-
-        if kv_cache is not None and torch.any(kv_cache.kv_offset > 0):
-            # if kv cache is populated, then the sink token already is present
-            return x, pos_ids, doc_id
-
-        if doc_id is not None:
-            sink_id = torch.full((B, 1), -42, dtype=torch.long, device=x.device)
-            doc_id = torch.cat([sink_id, doc_id], dim=1)
-
-        x = torch.cat([owl_nn.layer_norm(self.sink_emb).expand(B, 1, -1), x], dim=1)
-
-        pos_ids["t_pos"] = pos_ids["t_pos"] + 1
-        zeros = torch.zeros(B, 1, dtype=torch.long, device=x.device)
-        sink_pos = TensorDict({"t_pos": zeros, "y_pos": zeros, "x_pos": zeros}, batch_size=[B, 1])
-        pos_ids = torch.cat([sink_pos, pos_ids], dim=1)
-
-        return x, pos_ids, doc_id
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
         assert fps.dim() == 1 and fps.dtype == torch.long

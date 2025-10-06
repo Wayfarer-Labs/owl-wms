@@ -111,6 +111,8 @@ train:
     adamw_eps: 1.0e-6
     adamw_betas: [0.9, 0.95]
     adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj]
+    adamw_low_lr_keys: [gate_proj, attn_sink]
+    adamw_low_lr_mul: 0.1
 
   scheduler: null
 

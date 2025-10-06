@@ -61,64 +61,12 @@ class FinalLayer(nn.Module):
         return self.proj(F.silu(x))
 
 
-def ada_rmsnorm_nosink(x, scale, bias):
+def ada_rmsnorm(x, scale, bias):
     x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=scale.size(1))
     y4 = rms_norm(x4) * (1 + scale.unsqueeze(2)) + bias.unsqueeze(2)
     return eo.rearrange(y4, 'b n m d -> b (n m) d')
 
 
-def ada_gate_nosink(x, gate):
+def ada_gate(x, gate):
     x4 = eo.rearrange(x, 'b (n m) d -> b n m d', n=gate.size(1))
     return eo.rearrange(x4 * gate.unsqueeze(2), 'b n m d -> b (n m) d')
-
-
-import torch
-
-
-def ada_rmsnorm(x, scale, bias):
-    # x: [B, S, D], scale/bias: [B, n, D] (repeat across m)
-    B, S, D = x.shape
-    n = scale.size(1)
-    k = S % n                      # number of leading specials
-    x_head = x[:, :k]              # (possibly empty)
-    x_tail = x[:, k:]              # length is n*m
-
-    if x_tail.numel() == 0:
-        return x
-
-    m = x_tail.size(1) // n
-    sc = scale.repeat_interleave(m, dim=1)     # [B, n*m, D]
-    bs = bias.repeat_interleave(m, dim=1)      # [B, n*m, D]
-
-    y_tail = rms_norm(x_tail) * (1 + sc) + bs  # uses your existing rms_norm
-    return torch.cat([x_head, y_tail], dim=1) if k else y_tail
-
-
-def ada_gate(x, gate):
-    """
-    x:    [B, S, D]
-    gate: [B, n, D]  (shared across the m dimension)
-          Also accepts [B, n] or [B, n, 1]; will broadcast to D.
-    """
-    B, S, D = x.shape
-    n = gate.size(1)
-    k = S % n                 # number of leading specials (e.g., sink/BOS)
-
-    # Ensure gate is [B, n, D]
-    if gate.dim() == 2:
-        gate = gate.unsqueeze(-1).expand(-1, -1, D)
-    elif gate.size(-1) == 1:
-        gate = gate.expand(-1, -1, D)
-
-    # Split sequence
-    x_head = x[:, :k]         # specials (left untouched)
-    x_tail = x[:, k:]         # length is n * m
-
-    if x_tail.numel() == 0:
-        return x
-
-    m = x_tail.size(1) // n
-    gate_full = gate.repeat_interleave(m, dim=1)   # [B, n*m, D]
-
-    y_tail = x_tail * gate_full
-    return torch.cat([x_head, y_tail], dim=1) if k else y_tail
