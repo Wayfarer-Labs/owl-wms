@@ -17,8 +17,8 @@ model:
   patch: [1, 1]
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
-  local_window: 4
-  global_window: 16
+  local_window: 8
+  global_window: 48
   global_attn_period: 4
 
   n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
