@@ -38,7 +38,7 @@ train:
 
   ELBO_loss: false
   inference_matching: true
-  noise_prev: 0.0
+  noise_prev: 0.01
   bidirectional_warmup: 50_000
 
   total_accum_steps: 32
