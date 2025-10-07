@@ -30,3 +30,5 @@ diffusers
 tensordict
 transformers
 ftfy
+
+wandb_workspaces

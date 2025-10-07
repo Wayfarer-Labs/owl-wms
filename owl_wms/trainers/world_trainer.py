@@ -3,6 +3,7 @@ from pathlib import Path
 import tqdm
 import wandb
 import itertools
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -39,6 +40,8 @@ class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.rank == 0:
+            self.setup_wandb_metrics()
 
         # Setup GLOO
         if self.world_size > 1:
@@ -69,6 +72,14 @@ class WorldTrainer(BaseTrainer):
 
         assert self.train_cfg.total_accum_steps % self.world_size == 0
         self.accum_steps_per_device = self.train_cfg.total_accum_steps // self.world_size
+
+    def setup_wandb_metrics(self):
+        wandb.define_metric("eval_frame_step", hidden=True)
+        wandb.define_metric("eval_frame_loss", step_metric="eval_frame_step")
+        wandb.define_metric("eval_at_step", hidden=True)  # metadata for grouping/filtering
+        # Training uses its own x-axis (avoid relying on _step)
+        wandb.define_metric("global_step", hidden=True)
+        wandb.define_metric("train_loss", step_metric="global_step")
 
     @staticmethod
     def get_raw_model(model):
@@ -323,7 +334,8 @@ class WorldTrainer(BaseTrainer):
                 wandb_dict.update(sample_wandb_dict)
 
         if self.rank == 0:
-            wandb.log(wandb_dict, step=self.total_step_counter)
+            wandb_dict["global_step"] = self.total_step_counter
+            wandb.log(wandb_dict)  # no step=
 
     def _gather_concat_cpu(self, t: torch.Tensor, dim: int = 0):
         """Gather *t* from every rank onto rank 0 and return concatenated copy."""
@@ -347,9 +359,21 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = {}
 
         # Always reset the eval-loss DataLoader so each eval starts from the beginning
-        ema_val_loss = self.aggregate_eval_loss(ema_model, self.eval_loader())
+        eval_loss, timestep_loss_curve = self.aggregate_eval_loss(ema_model, self.eval_loader())
         if self.rank == 0:
-            eval_wandb_dict = {"eval_loss": ema_val_loss}
+            # Log eval scalar now (no step=) so it doesn't collide with training rows
+            if eval_loss is not None:
+                wandb.log({"eval_loss": float(eval_loss), "eval_at_step": self.total_step_counter})
+            eval_wandb_dict = {}
+            # log scalar history so the LinePlot renders in Charts (no Tables created)
+            if timestep_loss_curve and timestep_loss_curve[0]:
+                xs, ys = timestep_loss_curve
+                for f, y in zip(xs, ys):
+                    wandb.log({
+                        "eval_frame_step": int(f),
+                        "eval_frame_loss": float(y),
+                        "eval_at_step": self.total_step_counter,  # optional metadata
+                    })
 
         dist.barrier()
 
@@ -359,9 +383,10 @@ class WorldTrainer(BaseTrainer):
         target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
         if not target_n:
             dist.barrier()
-            return None
+            return None, ([], [])
 
         num, den = 0.0, 0.0
+        frame_sum, frame_cnt = defaultdict(float), defaultdict(float)
         loss_iter = iter(loader)
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
@@ -369,12 +394,23 @@ class WorldTrainer(BaseTrainer):
             elems = b["x"].numel()
             num += loss.item() * elems
             den += elems
+            # Accumulate by frame *offset* (0..N-1), assuming frames are ordered
+            B, N = b["x"].shape[:2]
+            li = float(loss.item())
+            for f in range(N):
+                frame_sum[f] += li * B
+                frame_cnt[f] += float(B)
         if self.world_size > 1:
             t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
             dist.all_reduce(t, op=dist.ReduceOp.SUM)
             num, den = float(t[0].item()), float(t[1].item())
 
-        return num / max(1.0, den)
+        scalar_mean = num / max(1.0, den)
+        if self.rank == 0 and frame_cnt:
+            xs = sorted(frame_cnt.keys())
+            ys = [frame_sum[i] / max(1.0, frame_cnt[i]) for i in xs]
+            return scalar_mean, (xs, ys)
+        return scalar_mean, ([], [])
 
     def sample_step(self, sampler):
         ema_model = self.ema.ema_model
