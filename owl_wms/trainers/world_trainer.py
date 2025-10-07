@@ -402,8 +402,8 @@ class WorldTrainer(BaseTrainer):
             fsum += pf * bsz
             fcnt += bsz
 
-            tot[0] += per.mean().to(torch.float64) * bsz
-            tot[1] += bsz
+            tot[0] += per.sum().to(torch.float64)
+            tot[1] += torch.tensor(per.numel(), device=device, dtype=torch.float64)
             remaining -= bsz
             if remaining <= 0:
                 break
