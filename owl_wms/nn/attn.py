@@ -111,6 +111,15 @@ class Attn(nn.Module):
 
         self.rope = get_rope(config)
 
+        self.sink_attn = getattr(config, "sink_attn", False)
+        if self.sink_attn:
+            self.attn_sinks = nn.Parameter(torch.zeros(self.n_heads))
+
+        self.gated_attn = getattr(config, "gated_attn", False)
+        if self.gated_attn:
+            self.gate_proj = nn.Linear(self.n_heads, self.n_heads, bias=False)  # sparse attn gate
+            nn.init.zeros_(self.gate_proj.weight)
+
     def forward(self, x, pos_ids, bm, kv_cache=None):
         # Q, K, V proj -> QK-norm -> RoPE
         q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads, d=self.d_head)
@@ -124,7 +133,17 @@ class Attn(nn.Module):
             k, v = kv_cache.upsert(k, v, self.layer_idx)
 
         # SDPA -> Attention Gate -> Out Proj
-        y = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa)
+        if self.sink_attn:
+            y, lse = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa, return_lse=True)
+            with torch.autocast("cuda", enabled=False):
+                sink_scale = torch.sigmoid((lse.float() - self.attn_sinks.view(1, -1, 1))).to(y.dtype)
+            y = y * sink_scale.unsqueeze(-1).to(y.dtype)
+        else:
+            y = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa)
+
+        if self.gated_attn:
+            gates = torch.sigmoid(self.gate_proj(x[..., :self.n_heads]))  # (b, t, h)
+            y = y * gates.permute(0, 2, 1).unsqueeze(-1)                  # (b, h, t, d)
         y = eo.rearrange(y, "b h t d -> b t (h d)")
         y = self.out_proj(y)
         return y
