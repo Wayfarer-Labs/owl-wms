@@ -267,7 +267,7 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    def conditional_flow_matching_loss(self, model, x, return_per_frame: bool = False, **kw):
+    def conditional_flow_matching_loss(self, model, x, reduction="mean", **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
         """
@@ -316,13 +316,7 @@ class WorldTrainer(BaseTrainer):
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
-        scalar = F.mse_loss(v_pred, v_target)
-        if not return_per_frame:
-            return scalar
-        # per-frame loss [N]: mean over batch & spatial/channels, keep frame dim
-        per_elem = F.mse_loss(v_pred, v_target, reduction="none")     # [B,N,C,H,W]
-        per_frame = per_elem.mean(dim=(0, 2, 3, 4))                   # [N]
-        return scalar, per_frame
+        return F.mse_loss(v_pred, v_target, reduction=reduction)
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
@@ -385,43 +379,46 @@ class WorldTrainer(BaseTrainer):
 
         return eval_wandb_dict
 
+    @torch.no_grad()
     def aggregate_eval_loss(self, model, loader):
-        target_n = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
-        if not target_n:
-            dist.barrier()
+        target = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
+        if not target:
             return None, ([], [])
 
-        num, den = 0.0, 0.0
-        frame_sum = frame_cnt = None
-        loss_iter = iter(loader)
-        while den < target_n:
-            b = self.prep_batch(next(loss_iter))
-            loss, pf = self.conditional_flow_matching_loss(model, return_per_frame=True, **b)
-            elems = b["x"].numel()
-            num += loss.item() * elems
-            den += b["x"].shape[0]  # count samples instead of elements
-            # accumulate true per-frame losses
-            B = b["x"].shape[0]
-            if frame_sum is None:
-                dev = f"cuda:{self.local_rank}"
-                frame_sum = torch.zeros_like(pf, dtype=torch.float64, device=dev)
-                frame_cnt = torch.zeros_like(pf, dtype=torch.float64, device=dev)
-            frame_sum += pf.to(frame_sum.dtype) * B
-            frame_cnt += B
-        if self.world_size > 1:
-            t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
-            dist.all_reduce(t, op=dist.ReduceOp.SUM)
-            num, den = float(t[0].item()), float(t[1].item())
-            if frame_sum is not None:
-                dist.all_reduce(frame_sum, op=dist.ReduceOp.SUM)
-                dist.all_reduce(frame_cnt, op=dist.ReduceOp.SUM)
+        device = torch.device(f"cuda:{self.local_rank}")
+        tot = torch.zeros(2, device=device, dtype=torch.float64)  # [sum_loss, count]
+        fsum = fcnt = None
+        remaining = int(target)
 
-        scalar_mean = num / max(1.0, den)
-        if self.rank == 0 and frame_sum is not None:
-            xs = list(range(frame_sum.numel()))
-            ys = (frame_sum / torch.clamp_min(frame_cnt, 1)).tolist()
-            return scalar_mean, (xs, ys)
-        return scalar_mean, ([], [])
+        for batch in loader:
+            batch = self.prep_batch(batch)
+            per = self.conditional_flow_matching_loss(model, reduction="none", **batch)  # [B,N,C,H,W]
+            bsz = int(batch["x"].shape[0])
+
+            pf = per.mean(dim=(0, 2, 3, 4)).to(device=device, dtype=torch.float64)  # [N]
+            if fsum is None:
+                fsum = torch.zeros_like(pf)
+                fcnt = torch.zeros_like(pf)
+            fsum += pf * bsz
+            fcnt += bsz
+
+            tot[0] += per.mean().to(torch.float64) * bsz
+            tot[1] += bsz
+            remaining -= bsz
+            if remaining <= 0:
+                break
+
+        if self.world_size > 1:
+            dist.all_reduce(tot)
+            dist.all_reduce(fsum)
+            dist.all_reduce(fcnt)
+
+        loss = (tot[0] / torch.clamp_min(tot[1], 1)).item()
+        if self.rank != 0:
+            return loss, ([], [])
+
+        ys = (fsum / torch.clamp_min(fcnt, 1)).tolist()
+        return loss, (list(range(len(ys))), ys)
 
     def sample_step(self, sampler):
         ema_model = self.ema.ema_model
