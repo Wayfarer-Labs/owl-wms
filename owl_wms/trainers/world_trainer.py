@@ -81,44 +81,6 @@ class WorldTrainer(BaseTrainer):
         wandb.define_metric("global_step", hidden=True)
         wandb.define_metric("train_loss", step_metric="global_step")
 
-        import wandb_workspaces.workspaces as ws
-        import wandb_workspaces.reports.v2 as wr
-        if self.rank == 0:
-            # Upsert by (entity, project, name); .save() updates existing or creates once
-            w = ws.Workspace(
-                entity=wandb.run.entity,
-                project=wandb.run.project,
-                name="Eval (auto)",
-            )
-            # Replace any prior "Evaluation" section to avoid duplicates
-            existing = getattr(w, "sections", []) or []
-            w.sections = [s for s in existing if getattr(s, "name", "") != "Evaluation"]
-            w.sections.append(
-                ws.Section(
-                    name="Evaluation",
-                    is_open=True,
-                    panels=[
-                        wr.LinePlot(
-                            x="eval_sigma_step",
-                            y=["eval_sigma_loss/*"],  # wildcard => single chart with slider
-                            title="eval_sigma_loss (slider)",
-                        ),
-                        wr.LinePlot(
-                            x="eval_frame_step",
-                            y=["eval_frame_loss/*"],
-                            title="eval_frame_loss (slider)",
-                        ),
-                    ],
-                )
-            )
-            w = w.save()
-            nw = w.url.split("?nw=")[-1] if "?nw=" in w.url else None
-            deeplink = f"{self.wandb_run.url}?nw={nw}" if nw else self.wandb_run.url
-            wandb.run.summary["eval_workspace_link"] = deeplink
-            # (Optional) keep both canonical links, too:
-            wandb.run.summary["workspace_url"] = w.url
-            wandb.run.summary["run_url"] = self.wandb_run.url
-
     @staticmethod
     def get_raw_model(model):
         return getattr(model, "module", model)
