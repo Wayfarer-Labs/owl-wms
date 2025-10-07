@@ -77,10 +77,35 @@ class WorldTrainer(BaseTrainer):
         wandb.define_metric("eval_frame_loss/*", step_metric="eval_frame_step")
         wandb.define_metric("eval_sigma_step", hidden=True)
         wandb.define_metric("eval_sigma_loss/*", step_metric="eval_sigma_step")
-        wandb.define_metric("eval_at_step", hidden=True)  # metadata for grouping/filtering
-        # Training uses its own x-axis (avoid relying on _step)
+        wandb.define_metric("eval_at_step", hidden=True)
         wandb.define_metric("global_step", hidden=True)
         wandb.define_metric("train_loss", step_metric="global_step")
+
+        import wandb_workspaces.workspaces as ws
+        import wandb_workspaces.reports.v2 as wr
+        ws.Workspace(
+            entity=wandb.run.entity,
+            project=wandb.run.project,
+            name="Eval (auto)",  # idempotent by name
+            sections=[
+                ws.Section(
+                    name="Evaluation",
+                    is_open=True,
+                    panels=[
+                        wr.LinePlot(
+                            x="eval_sigma_step",
+                            y=["eval_sigma_loss/*"],   # wildcard => one chart with slider
+                            title="eval_sigma_loss (slider)",
+                        ),
+                        wr.LinePlot(
+                            x="eval_frame_step",
+                            y=["eval_frame_loss/*"],
+                            title="eval_frame_loss (slider)",
+                        ),
+                    ],
+                )
+            ],
+        ).save()
 
     @staticmethod
     def get_raw_model(model):
