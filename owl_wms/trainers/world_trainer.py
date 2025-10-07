@@ -322,7 +322,7 @@ class WorldTrainer(BaseTrainer):
             return losses, sigma[:, :N]
         return losses
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def log_step(self, metrics, timer, sampler):
         wandb_dict = metrics.pop()
         wandb_dict['time'] = timer.hit()
@@ -393,7 +393,7 @@ class WorldTrainer(BaseTrainer):
 
         return eval_wandb_dict
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def aggregate_eval_loss(self, model, loader):
         target = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
         if not target:
