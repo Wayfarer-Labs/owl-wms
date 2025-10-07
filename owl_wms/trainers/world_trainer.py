@@ -75,6 +75,8 @@ class WorldTrainer(BaseTrainer):
     def setup_wandb_metrics(self):
         wandb.define_metric("eval_frame_step", hidden=True)
         wandb.define_metric("eval_frame_loss/*", step_metric="eval_frame_step")
+        wandb.define_metric("eval_sigma_step", hidden=True)
+        wandb.define_metric("eval_sigma_loss/*", step_metric="eval_sigma_step")
         wandb.define_metric("eval_at_step", hidden=True)  # metadata for grouping/filtering
         # Training uses its own x-axis (avoid relying on _step)
         wandb.define_metric("global_step", hidden=True)
@@ -267,7 +269,7 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    def conditional_flow_matching_loss(self, model, x, reduction="mean", **kw):
+    def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
         """
@@ -316,7 +318,10 @@ class WorldTrainer(BaseTrainer):
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
-        return F.mse_loss(v_pred, v_target, reduction=reduction)
+        losses = F.mse_loss(v_pred, v_target, reduction=reduction)
+        if return_sigma:
+            return losses, sigma[:, :N]
+        return losses
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
@@ -358,7 +363,7 @@ class WorldTrainer(BaseTrainer):
         eval_wandb_dict = {}
 
         # Always reset the eval-loss DataLoader so each eval starts from the beginning
-        eval_loss, timestep_loss_curve = self.aggregate_eval_loss(ema_model, self.eval_loader())
+        eval_loss, timestep_loss_curve, sigma_hist = self.aggregate_eval_loss(ema_model, self.eval_loader())
         if self.rank == 0:
             # Log eval scalar now (no step=) so it doesn't collide with training rows
             if eval_loss is not None:
@@ -374,6 +379,16 @@ class WorldTrainer(BaseTrainer):
                         series_key: float(y),                 # y-axis (unique series)
                         "eval_at_step": self.total_step_counter,  # metadata for filtering
                     })
+            # log sigma-binned histogram as a slidable series
+            if sigma_hist and sigma_hist[0]:
+                bx, by = sigma_hist
+                series_key = f"eval_sigma_loss/{self.total_step_counter}"
+                for b, y in zip(bx, by):
+                    wandb.log({
+                        "eval_sigma_step": int(b),
+                        series_key: float(y),
+                        "eval_at_step": self.total_step_counter,
+                    })
 
         dist.barrier()
 
@@ -383,16 +398,22 @@ class WorldTrainer(BaseTrainer):
     def aggregate_eval_loss(self, model, loader):
         target = getattr(self.train_cfg, "n_eval_loss_samples", 0) // self.world_size
         if not target:
-            return None, ([], [])
+            return None, ([], []), ([], [])
 
         device = torch.device(f"cuda:{self.local_rank}")
         tot = torch.zeros(2, device=device, dtype=torch.float64)  # [sum_loss, count]
         fsum = fcnt = None
         remaining = int(target)
 
+        # sigma histogram accumulators
+        num_bins = 20
+        bin_sums = torch.zeros(num_bins, device=device, dtype=torch.float64)
+        bin_counts = torch.zeros(num_bins, device=device, dtype=torch.float64)
+        edges = torch.linspace(0.0, 1.0, steps=num_bins + 1, device=device)
+
         for batch in loader:
             batch = self.prep_batch(batch)
-            per = self.conditional_flow_matching_loss(model, reduction="none", **batch)  # [B,N,C,H,W]
+            per, sig = self.conditional_flow_matching_loss(model, reduction="none", return_sigma=True, **batch)
             bsz = int(batch["x"].shape[0])
 
             pf = per.mean(dim=(0, 2, 3, 4)).to(device=device, dtype=torch.float64)  # [N]
@@ -404,6 +425,16 @@ class WorldTrainer(BaseTrainer):
 
             tot[0] += per.sum().to(torch.float64)
             tot[1] += torch.tensor(per.numel(), device=device, dtype=torch.float64)
+
+            # accumulate sigma-binned per-frame losses
+            per_frame = per.mean(dim=(2, 3, 4)).to(dtype=torch.float64)  # [B,N]
+            vals = per_frame.reshape(-1)
+            sigv = sig.reshape(-1)
+            idx = torch.bucketize(sigv, edges, right=False) - 1
+            idx = idx.clamp_(0, num_bins - 1)
+            bin_sums.scatter_add_(0, idx, vals)
+            bin_counts.scatter_add_(0, idx, torch.ones_like(vals))
+
             remaining -= bsz
             if remaining <= 0:
                 break
@@ -412,13 +443,16 @@ class WorldTrainer(BaseTrainer):
             dist.all_reduce(tot)
             dist.all_reduce(fsum)
             dist.all_reduce(fcnt)
+            dist.all_reduce(bin_sums)
+            dist.all_reduce(bin_counts)
 
         loss = (tot[0] / torch.clamp_min(tot[1], 1)).item()
         if self.rank != 0:
-            return loss, ([], [])
+            return loss, ([], []), ([], [])
 
         ys = (fsum / torch.clamp_min(fcnt, 1)).tolist()
-        return loss, (list(range(len(ys))), ys)
+        sigma_means = (bin_sums / torch.clamp_min(bin_counts, 1)).tolist()
+        return loss, (list(range(len(ys))), ys), (list(range(num_bins)), sigma_means)
 
     def sample_step(self, sampler):
         ema_model = self.ema.ema_model
