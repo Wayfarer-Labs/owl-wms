@@ -43,7 +43,7 @@ train:
   noise_prev: 0.2
   bidirectional_warmup: null
 
-  total_accum_steps: 32
+  total_accum_steps: 8
 
   data_id: multi
   data_kwargs:
