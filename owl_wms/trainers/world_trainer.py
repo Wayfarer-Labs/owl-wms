@@ -3,7 +3,6 @@ from pathlib import Path
 import tqdm
 import wandb
 import itertools
-from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -268,7 +267,7 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    def conditional_flow_matching_loss(self, model, x, **kw):
+    def conditional_flow_matching_loss(self, model, x, return_per_frame: bool = False, **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
         """
@@ -317,7 +316,13 @@ class WorldTrainer(BaseTrainer):
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
-        return F.mse_loss(v_pred, v_target)
+        scalar = F.mse_loss(v_pred, v_target)
+        if not return_per_frame:
+            return scalar
+        # per-frame loss [N]: mean over batch and pixels
+        per_elem = F.mse_loss(v_pred, v_target, reduction="none")   # [B,N,C,H,W]
+        per_frame = per_elem.flatten(2).mean(dim=2).mean(dim=0)     # [N]
+        return scalar, per_frame
 
     @torch.no_grad()
     def log_step(self, metrics, timer, sampler):
@@ -386,29 +391,34 @@ class WorldTrainer(BaseTrainer):
             return None, ([], [])
 
         num, den = 0.0, 0.0
-        frame_sum, frame_cnt = defaultdict(float), defaultdict(float)
+        frame_sum = frame_cnt = None
         loss_iter = iter(loader)
         while den < target_n:
             b = self.prep_batch(next(loss_iter))
-            loss = self.conditional_flow_matching_loss(model, **b)
+            loss, pf = self.conditional_flow_matching_loss(model, return_per_frame=True, **b)
             elems = b["x"].numel()
             num += loss.item() * elems
-            den += elems
-            # Accumulate by frame *offset* (0..N-1), assuming frames are ordered
-            B, N = b["x"].shape[:2]
-            li = float(loss.item())
-            for f in range(N):
-                frame_sum[f] += li * B
-                frame_cnt[f] += float(B)
+            den += b["x"].shape[0]  # count samples instead of elements
+            # accumulate true per-frame losses
+            B = b["x"].shape[0]
+            if frame_sum is None:
+                dev = f"cuda:{self.local_rank}"
+                frame_sum = torch.zeros_like(pf, dtype=torch.float64, device=dev)
+                frame_cnt = torch.zeros_like(pf, dtype=torch.float64, device=dev)
+            frame_sum += pf.to(frame_sum.dtype) * B
+            frame_cnt += B
         if self.world_size > 1:
             t = torch.tensor([num, den], device=f"cuda:{self.local_rank}", dtype=torch.float32)
             dist.all_reduce(t, op=dist.ReduceOp.SUM)
             num, den = float(t[0].item()), float(t[1].item())
+            if frame_sum is not None:
+                dist.all_reduce(frame_sum, op=dist.ReduceOp.SUM)
+                dist.all_reduce(frame_cnt, op=dist.ReduceOp.SUM)
 
         scalar_mean = num / max(1.0, den)
-        if self.rank == 0 and frame_cnt:
-            xs = sorted(frame_cnt.keys())
-            ys = [frame_sum[i] / max(1.0, frame_cnt[i]) for i in xs]
+        if self.rank == 0 and frame_sum is not None:
+            xs = list(range(frame_sum.numel()))
+            ys = (frame_sum / torch.clamp_min(frame_cnt, 1)).tolist()
             return scalar_mean, (xs, ys)
         return scalar_mean, ([], [])
 
