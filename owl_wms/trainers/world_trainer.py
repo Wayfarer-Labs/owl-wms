@@ -112,9 +112,8 @@ class WorldTrainer(BaseTrainer):
                 )
             )
             w = w.save()
-            # Deep-link THIS run to open with the saved workspace layout applied
-            deeplink = f"{self.wandb_run.url}?nw={w.client_id}"
-            wandb.run.summary["eval_workspace_link"] = deeplink
+            wandb.run.summary["workspace_url"] = w.url
+            wandb.run.summary["run_url"] = self.wandb_run.url
 
     @staticmethod
     def get_raw_model(model):
