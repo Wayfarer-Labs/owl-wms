@@ -25,7 +25,9 @@ model:
 
   rope_impl: ortho
 
-  gated_attn: true
+  sink_attn: false
+  gated_attn: false
+
   noise_conditioning: wan
 
   n_controller_inputs: 13

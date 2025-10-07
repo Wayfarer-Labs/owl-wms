@@ -319,9 +319,9 @@ class WorldTrainer(BaseTrainer):
         scalar = F.mse_loss(v_pred, v_target)
         if not return_per_frame:
             return scalar
-        # per-frame loss [N]: mean over batch and pixels
-        per_elem = F.mse_loss(v_pred, v_target, reduction="none")   # [B,N,C,H,W]
-        per_frame = per_elem.flatten(2).mean(dim=2).mean(dim=0)     # [N]
+        # per-frame loss [N]: mean over batch & spatial/channels, keep frame dim
+        per_elem = F.mse_loss(v_pred, v_target, reduction="none")     # [B,N,C,H,W]
+        per_frame = per_elem.mean(dim=(0, 2, 3, 4))                   # [N]
         return scalar, per_frame
 
     @torch.no_grad()
