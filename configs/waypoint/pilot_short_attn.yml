@@ -60,7 +60,7 @@ train:
           dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/train/
           sampling_periods: [1]
 
-  n_eval_loss_samples: 8192
+  n_eval_loss_samples: 1024
   eval_data_id: multi
   eval_data_kwargs:
     defaults:
