@@ -112,6 +112,10 @@ class WorldTrainer(BaseTrainer):
                 )
             )
             w = w.save()
+            nw = w.url.split("?nw=")[-1] if "?nw=" in w.url else None
+            deeplink = f"{self.wandb_run.url}?nw={nw}" if nw else self.wandb_run.url
+            wandb.run.summary["eval_workspace_link"] = deeplink
+            # (Optional) keep both canonical links, too:
             wandb.run.summary["workspace_url"] = w.url
             wandb.run.summary["run_url"] = self.wandb_run.url
 
