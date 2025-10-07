@@ -447,7 +447,6 @@ class WorldTrainer(BaseTrainer):
         bin_sums = torch.zeros(num_bins, device=device, dtype=torch.float64)
         bin_counts = torch.zeros(num_bins, device=device, dtype=torch.float64)
         edges = torch.linspace(0.0, 1.0, steps=num_bins + 1, device=device)
-        centers = (edges[:-1] + edges[1:]) * 0.5
 
         for batch in loader:
             batch = self.prep_batch(batch)
@@ -490,7 +489,7 @@ class WorldTrainer(BaseTrainer):
 
         ys = (fsum / torch.clamp_min(fcnt, 1)).tolist()
         sigma_means = (bin_sums / torch.clamp_min(bin_counts, 1)).tolist()
-        return loss, (list(range(len(ys))), ys), (centers.cpu().tolist(), sigma_means)
+        return loss, (list(range(len(ys))), ys), (list(range(num_bins)), sigma_means)
 
     def sample_step(self, sampler):
         ema_model = self.ema.ema_model
