@@ -25,8 +25,8 @@ model:
 
   rope_impl: ortho
 
-  sink_attn: true
-  gated_attn: false
+  sink_attn: false
+  gated_attn: true
 
   noise_conditioning: wan
 
