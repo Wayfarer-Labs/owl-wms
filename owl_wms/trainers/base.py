@@ -32,7 +32,7 @@ class BaseTrainer:
             else:
                 raise Exception("WANDB key not found, did you correctly load your .env file?")
 
-            wandb.init(
+            self.wandb_run = wandb.init(
                 project = log.project,
                 entity = log.name,
                 name = log.run_name,

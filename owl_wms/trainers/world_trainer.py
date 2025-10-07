@@ -83,18 +83,24 @@ class WorldTrainer(BaseTrainer):
 
         import wandb_workspaces.workspaces as ws
         import wandb_workspaces.reports.v2 as wr
-        ws.Workspace(
-            entity=wandb.run.entity,
-            project=wandb.run.project,
-            name="Eval (auto)",  # idempotent by name
-            sections=[
+        if self.rank == 0:
+            # Upsert by (entity, project, name); .save() updates existing or creates once
+            w = ws.Workspace(
+                entity=wandb.run.entity,
+                project=wandb.run.project,
+                name="Eval (auto)",
+            )
+            # Replace any prior "Evaluation" section to avoid duplicates
+            existing = getattr(w, "sections", []) or []
+            w.sections = [s for s in existing if getattr(s, "name", "") != "Evaluation"]
+            w.sections.append(
                 ws.Section(
                     name="Evaluation",
                     is_open=True,
                     panels=[
                         wr.LinePlot(
                             x="eval_sigma_step",
-                            y=["eval_sigma_loss/*"],   # wildcard => one chart with slider
+                            y=["eval_sigma_loss/*"],  # wildcard => single chart with slider
                             title="eval_sigma_loss (slider)",
                         ),
                         wr.LinePlot(
@@ -104,8 +110,11 @@ class WorldTrainer(BaseTrainer):
                         ),
                     ],
                 )
-            ],
-        ).save()
+            )
+            w = w.save()
+            # Deep-link THIS run to open with the saved workspace layout applied
+            deeplink = f"{self.wandb_run.url}?nw={w.client_id}"
+            wandb.run.summary["eval_workspace_link"] = deeplink
 
     @staticmethod
     def get_raw_model(model):
