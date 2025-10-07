@@ -74,7 +74,7 @@ class WorldTrainer(BaseTrainer):
 
     def setup_wandb_metrics(self):
         wandb.define_metric("eval_frame_step", hidden=True)
-        wandb.define_metric("eval_frame_loss", step_metric="eval_frame_step")
+        wandb.define_metric("eval_frame_loss/*", step_metric="eval_frame_step")
         wandb.define_metric("eval_at_step", hidden=True)  # metadata for grouping/filtering
         # Training uses its own x-axis (avoid relying on _step)
         wandb.define_metric("global_step", hidden=True)
@@ -373,11 +373,12 @@ class WorldTrainer(BaseTrainer):
             # log scalar history so the LinePlot renders in Charts (no Tables created)
             if timestep_loss_curve and timestep_loss_curve[0]:
                 xs, ys = timestep_loss_curve
+                series_key = f"eval_frame_loss/{self.total_step_counter}"
                 for f, y in zip(xs, ys):
                     wandb.log({
-                        "eval_frame_step": int(f),
-                        "eval_frame_loss": float(y),
-                        "eval_at_step": self.total_step_counter,  # optional metadata
+                        "eval_frame_step": int(f),            # x-axis
+                        series_key: float(y),                 # y-axis (unique series)
+                        "eval_at_step": self.total_step_counter,  # metadata for filtering
                     })
 
         dist.barrier()
