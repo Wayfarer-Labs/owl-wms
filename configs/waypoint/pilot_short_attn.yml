@@ -43,7 +43,7 @@ train:
   noise_prev: 0.2
   bidirectional_warmup: null
 
-  total_accum_steps: 32
+  total_accum_steps: 8
 
   data_id: multi
   data_kwargs:
@@ -122,7 +122,7 @@ train:
   output_path: /mnt/data/waypoint_1/models/pilot_stage0
   resume_ckpt: null
 
-  sample_interval: 5000
+  sample_interval: 100
   save_interval: 10000
 
   vae_id: null
