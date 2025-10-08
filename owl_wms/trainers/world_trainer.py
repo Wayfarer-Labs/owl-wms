@@ -221,7 +221,7 @@ class WorldTrainer(BaseTrainer):
         timer = Timer()
         metrics = LogHelper()
 
-        if self.rank == 0:
+        if self.rank == 0 and getattr(self.train_cfg, "wandb_watch", False):
             wandb.watch(self.get_module(), log='all')
 
         # TODO: clean up, sampler use
@@ -281,8 +281,19 @@ class WorldTrainer(BaseTrainer):
             eps = torch.finfo(sigma.dtype).eps
             sigma = sigma.clamp(eps, 1 - eps)
 
-            # Sequence of "current frames" noised at random uniform levels
-            x1 = torch.randn_like(x0)  # gaussian noise
+            # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
+            noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
+            if noise_dist == "iid":
+                x1 = torch.randn_like(x0)
+            elif noise_dist == "pyoco_progressive":
+                raise Exception("Need to implement in inference as well")
+                rho = 0.95
+                s = (1 - rho**2)**0.5
+                r = rho ** torch.arange(x0.size(1), device=x0.device, dtype=torch.float32)
+                e = torch.randn_like(x0)
+                e[:, 1:] *= s
+                x1 = r * torch.cumsum(e / r, dim=1)
+
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp(gt, noise) to level @ sigma
             v_target = x1 - x0
 
