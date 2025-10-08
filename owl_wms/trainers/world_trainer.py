@@ -28,7 +28,7 @@ dynamo.config.recompile_limit = 32
 
 # speed up fp32
 torch.backends.cuda.matmul.allow_tf32 = True
-torch.set_float32_matmul_precision("high")  # high for tf32, (highest is fp32)
+torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: fp32)
 
 
 # TODO: replace with itertools.batched in python3.13
@@ -115,7 +115,7 @@ class WorldTrainer(BaseTrainer):
 
         ckpt = getattr(self.train_cfg, "resume_ckpt", None)
         if ckpt:
-            state = torch.load(ckpt, map_location=None, weights_only=False)
+            state = torch.load(ckpt, map_location="cpu", weights_only=False)
 
             self.get_raw_model(self.model).load_state_dict(state["model"], strict=True)
             self.ema.load_state_dict(state["ema"], strict=True)
