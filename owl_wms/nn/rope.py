@@ -28,12 +28,9 @@ class RoPE(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        assert not getattr(self.config, "has_audio", False), "Not Implemented for OrthoRoPE"
+
         freqs = self.get_freqs(config)
-
-        if not getattr(self.config, "has_audio", False):
-            # subclasses freqs include audio by default, remove last item from each frame
-            freqs = freqs.view(config.n_frames, -1, freqs.size(-1))[:, :-1].flatten(0, 1)
-
         self.cos = nn.Buffer(freqs.cos().contiguous(), persistent=False)
         self.sin = nn.Buffer(freqs.sin().contiguous(), persistent=False)
 
@@ -58,32 +55,6 @@ class RoPE(nn.Module):
 
     def get_freqs(self, config):
         raise NotImplementedError
-
-
-class OldOrthoRoPE(RoPE):
-    """
-    RoPE for rotation across orthogonal axes: time, height, and width
-    """
-    def get_freqs(self, config):
-        H = getattr(config, 'height', getattr(config, 'sample_size', None))
-        W = getattr(config, 'width', getattr(config, 'sample_size', None))
-        head_dim = config.d_model // config.n_heads
-
-        pos_emb = RotaryEmbedding(
-            dim=head_dim // 4,  # Using half dimension since we only need 1D rotation
-            freqs_for='pixel',
-            max_freq=256
-        )
-        # Rot features: (L, H+1, W+1, <pad>)
-        freqs = pos_emb.get_axial_freqs(
-            config.n_frames, H + 1, W + 1, 1, offsets=(0, 0, 0, 1)
-        ).view(config.n_frames, H + 1, W + 1, -1)
-
-        vid_freqs = freqs[:, :H, :W].reshape(config.n_frames, H * W, -1)  # top left region
-        aud_freqs = freqs[:, -1, -1].unsqueeze(1)  # bottom right item
-
-        freqs = torch.cat([vid_freqs, aud_freqs], dim=1).flatten(0, 1)
-        return freqs[..., ::2]  # subsampling
 
 
 class OrthoRoPE(RoPE):
@@ -147,7 +118,11 @@ class MotionRoPE(RoPE):
             'b n two -> b (n two)'
         )
 
-        return torch.cat([interleaved_spatial, angles_t], dim=-1)
+        freqs = torch.cat([interleaved_spatial, angles_t], dim=-1)
+
+        if not getattr(config, "has_audio", False):
+            freqs = freqs.view(config.n_frames, -1, freqs.size(-1))[:, :-1].flatten(0, 1)
+        return freqs
 
     def _create_positions(self, n_frames, height, width, ats_delta):
         # Base 1D grids for time, height, and width
@@ -180,3 +155,33 @@ class MotionRoPE(RoPE):
         x_pos, y_pos, t_pos = eo.rearrange(interleaved, 'd f n -> d (f n)').unbind(0)
 
         return x_pos, y_pos, t_pos
+
+
+class OldOrthoRoPE(RoPE):
+    """
+    RoPE for rotation across orthogonal axes: time, height, and width
+    """
+    def get_freqs(self, config):
+        H = getattr(config, 'height', getattr(config, 'sample_size', None))
+        W = getattr(config, 'width', getattr(config, 'sample_size', None))
+        head_dim = config.d_model // config.n_heads
+
+        pos_emb = RotaryEmbedding(
+            dim=head_dim // 4,  # Using half dimension since we only need 1D rotation
+            freqs_for='pixel',
+            max_freq=256
+        )
+        # Rot features: (L, H+1, W+1, <pad>)
+        freqs = pos_emb.get_axial_freqs(
+            config.n_frames, H + 1, W + 1, 1, offsets=(0, 0, 0, 1)
+        ).view(config.n_frames, H + 1, W + 1, -1)
+
+        vid_freqs = freqs[:, :H, :W].reshape(config.n_frames, H * W, -1)  # top left region
+        aud_freqs = freqs[:, -1, -1].unsqueeze(1)  # bottom right item
+
+        freqs = torch.cat([vid_freqs, aud_freqs], dim=1).flatten(0, 1)
+        freqs = freqs[..., ::2]  # subsampling
+
+        if not getattr(config, "has_audio", False):
+            freqs = freqs.view(config.n_frames, -1, freqs.size(-1))[:, :-1].flatten(0, 1)
+        return freqs
