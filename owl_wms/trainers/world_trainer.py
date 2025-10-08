@@ -314,7 +314,8 @@ class WorldTrainer(BaseTrainer):
             if getattr(self.train_cfg, "inference_matching", False):
                 # Construct sequence of slightly-noised previous frames
                 sigma_p = x0.new_full((B, N), self.train_cfg.noise_prev)
-                x_p = x0 + (x1 - x0) * sigma_p.view(B, N, 1, 1, 1)
+                x_p = x0 + v_target * sigma_p.view(B, N, 1, 1, 1)
+                # x_p = x0 + (x1 - x0) * sigma_p.view(B, N, 1, 1, 1)
 
                 x_t = torch.cat([x_t, x_p], dim=1)
                 sigma = torch.cat([sigma, sigma_p], dim=1)
