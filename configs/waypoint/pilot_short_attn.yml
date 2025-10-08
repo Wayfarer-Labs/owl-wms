@@ -42,6 +42,7 @@ train:
   inference_matching: true
   noise_prev: 0.0089
   bidirectional_warmup: null
+  noise_distribution: pyoco_progressive
 
   total_accum_steps: 32
 
