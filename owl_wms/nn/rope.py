@@ -6,6 +6,7 @@ import einops as eo
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 allow_ops_in_compiled_graph()
 
+from .embeddings import NoiseConditioner
 
 def get_rope_cls(cls_name):
     cls_name = cls_name.lower()
@@ -18,6 +19,18 @@ def get_rope_cls(cls_name):
     else:
         raise ValueError(f"Invalid RoPE class: {cls_name}")
 
+def cast_rope_buffers_to_fp32(module):
+    for submodule in module.modules():
+        if isinstance(submodule, RoPE):
+            if hasattr(submodule, "cos"):
+                submodule.cos = submodule.cos.float()
+            if hasattr(submodule, "sin"):
+                submodule.sin = submodule.sin.float()
+        if isinstance(submodule, NoiseConditioner):
+            if hasattr(submodule, "freq"):
+                submodule.freq = submodule.freq.float()
+            if hasattr(submodule, "mlp"):
+                submodule.mlp = submodule.mlp.float()
 
 def get_rope(config):
     cls = get_rope_cls(getattr(config, "rope_impl", "ortho"))
