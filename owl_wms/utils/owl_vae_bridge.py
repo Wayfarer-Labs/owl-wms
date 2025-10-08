@@ -68,3 +68,30 @@ def make_batched_audio_decode_fn(decoder, batch_size = 8):
 
         return x
     return decode
+
+@torch.no_grad()
+def make_batched_decode_fn_temporal_vae(decoder, batch_size = 8, window_size = 4):
+    def decode(latents):
+        # Input is [b,n,c,h,w]
+        # We assume window size of 4, batch size is ignored
+        B, N, C, H, W = latents.shape
+        assert N >= window_size, f"{N=} < {window_size=}"
+
+        # Optional but helps if any layers are mode-sensitive
+        was_training = decoder.training
+        decoder.eval()
+
+        # First window: full decode
+        rec0 = decoder(latents[:, :window_size], ignore_nonterminal_frames=False)  # [B, W, C, H, W]
+        out = latents.new_empty((B, N, rec0.shape[2], rec0.shape[3], rec0.shape[4]))
+        out[:, :window_size] = rec0
+
+        # Subsequent windows: terminal-only
+        for i in range(1, N - window_size + 1):
+            rec = decoder(latents[:, i:i+window_size], ignore_nonterminal_frames=True)  # [B, 1, C, H, W]
+            out[:, window_size + i - 1] = rec[:, -1]  # or rec[:, 0]
+
+        if was_training:
+            decoder.train()
+        return out
+    return decode
