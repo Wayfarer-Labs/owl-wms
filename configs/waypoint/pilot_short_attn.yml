@@ -18,7 +18,7 @@ model:
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 64
+  global_window: 32
   global_attn_period: 4
 
   n_frames: 1024  # num RoPE cached frames, doesn't impact model behavior
@@ -26,7 +26,7 @@ model:
   rope_impl: ortho
 
   sink_attn: false
-  gated_attn: false
+  gated_attn: true
 
   noise_conditioning: wan
 
