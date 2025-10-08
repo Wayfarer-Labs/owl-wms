@@ -25,7 +25,7 @@ model:
 
   rope_impl: ortho
 
-  sink_attn: true
+  sink_attn: false
   gated_attn: true
 
   noise_conditioning: wan
@@ -112,7 +112,7 @@ train:
     adamw_wd: 1.0e-4
     adamw_eps: 1.0e-6
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, attn_sinks, gate_proj]
+    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj]
     adamw_low_lr_keys: []
     adamw_low_lr_mul: 0.1
 
