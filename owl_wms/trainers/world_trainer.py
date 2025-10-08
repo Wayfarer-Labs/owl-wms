@@ -28,7 +28,7 @@ dynamo.config.recompile_limit = 32
 
 # speed up fp32
 torch.backends.cuda.matmul.allow_tf32 = True
-torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("high")  # high for tf32, (highest is fp32)
 
 
 # TODO: replace with itertools.batched in python3.13
@@ -115,7 +115,7 @@ class WorldTrainer(BaseTrainer):
 
         ckpt = getattr(self.train_cfg, "resume_ckpt", None)
         if ckpt:
-            state = super().load(ckpt)
+            state = torch.load(ckpt, map_location=None, weights_only=False)
 
             self.get_raw_model(self.model).load_state_dict(state["model"], strict=True)
             self.ema.load_state_dict(state["ema"], strict=True)
@@ -286,13 +286,25 @@ class WorldTrainer(BaseTrainer):
             if noise_dist == "iid":
                 x1 = torch.randn_like(x0)
             elif noise_dist == "pyoco_progressive":
-                raise Exception("Need to implement in inference as well")
-                rho = 0.95
-                s = (1 - rho**2)**0.5
-                r = rho ** torch.arange(x0.size(1), device=x0.device, dtype=torch.float32)
-                e = torch.randn_like(x0)
-                e[:, 1:] *= s
-                x1 = r * torch.cumsum(e / r, dim=1)
+                alpha = 2.0  # best for progressive noise in PYoCo paper
+                s = (1 + alpha**2) ** -0.5
+                rho = alpha * s
+
+                # sample new gaussian at document boundaries
+                doc = kw.get("doc_id", None)
+                bound = (doc[:, 1:] != doc[:, :-1]) if doc is not None else None
+
+                x1 = torch.empty_like(x0)
+                acc = torch.randn_like(x0[:, 0], dtype=torch.float32)
+                x1[:, 0] = acc.to(x0.dtype)
+
+                for i in range(1, N):
+                    ei = torch.randn_like(acc, dtype=torch.float32)  # per-step noise (no big allocation)
+                    if bound is not None:
+                        acc = torch.where(bound[:, i - 1].view(B, 1, 1, 1), ei, rho * acc + s * ei)
+                    else:
+                        acc = rho * acc + s * ei
+                    x1[:, i] = acc.to(x0.dtype)
 
             x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp(gt, noise) to level @ sigma
             v_target = x1 - x0
@@ -302,8 +314,7 @@ class WorldTrainer(BaseTrainer):
             if getattr(self.train_cfg, "inference_matching", False):
                 # Construct sequence of slightly-noised previous frames
                 sigma_p = x0.new_full((B, N), self.train_cfg.noise_prev)
-                x1_p = torch.randn_like(x0)
-                x_p = x0 + (x1_p - x0) * sigma_p.view(B, N, 1, 1, 1)
+                x_p = x0 + (x1 - x0) * sigma_p.view(B, N, 1, 1, 1)
 
                 x_t = torch.cat([x_t, x_p], dim=1)
                 sigma = torch.cat([sigma, sigma_p], dim=1)

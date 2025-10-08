@@ -66,7 +66,9 @@ class AVCachingSampler:
         noise_prev = _sigmas_wo_last[torch.argmin((_sigmas_wo_last - torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)).abs()).item()]
 
         # initialize running noised history once at snapped noise_prev
-        hist = torch.lerp(x, torch.randn_like(x), noise_prev)
+        g_iter = self.iter_gaussians(x[:, :1])
+        g_hist = torch.cat([next(g_iter) for _ in range(init_len)], dim=1)
+        hist = torch.lerp(x, g_hist, noise_prev)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = init_len + idx
@@ -78,12 +80,22 @@ class AVCachingSampler:
                 hist, prev_ctrl, curr_ctrl,
                 prev_ts=prev_ts, curr_ts=curr_ts,
                 noise_prev=noise_prev,
+                gaussian=next(g_iter),
             )
 
             latents.append(x)
             prev_ctrl, prev_ts = curr_ctrl, curr_ts
 
         return torch.cat(latents, dim=1)
+
+    def iter_gaussians(self, x, alpha: float = 2.0):
+        """generator of PYoCo-progressive Gaussians (AR(1))."""
+        s = (1 + alpha**2) ** -0.5
+        rho = alpha * s
+        g = torch.randn_like(x, dtype=torch.float32)
+        while True:
+            yield g.type_as(x)
+            g = rho * g + s * torch.randn_like(g, dtype=torch.float32)
 
     @torch.compile
     def fwd(self, model, *args, **kwargs):
@@ -100,17 +112,17 @@ class AVCachingSampler:
         prev_ts: torch.Tensor,
         curr_ts: torch.Tensor,
         noise_prev: torch.Tensor,
+        gaussian: torch.Tensor,
     ):
         """Run all denoising steps for new frame"""
         B = hist.size(0)
         # History is already noised at snapped noise_prev (prepared in __call__)
         sigma_prev = hist.new_full((B, hist.size(1)), torch.as_tensor(noise_prev, device=hist.device, dtype=hist.dtype))
-        # Create new pure-noise frame
-        new_vid = torch.randn_like(hist[:, :1])
 
         self.scheduler.set_timesteps(self.n_steps)
         hist_new = None
 
+        new_vid = gaussian
         for step in range(self.n_steps):
             # step 0: include uncached previous frames tokens
             # step >= 1: prev frame cached, only include current frame
@@ -125,7 +137,7 @@ class AVCachingSampler:
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
             pre = new_vid
-            eps = self.fwd(
+            v = self.fwd(
                 model,
                 vid,
                 sigma=sigma,
@@ -136,7 +148,7 @@ class AVCachingSampler:
             )[:, -1:]  # only the new frame’s eps
 
             new_vid = self.scheduler.step(
-                model_output=eps,
+                model_output=v,
                 timestep=self.scheduler.timesteps[step],
                 sample=new_vid,
                 **self.sched_step_kw
