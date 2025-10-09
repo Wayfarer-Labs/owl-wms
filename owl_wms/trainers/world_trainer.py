@@ -313,10 +313,9 @@ class WorldTrainer(BaseTrainer):
 
             if getattr(self.train_cfg, "inference_matching", False):
                 # Construct sequence of constant-noise, "denoised", previous frames
-                sigma = torch.cat((
-                    sigma,  # sampled noise
-                    x0.new_full((B, N), self.train_cfg.noise_prev)  # constant noise for "previous" tokens
-                ), dim=1)
+                noise_prev_range = sorted(getattr(self.train_cfg, "noise_prev_range", [self.train_cfg.noise_prev] * 2))
+                prior_sigma = x0.new_empty((B, N)).uniform_(*noise_prev_range)
+                sigma = torch.cat((sigma, prior_sigma), dim=1)
 
                 # repeat labels: [B, 2N]
                 v_target = v_target.repeat(1, 2, 1, 1, 1)
