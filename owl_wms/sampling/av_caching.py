@@ -90,12 +90,17 @@ class AVCachingSampler:
 
     def iter_gaussians(self, x, alpha: float = 2.0):
         """generator of PYoCo-progressive Gaussians (AR(1))."""
+        """
         s = (1 + alpha**2) ** -0.5
         rho = alpha * s
         g = torch.randn_like(x, dtype=torch.float32)
         while True:
             yield g.type_as(x)
             g = rho * g + s * torch.randn_like(g, dtype=torch.float32)
+        """
+        # Just generate gaussians, pyoco diisabled
+        while True:
+            yield torch.randn_like(x)
 
     @torch.compile
     def fwd(self, model, *args, **kwargs):
