@@ -268,6 +268,31 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
+    @torch.compile(fullgraph=True)
+    def get_gaussian(self, x0, doc_id=None):
+        B, N = x0.size(0), x0.size(1)
+        # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
+        noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
+        if noise_dist == "iid":
+            return torch.randn_like(x0)
+        elif noise_dist == "pyoco_progressive":
+            alpha = 2.0  # best for progressive noise in PYoCo paper
+            s = (1 + alpha**2) ** -0.5
+            rho = alpha * s
+
+            x1 = torch.empty_like(x0)
+            acc = torch.randn_like(x0[:, 0], dtype=torch.float32)
+            x1[:, 0] = acc.to(x0.dtype)
+            bound = (doc_id[:, 1:] != doc_id[:, :-1]) if doc_id is not None else None  # new N @ doc boundaries
+            for i in range(1, N):
+                ei = torch.randn_like(acc, dtype=torch.float32)  # per-step noise (no big allocation)
+                if bound is not None:
+                    acc = torch.where(bound[:, i - 1].view(B, 1, 1, 1), ei, rho * acc + s * ei)
+                else:
+                    acc = rho * acc + s * ei
+                x1[:, i] = acc.to(x0.dtype)
+            return x1
+
     def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
@@ -278,58 +303,31 @@ class WorldTrainer(BaseTrainer):
         with torch.no_grad():
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
-            eps = torch.finfo(sigma.dtype).eps
-            sigma = sigma.clamp(eps, 1 - eps)
 
-            # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
-            noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
-            if noise_dist == "iid":
-                x1 = torch.randn_like(x0)
-            elif noise_dist == "pyoco_progressive":
-                alpha = 2.0  # best for progressive noise in PYoCo paper
-                s = (1 + alpha**2) ** -0.5
-                rho = alpha * s
-
-                # sample new gaussian at document boundaries
-                doc = kw.get("doc_id", None)
-                bound = (doc[:, 1:] != doc[:, :-1]) if doc is not None else None
-
-                x1 = torch.empty_like(x0)
-                acc = torch.randn_like(x0[:, 0], dtype=torch.float32)
-                x1[:, 0] = acc.to(x0.dtype)
-
-                for i in range(1, N):
-                    ei = torch.randn_like(acc, dtype=torch.float32)  # per-step noise (no big allocation)
-                    if bound is not None:
-                        acc = torch.where(bound[:, i - 1].view(B, 1, 1, 1), ei, rho * acc + s * ei)
-                    else:
-                        acc = rho * acc + s * ei
-                    x1[:, i] = acc.to(x0.dtype)
-
-            x_t = x0 + (x1 - x0) * sigma.view(B, N, 1, 1, 1)  # lerp(gt, noise) to level @ sigma
-            v_target = x1 - x0
-
-            frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)  # [B, N]
+            v_target = self.get_gaussian(x0, doc_id=kw.get("doc_id", None)) - x0
+            frame_timestamp = model.module.get_frame_timestamps(kw.pop("fps"), N, x0.device)
 
             if getattr(self.train_cfg, "inference_matching", False):
-                # Construct sequence of slightly-noised previous frames
-                sigma_p = x0.new_full((B, N), self.train_cfg.noise_prev)
-                x_p = x0 + v_target * sigma_p.view(B, N, 1, 1, 1)
-                # x_p = x0 + (x1 - x0) * sigma_p.view(B, N, 1, 1, 1)
+                # Construct sequence of constant-noise, "denoised", previous frames
+                sigma = torch.cat((
+                    sigma,  # sampled noise
+                    x0.new_full((B, N), self.train_cfg.noise_prev)  # constant noise for "previous" tokens
+                ), dim=1)
 
-                x_t = torch.cat([x_t, x_p], dim=1)
-                sigma = torch.cat([sigma, sigma_p], dim=1)
+                # repeat labels: [B, 2N]
+                v_target = v_target.repeat(1, 2, 1, 1, 1)
+                x0 = x0.repeat(1, 2, 1, 1, 1)
+                frame_timestamp = frame_timestamp.repeat(1, 2)
+                if kw.get("doc_id", None) is not None:
+                    kw["doc_id"] = kw["doc_id"].repeat(1, 2)
 
-                # mask for static / sampled noise
+                # mask: true=sampled noises, false=static noise @ noise_prev
                 curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
-
-                # Repeat doc_ids / frame timestamps
-                frame_timestamp = frame_timestamp.repeat(1, 2)  # [B, 2N]
-                if "doc_id" in kw and kw["doc_id"] is not None:
-                    kw["doc_id"] = kw["doc_id"].repeat(1, 2)  # [B, 2N]
 
             else:
                 curr_frame_mask = None
+
+            x_t = x0 + v_target * sigma.view(B, -1, 1, 1, 1)
 
         with self.autocast_ctx:
             v_pred = model(
@@ -337,13 +335,11 @@ class WorldTrainer(BaseTrainer):
                 curr_frame_mask=curr_frame_mask,
                 frame_timestamp=frame_timestamp,
                 **kw
-            )
-            v_pred = v_pred[:, :N]  # only compute loss on x_t branch
+            )[:, :N]  # only compute loss on x_t branch
+            sigma = sigma[:, :N]
 
-        losses = F.mse_loss(v_pred, v_target, reduction=reduction)
-        if return_sigma:
-            return losses, sigma[:, :N]
-        return losses
+        losses = F.mse_loss(v_pred, v_target[:, :N], reduction=reduction)
+        return (losses, sigma) if return_sigma else losses
 
     @torch.inference_mode()
     def log_step(self, metrics, timer, sampler):
