@@ -46,6 +46,7 @@ class AVCachingSampler:
         fps: Tensor,
         noise_prev: Tensor,
         num_frames: int = 120,
+        noise_distribution: str = "iid"
     ):
         """Generate `num_frames` new frames and return updated tensors."""
         init_len = x.size(1)
@@ -66,7 +67,7 @@ class AVCachingSampler:
         noise_prev = _sigmas_wo_last[torch.argmin((_sigmas_wo_last - torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)).abs()).item()]
 
         # initialize running noised history once at snapped noise_prev
-        g_iter = self.iter_gaussians(x[:, :1])
+        g_iter = self.iter_gaussians(x[:, :1], noise_distribution=noise_distribution)
         g_hist = torch.cat([next(g_iter) for _ in range(init_len)], dim=1)
         hist = torch.lerp(x, g_hist, noise_prev)
 
@@ -88,14 +89,20 @@ class AVCachingSampler:
 
         return torch.cat(latents, dim=1)
 
-    def iter_gaussians(self, x, alpha: float = 2.0):
+    def iter_gaussians(self, x, noise_distribution, alpha: float = 2.0):
         """generator of PYoCo-progressive Gaussians (AR(1))."""
-        s = (1 + alpha**2) ** -0.5
-        rho = alpha * s
-        g = torch.randn_like(x, dtype=torch.float32)
-        while True:
-            yield g.type_as(x)
-            g = rho * g + s * torch.randn_like(g, dtype=torch.float32)
+        if noise_distribution == "pyoco_progressive":
+            s = (1 + alpha**2) ** -0.5
+            rho = alpha * s
+            g = torch.randn_like(x, dtype=torch.float32)
+            while True:
+                yield g.type_as(x)
+                g = rho * g + s * torch.randn_like(g, dtype=torch.float32)
+        elif noise_distribution == "iid":
+            while True:
+                yield torch.randn_like(x)
+        else:
+            raise ValueError()
 
     @torch.compile
     def fwd(self, model, *args, **kwargs):

@@ -236,7 +236,7 @@ class WorldTrainer(BaseTrainer):
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
-                self.attn_window_update()
+                # self.attn_window_update()
 
                 train_loss = self.train_step(mini_batches)
                 metrics.log('train_loss', train_loss)
@@ -282,7 +282,7 @@ class WorldTrainer(BaseTrainer):
             s = (1 + alpha**2) ** -0.5
             rho = alpha * s
 
-            eps = torch.randn_like(x0, dtype=torch.float32)
+            eps = torch.randn_like(x0)
             out = torch.empty_like(x0)
 
             bounds = torch.zeros(B, N, dtype=torch.bool, device=x0.device)
@@ -341,10 +341,9 @@ class WorldTrainer(BaseTrainer):
                 frame_timestamp=frame_timestamp,
                 **kw
             )[:, :N]  # only compute loss on x_t branch
-            sigma = sigma[:, :N]
 
         losses = F.mse_loss(v_pred, v_target[:, :N], reduction=reduction)
-        return (losses, sigma) if return_sigma else losses
+        return (losses, sigma[:, :N]) if return_sigma else losses
 
     @torch.inference_mode()
     def log_step(self, metrics, timer, sampler):
@@ -500,7 +499,8 @@ class WorldTrainer(BaseTrainer):
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
                 fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-                noise_prev=self.train_cfg.noise_prev
+                noise_prev=self.train_cfg.noise_prev,
+                noise_distribution=self.train_cfg.noise_distribution,
             )
 
         if self.sampler_only_return_generated:
