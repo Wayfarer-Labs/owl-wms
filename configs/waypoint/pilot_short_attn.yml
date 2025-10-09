@@ -39,7 +39,7 @@ train:
   trainer_id: world
 
   ELBO_loss: false
-  inference_matching: true
+  inference_matching: false
   noise_prev: 0.2062
   bidirectional_warmup: null
   noise_distribution: iid  # pyoco_progressive
