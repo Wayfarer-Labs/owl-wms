@@ -8,7 +8,7 @@ model:
   d_model: 2560
   mlp_ratio: 4
 
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   ####
 
   tokens_per_frame: 256
@@ -39,8 +39,8 @@ train:
   trainer_id: world
 
   ELBO_loss: false
-  inference_matching: false
-  noise_prev: 0.2
+  inference_matching: true
+  noise_prev: 0.2062
   bidirectional_warmup: null
   noise_distribution: pyoco_progressive
 
