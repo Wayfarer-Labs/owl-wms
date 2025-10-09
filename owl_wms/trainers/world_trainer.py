@@ -270,31 +270,29 @@ class WorldTrainer(BaseTrainer):
 
     @torch.compile(fullgraph=True)
     def get_gaussian(self, x0, doc_id=None):
-        B, N = x0.shape[:2]
-
         # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
         noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
         if noise_dist == "iid":
             return torch.randn_like(x0)
 
         elif noise_dist == "pyoco_progressive":
+            B, N = x0.shape[:2]
             alpha = 2.0  # best for progressive noise in PYoCo paper
             s = (1 + alpha**2) ** -0.5
             rho = alpha * s
 
             eps = torch.randn_like(x0, dtype=torch.float32)
-            out = torch.empty_like(eps)
+            out = torch.empty_like(x0)
 
+            bounds = torch.zeros(B, N, dtype=torch.bool, device=x0.device)
+            bounds[:, 0] = True
             if doc_id is not None:
-                bounds = (doc_id[:, 1:] != doc_id[:, :-1])
-            else:
-                bounds = torch.zeros(B, N, dtype=torch.bool, device=x0.device)
-                bounds[:, 0] = True
+                bounds[:, 1:] = (doc_id[:, 1:] != doc_id[:, :-1])
 
             out[:, 0] = eps[:, 0]
             for t in range(1, N):
                 cand = rho * out[:, t - 1] + s * eps[:, t]
-                out[:, t] = torch.where(bounds[:, t], eps[:, t], cand)
+                out[:, t] = torch.where(bounds[:, t], eps[:, t], cand).type_as(x0)
 
             return out.to(x0.dtype)
 
