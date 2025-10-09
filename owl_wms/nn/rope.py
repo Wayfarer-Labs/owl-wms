@@ -15,6 +15,8 @@ def get_rope_cls(cls_name):
         return OrthoRoPE
     elif cls_name == "motion":
         return MotionRoPE
+    elif cls_name == "vid":
+        return MotionRoPE
     else:
         raise ValueError(f"Invalid RoPE class: {cls_name}")
 
@@ -77,6 +79,66 @@ class OrthoRoPE(RoPE):
             eo.repeat(freq_t, 't d -> (t h w) d', h=H, w=W),
             eo.repeat(freq_xy, 'h w d -> (t h w) d', t=T)
         ], dim=-1)
+
+
+class VidRoPE(RoPE):
+    """
+    Video-only VideoRoPE (DL + ATS + LTA), precomputed angle table:
+      • x,y occupy the global HIGH-frequency pairs (lower dims), interleaved by pair
+      • t occupies the LOW-frequency tail (higher dims)
+      • diagonal layout with ATS: t = T_s + δ * τ ; x = t + (w - W/2), y = t + (h - H/2)
+    Pass per-sample T_s as `config.rope_ts_offset` before constructing, or rebuild per batch.
+    """
+    def get_freqs(self, config):
+        H, W, T = int(config.height), int(config.width), int(config.n_frames)
+        hd = int(config.d_model) // int(config.n_heads)
+        torch._assert(hd % 2 == 0, "head_dim must be even")
+        P = hd // 2                                 # rotary pairs
+
+        # default split: x=3/8, y=3/8, t=1/4 of head_dim (by pairs)
+        px = py = (3 * P) // 8
+        pt = P - px - py
+        torch._assert(px == py and px > 0 and pt > 0, "head_dim too small for x=y=3/8, t=1/4")
+
+        theta = float(getattr(config, 'rope_theta', 10000.0))
+        delta = float(getattr(config, 'rope_ats_stride', 2.0))   # δ
+        T_s = float(getattr(config, 'rope_ts_offset', 0.0))    # per-sample text offset
+
+        # ---- single global frequency ladder (size P), high -> low ----
+        full = 1.0 / (theta ** (torch.arange(P, dtype=torch.float32) / P))
+
+        # allocate topmost 2*px pairs to spatial, interleaved between x and y
+        base_xy = full[: 2 * px]          # highest pairs for spatial
+        base_x = base_xy[0::2][:px]      # even pairs -> x
+        base_y = base_xy[1::2][:py]      # odd  pairs -> y
+
+        # lowest tail to time (LTA)
+        base_t = full[-pt:]
+
+        # rotary angle generators for each axis
+        re_x = RotaryEmbedding(dim=2 * px, custom_freqs=base_x, cache_if_possible=False)
+        re_y = RotaryEmbedding(dim=2 * py, custom_freqs=base_y, cache_if_possible=False)
+        re_t = RotaryEmbedding(dim=2 * pt, custom_freqs=base_t, cache_if_possible=False)
+
+        # diagonal layout with ATS
+        tpos = T_s + torch.arange(T, dtype=torch.float32) * delta     # [T]
+        x_off = torch.arange(W, dtype=torch.float32) - ((W - 1) / 2.0)  # [W]
+        y_off = torch.arange(H, dtype=torch.float32) - ((H - 1) / 2.0)  # [H]
+
+        fx = re_x.forward(tpos[:, None, None] + x_off[None, None, :])  # [T,1,W,2px]
+        fy = re_y.forward(tpos[:, None, None] + y_off[None, :, None])  # [T,H,1,2py]
+        ft = re_t.forward(tpos)[:, None, None, :].expand(T, H, W, 2 * pt)  # [T,H,W,2pt]
+
+        # true pairwise interleave of x & y within the lower dims
+        fxp = fx.expand(T, H, W, 2 * px).contiguous().view(T, H, W, px, 2)
+        fyp = fy.expand(T, H, W, 2 * py).contiguous().view(T, H, W, py, 2)
+        fxy = torch.empty(T, H, W, 2 * px, 2, dtype=fxp.dtype, device=fxp.device)
+        fxy[..., 0::2, :] = fxp
+        fxy[..., 1::2, :] = fyp
+        fxy = fxy.reshape(T, H, W, 4 * px)                              # [T,H,W, 2*(2px)]
+
+        freqs = torch.cat([fxy, ft], dim=-1)                            # [T,H,W, 2*(2px+pt)] == [T,H,W, hd]
+        return freqs.reshape(T * H * W, hd)
 
 
 class MotionRoPE(RoPE):

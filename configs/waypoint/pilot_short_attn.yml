@@ -23,7 +23,7 @@ model:
 
   n_frames: 256  # num RoPE cached frames, doesn't impact model behavior
 
-  rope_impl: ortho
+  rope_impl: vid
 
   sink_attn: false
   gated_attn: true
