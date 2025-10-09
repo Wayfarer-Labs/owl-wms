@@ -270,28 +270,33 @@ class WorldTrainer(BaseTrainer):
 
     @torch.compile(fullgraph=True)
     def get_gaussian(self, x0, doc_id=None):
-        B, N = x0.size(0), x0.size(1)
+        B, N = x0.shape[:2]
+
         # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
         noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
         if noise_dist == "iid":
             return torch.randn_like(x0)
+
         elif noise_dist == "pyoco_progressive":
             alpha = 2.0  # best for progressive noise in PYoCo paper
             s = (1 + alpha**2) ** -0.5
             rho = alpha * s
 
-            x1 = torch.empty_like(x0)
-            acc = torch.randn_like(x0[:, 0], dtype=torch.float32)
-            x1[:, 0] = acc.to(x0.dtype)
-            bound = (doc_id[:, 1:] != doc_id[:, :-1]) if doc_id is not None else None  # new N @ doc boundaries
-            for i in range(1, N):
-                ei = torch.randn_like(acc, dtype=torch.float32)  # per-step noise (no big allocation)
-                if bound is not None:
-                    acc = torch.where(bound[:, i - 1].view(B, 1, 1, 1), ei, rho * acc + s * ei)
-                else:
-                    acc = rho * acc + s * ei
-                x1[:, i] = acc.to(x0.dtype)
-            return x1
+            eps = torch.randn_like(x0, dtype=torch.float32)
+            out = torch.empty_like(eps)
+
+            if doc_id is not None:
+                bounds = (doc_id[:, 1:] != doc_id[:, :-1])
+            else:
+                bounds = torch.zeros(B, N, dtype=torch.bool, device=x0.device)
+                bounds[:, 0] = True
+
+            out[:, 0] = eps[:, 0]
+            for t in range(1, N):
+                cand = rho * out[:, t - 1] + s * eps[:, t]
+                out[:, t] = torch.where(bounds[:, t], eps[:, t], cand)
+
+            return out.to(x0.dtype)
 
     def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
@@ -327,7 +332,8 @@ class WorldTrainer(BaseTrainer):
             else:
                 curr_frame_mask = None
 
-            x_t = x0 + v_target * sigma.view(B, -1, 1, 1, 1)
+            x_t = (x0 + v_target * sigma.view(B, -1, 1, 1, 1)).type_as(x0)
+            sigma = sigma.type_as(x0)
 
         with self.autocast_ctx:
             v_pred = model(
