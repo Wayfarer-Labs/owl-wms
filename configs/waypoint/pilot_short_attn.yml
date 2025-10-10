@@ -18,8 +18,8 @@ model:
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 32
-  global_attn_period: 4
+  global_window: 64
+  global_attn_period: 2
 
   n_frames: 256  # num RoPE cached frames, doesn't impact model behavior
 
@@ -38,11 +38,9 @@ model:
 train:
   trainer_id: world
 
-  inference_matching: true
+  inference_matching: false
   noise_prev: 0.2062
-  noise_prev_range: [0.15, 0.25]
-  bidirectional_warmup: null
-  noise_distribution: iid  # pyoco_progressive
+  bidirectional_warmup: 40000
 
   total_accum_steps: 32
 
@@ -50,7 +48,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -58,7 +56,7 @@ train:
     loaders:
       - data_id: sequence_packing
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/train/
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/train/
           sampling_periods: [1]
 
   n_eval_loss_samples: 8192
@@ -74,14 +72,14 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/eval/
           sampling_periods: [1]
 
   sample_data_id: multi
   sample_data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 192
+      seq_len: 320
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -89,7 +87,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P/eval/
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/eval/
           sampling_periods: [1]
 
   sampler_id: av_caching
@@ -99,7 +97,7 @@ train:
     only_return_generated: false
   sampling_batch_size: 1
   num_seed_frames: 30
-  num_generated_frames: 150
+  num_generated_frames: 290
   n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
   eval_sample_dir: null
 

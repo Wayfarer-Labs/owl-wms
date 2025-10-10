@@ -500,7 +500,7 @@ class WorldTrainer(BaseTrainer):
                 ema_model, vid, prompt_emb, controller_inputs,
                 fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
                 noise_prev=self.train_cfg.noise_prev,
-                noise_distribution=self.train_cfg.noise_distribution,
+                noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
             )
 
         if self.sampler_only_return_generated:
