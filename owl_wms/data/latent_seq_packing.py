@@ -66,9 +66,9 @@ class WindowedViewDataset(Dataset):
 
         mask = np.ones_like(seq_len, bool)
         if not include_missing_features:
-            mask &= ~miss
+            mask &= np.logical_not(miss)
         if not include_truncated:
-            mask &= ~trunc
+            mask &= np.logical_not(trunc)
         if legal_fps is not None:
             # keep clips whose fps is exactly in legal_fps OR divisible to one of them
             div_ok = np.zeros_like(fps, dtype=bool)
