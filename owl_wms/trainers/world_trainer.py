@@ -309,7 +309,8 @@ class WorldTrainer(BaseTrainer):
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
 
-            v_target = self.get_gaussian(x0, doc_id=kw.get("doc_id", None)) - x0
+            # v_target = self.get_gaussian(x0, doc_id=kw.get("doc_id", None)) - x0
+            v_target = torch.randn_like(x0) - x0  # iid
             frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)
 
             if getattr(self.train_cfg, "inference_matching", False):
