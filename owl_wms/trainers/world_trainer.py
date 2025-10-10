@@ -183,6 +183,16 @@ class WorldTrainer(BaseTrainer):
             xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
             batch["controller_inputs"] = torch.cat(xs, dim=-1)
 
+        # TODO: Clean up hacks
+        if "captions" in batch:
+            # Hack: We only use the first caption produced (for each element in the batch)
+            # Hack: hardcoding "setting", captions used should be configurable
+            batch["prompt"] = [
+                (caps[min(caps, key=int)].get("setting", "") if caps else "")
+                for caps in batch.pop("captions")
+            ]
+        # ########
+
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
@@ -482,7 +492,19 @@ class WorldTrainer(BaseTrainer):
         ema_model.eval()
 
         # ---- Batch & labels ----
-        eval_batch = self.prep_batch(next(self.sample_loader))
+
+        # TODO: Clean this up
+        raw_batch = next(self.sample_loader)
+        # keep literal prompt(s) before prep_batch() converts them to embeddings
+        literal_prompt = raw_batch.get("prompt")
+        if literal_prompt is None and "captions" in raw_batch:
+            literal_prompt = [
+                (caps[min(caps, key=int)].get("setting", "") if caps else "")
+                for caps in raw_batch["captions"]
+            ]
+        eval_batch = self.prep_batch(raw_batch)
+        # ########
+
         vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
@@ -522,6 +544,10 @@ class WorldTrainer(BaseTrainer):
         video_out = self._gather_concat_cpu(video_out)
         ci = self._gather_concat_cpu(controller_inputs)
         mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
+        if self.pg_cpu is not None:
+            _bufs = [None] * self.world_size
+            dist.all_gather_object(_bufs, literal_prompt, group=self.pg_cpu)
+            literal_prompt = [p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else [])]
 
         num_gt_frames = 0 if self.sampler_only_return_generated else self.train_cfg.num_seed_frames
 
@@ -529,6 +555,8 @@ class WorldTrainer(BaseTrainer):
             n_out = 0 if video_out is None else video_out.size(0)
             labels_out = mk_labels(fps, n_out)
             return to_wandb_samples(
-                video_out, mouse, btn, labels=labels_out, num_gt_frames=num_gt_frames
+                video_out, mouse, btn,
+                labels=labels_out, num_gt_frames=num_gt_frames,
+                prompts=literal_prompt,
             )
         return None

@@ -20,7 +20,7 @@ def _put_text_with_box(img, text, x, y, fg, bg=(0,0,0), alpha=0.6,
     return (tw, th, bl)
 
 
-def draw_frame(frame, mouse, button, labels=None, is_gt=None):
+def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
     # frame is a torch tensor of shape [3,h,w]
     # mouse is [2,] tensor
     # button is list[bool]
@@ -72,6 +72,29 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None):
             text_y = y_pos - 5  # 5px above box
             cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
+    # Bottom prompt (wrapped, full-width box)
+    if prompts:
+        import textwrap
+        font, scale, thick, gap = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2, 4
+        margin, pad = 10, 8
+        lines = textwrap.wrap(str(prompts), width=60)
+        if lines:
+            sizes = [cv2.getTextSize(l, font, scale, thick)[0] for l in lines]
+            total_h = sum(h for (_, h) in sizes) + gap * (len(lines) - 1)
+            bottom_y = frame.shape[0] - margin
+            if button is not None:
+                bottom_y = y_pos - 10
+            x0, y0 = 0, bottom_y - total_h - 2 * pad
+            x1, y1 = frame.shape[1], bottom_y + pad
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+            y = y0 + pad
+            for (l, (_, h)) in zip(lines, sizes):
+                cv2.putText(frame, l, (margin, y + h), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+                cv2.putText(frame, l, (margin, y + h), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+                y += h + gap
+
     # Top-right badge ("GT"/"AI") + labels inside ONE semi-transparent box
     x_margin, y_margin, gap, pad = 5, 5, 4, 6
     lines = []
@@ -111,7 +134,7 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None):
     return frame
 
 
-def draw_frames(frames, mouse_inputs, button_inputs, labels=None, num_gt_frames=None):
+def draw_frames(frames, mouse_inputs, button_inputs, labels=None, num_gt_frames=None, prompts=None):
     # frames is [b,n,c,h,w] tensor
     # mouse_inputs is [b,n,2]
     # button_inputs is [b,n,n_buttons]
@@ -125,7 +148,7 @@ def draw_frames(frames, mouse_inputs, button_inputs, labels=None, num_gt_frames=
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
             is_gt = (j < num_gt_frames) if num_gt_frames is not None else None
-            drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt)
+            drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt, prompt=prompts[i])
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)

@@ -52,6 +52,11 @@ class WindowedViewDataset(Dataset):
         seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
         self.fps = fps
 
+        want_caps = (array_columns is not None and "captions" in array_columns)
+        if "captions" in self.array_columns:
+            self.array_columns.remove("captions")
+        self._captions_index = self.table["captions"] if want_caps else None
+
         self._index = []
         for i, (L, miss, trunc, f) in enumerate(zip(seq_len, missing, truncated, fps)):
             if legal_fps is not None and int(f) not in legal_fps:
@@ -88,19 +93,43 @@ class WindowedViewDataset(Dataset):
             col: torch.from_numpy(arr_list[0][off : off + stride * self.window_length : stride])
             for col, arr_list in zip(self.array_columns, column_arrays)
         }
+
+        # Captions: use only start/end for in-bounds check; anchor at s0 or caption start
+        if self._captions_index is not None:
+            s0 = off
+            s_end = off + stride * (self.window_length - 1)
+            cmap = {}
+            for cap in (self._captions_index[row] or []):
+                fr = cap.get("frame_range")
+                if fr:
+                    cmin, cmax = int(fr[0]), int(fr[1])
+                else:
+                    fi = cap.get("frame_indices") or []
+                    if not fi:
+                        continue
+                    cmin, cmax = int(fi[0]), int(fi[-1])
+                if cmax < s0 or cmin > s_end:
+                    continue
+                anchor = s0 if cmin < s0 else cmin
+                cmap[int(anchor - s0)] = {k: v for k, v in cap.items() if isinstance(v, str)}
+            out["captions"] = cmap
+
         out["fps"] = torch.tensor(int(self.fps[row]) // stride, dtype=torch.long)
 
         return out
 
 
 def collate_fn(batch, batch_columns: list, latent_column: str | None = None):
-    stacked = {k: torch.stack([item[k] for item in batch]) for k in batch[0]}
-    # TODO: fix hack, buttons should be preprocessed as float
-    stacked = {
-        k: t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") else t
-        for k, t in stacked.items()
-        if k in batch_columns
-    }
+    # Stack tensors; keep meta (e.g., captions) as lists, with len(meta_list) == batch_size
+    stacked = {}
+    for k in batch_columns:
+        vals = [item[k] for item in batch]
+        if isinstance(vals[0], torch.Tensor):
+            t = torch.stack(vals)
+            # TODO: buttons should be preprocessed as float
+            stacked[k] = t.bfloat16() if (t.dtype == torch.float32 or k == "buttons") else t
+        else:
+            stacked[k] = vals
     if latent_column:
         stacked["x"] = stacked.pop(latent_column)
     assert len(stacked) == len(batch_columns)

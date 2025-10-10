@@ -144,7 +144,7 @@ def to_wandb_av(x, audio, batch_mouse, batch_btn, gather = False, max_samples = 
 
 
 @torch.no_grad()
-def to_wandb_samples(video, mouse, btn, labels, num_gt_frames):
+def to_wandb_samples(video, mouse, btn, labels, num_gt_frames, prompts=None):
     video = video.clamp(-1, 1).cpu().float()          # [B, T, C, H, W]
 
     depth_gif = flow_gif = None
@@ -154,7 +154,7 @@ def to_wandb_samples(video, mouse, btn, labels, num_gt_frames):
         flow_gif = to_wandb_gif(video[:, :, 4:7])
     video = video[:, :, :3]                           # keep RGB only
 
-    video = draw_frames(video, mouse, btn, labels=labels, num_gt_frames=num_gt_frames,)
+    video = draw_frames(video, mouse, btn, labels=labels, num_gt_frames=num_gt_frames, prompts=prompts)
 
     out_dir = pathlib.Path("temp_vids")
     out_dir.mkdir(exist_ok=True)
