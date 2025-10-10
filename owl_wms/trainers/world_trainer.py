@@ -278,7 +278,7 @@ class WorldTrainer(BaseTrainer):
 
         elif noise_dist == "pyoco_progressive":
             B, N = x0.shape[:2]
-            alpha = 2.0  # best for progressive noise in PYoCo paper
+            alpha = 0.7  # 2.0  # best for progressive noise in PYoCo paper
             s = (1 + alpha**2) ** -0.5
             rho = alpha * s
 

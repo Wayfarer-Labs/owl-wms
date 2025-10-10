@@ -89,7 +89,7 @@ class AVCachingSampler:
 
         return torch.cat(latents, dim=1)
 
-    def iter_gaussians(self, x, noise_distribution, alpha: float = 2.0):
+    def iter_gaussians(self, x, noise_distribution, alpha: float = 0.7):
         """generator of PYoCo-progressive Gaussians (AR(1))."""
         if noise_distribution == "pyoco_progressive":
             s = (1 + alpha**2) ** -0.5

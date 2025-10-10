@@ -38,11 +38,11 @@ model:
 train:
   trainer_id: world
 
-  inference_matching: true
+  # inference_matching: true
   noise_prev: 0.2062  # inference
-  noise_prev_range: [0.3, 0.0]  # train
+  # noise_prev_range: [0.3, 0.0]  # train
   bidirectional_warmup: null
-  noise_distribution: iid  # pyoco_progressive
+  noise_distribution: pyoco_progressive
 
   total_accum_steps: 32
 
