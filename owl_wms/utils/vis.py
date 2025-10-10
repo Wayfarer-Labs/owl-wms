@@ -148,7 +148,7 @@ def draw_frames(frames, mouse_inputs, button_inputs, labels=None, num_gt_frames=
             mouse = mouse_inputs[i,j] if mouse_inputs is not None else None
             button = button_inputs[i,j] if button_inputs is not None else None
             is_gt = (j < num_gt_frames) if num_gt_frames is not None else None
-            drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt, prompt=prompts[i])
+            drawn = draw_frame(frame, mouse, button, labels=labels_list[i], is_gt=is_gt, prompts=prompts[i])
             batch_frames.append(drawn)
         out_frames.append(np.stack(batch_frames))
     return np.stack(out_frames)
