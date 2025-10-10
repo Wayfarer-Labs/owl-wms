@@ -18,8 +18,8 @@ model:
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 32
-  global_attn_period: 4
+  global_window: 64
+  global_attn_period: 2
 
   n_frames: 256  # num RoPE cached frames, doesn't impact model behavior
 
@@ -41,7 +41,7 @@ train:
   inference_matching: false
   noise_prev: 0.2062  # inference
   # noise_prev_range: [0.3, 0.0]  # train
-  bidirectional_warmup: 25000
+  bidirectional_warmup: null # 25000
   noise_distribution: iid  # pyoco_progressive
 
   total_accum_steps: 32
