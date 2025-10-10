@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 import uuid
 import numpy as np
@@ -7,49 +8,61 @@ from typing import List, Any
 
 
 class NpyTable:
-    # required fields per row
-    default_columns = [
-        "video", "audio", "mouse", "buttons",
-        "tarball", "pt_idx", "missing", "truncated", "seq_len"
-    ]
-    # ndarray blobs
-    default_array_columns = {"video", "audio", "mouse", "buttons"}
-
-    def __init__(self, directory: str, columns: List[str] | None = None, array_columns: set[str] | None = None):
+    def __init__(self, directory: str, columns: List[str] = None, array_columns: set[str] = None, primary_key: str = None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-        # set schema / ensure consistent with existing schema
-        self.schema_path = self.directory / "schema.json"
-        if self.schema_path.exists():
-            schema = json.loads(self.schema_path.read_text())
-            assert columns is None or columns == schema["columns"], "columns mismatch"
-            assert (
-                array_columns is None or set(array_columns) == set(schema["array_columns"])
-            ), "array_columns mismatch"
-            columns = schema["columns"]
-            array_columns = schema["array_columns"]
+        # SQLite: single place for schema + rows
+        self.db_path = self.directory / "manifest.sqlite3"
+        self._db = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._db.executescript("""
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+            CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS manifest (row_json TEXT NOT NULL);
+        """)
+        # Load or initialize schema in DB
+        row = self._db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
+        if row:
+            schema = json.loads(row[0])
+            if columns is not None and columns != schema["columns"]:
+                raise AssertionError("columns mismatch")
+            if array_columns is not None and set(array_columns) != set(schema["array_columns"]):
+                raise AssertionError("array_columns mismatch")
+            if primary_key is not None and primary_key != schema.get("primary_key"):
+                raise AssertionError("primary_key mismatch")
         else:
-            columns = columns or self.default_columns
-            array_columns = array_columns or list(self.default_array_columns)
-            self.schema_path.write_text(
-                json.dumps({"columns": columns, "array_columns": array_columns})
-            )
-        self.columns = columns
-        self.array_columns = set(array_columns)
+            if not primary_key:
+                raise AssertionError("primary_key is required")
+            if columns is not None and primary_key not in columns:
+                raise AssertionError("primary_key must be one of columns")
+            if columns is not None and array_columns is not None:
+                if not set(array_columns).issubset(set(columns)):
+                    raise AssertionError("array_columns must be a subset of columns")
+            schema = {
+                "columns": columns or [],  # allow caller to supply exact list
+                "array_columns": list(array_columns or []),
+                "primary_key": primary_key,
+            }
+            with self._db:
+                self._db.execute("INSERT INTO meta(key, value) VALUES('schema', ?)", (json.dumps(schema),))
+        self.columns = schema["columns"]
+        self.array_columns = set(schema["array_columns"])
+        self.primary_key = schema.get("primary_key")
 
-        self.manifest_path = self.directory / "manifest.jsonl"
-        if self.manifest_path.exists():
-            self.manifest = [json.loads(entry) for entry in self.manifest_path.read_text().splitlines()]
-        elif (self.directory / "manifest.json").exists():
-            self.manifest = json.loads((self.directory / "manifest.json").read_text())
-            self.manifest_path.write_text("".join(f"{json.dumps(e)}\n" for e in self.manifest))
-        else:
-            self.manifest = []
+        # Ensure uniqueness of the primary key inside row_json
+        if self.primary_key:
+            self._db.execute(
+                f'CREATE UNIQUE INDEX IF NOT EXISTS manifest_pk '
+                f'ON manifest(json_extract(row_json, \'$."{self.primary_key}"\'))'
+            )
+
+    # TODO: @classmethod `def create(...)` to initialize
 
     def __len__(self):
-        return len(self.manifest)
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0]
 
     def append(self, **row: Any) -> int:
         # must be exact keys
@@ -70,13 +83,13 @@ class NpyTable:
             else:
                 entry[key] = val
 
-        # Atomic manifest update under a lock
-        with self._lock:
-            idx = len(self.manifest)          # position this row will take
-            self.manifest.append(entry)
-            with open(self.manifest_path, "a") as f:
-                f.write(json.dumps(entry) + "\n")
-        return idx
+        # Atomic insert under a lock; 0-based idx is (rowid - 1)
+        with self._lock, self._db:
+            try:
+                cur = self._db.execute("INSERT INTO manifest(row_json) VALUES (?)", (json.dumps(entry),))
+            except sqlite3.IntegrityError as e:
+                raise ValueError("Duplicate primary key") from e
+            return cur.lastrowid - 1
 
     def add_column(self, name: str, values, array: bool = False):
         if name in self.columns:
@@ -87,7 +100,7 @@ class NpyTable:
             raise TypeError("values must be an iterable") from e
         # ---- Phase 1: take a stable snapshot under the lock ----
         with self._lock:
-            baseline_len = len(self.manifest)
+            baseline_len = self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0]
         if len(vals) != baseline_len:
             raise ValueError(f"Expected {baseline_len} values, got {len(vals)}")
 
@@ -105,31 +118,28 @@ class NpyTable:
                 file_names[i] = final_path.name
 
         # ---- Phase 3: publish atomically under the lock ----
-        with self._lock:
+        with self._lock, self._db:
             # Abort if table changed between phases (e.g., append happened).
-            if len(self.manifest) != baseline_len:
+            if self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0] != baseline_len:
                 raise RuntimeError("Table changed during add_column; retry the operation")
 
-            # Update schema in-memory
+            # Update schema in DB (meta table)
             self.columns.append(name)
             if array:
                 self.array_columns.add(name)
+            schema = {
+                "columns": self.columns,
+                "array_columns": list(self.array_columns),
+                "primary_key": self.primary_key,
+            }
+            self._db.execute("UPDATE meta SET value=? WHERE key='schema'", (json.dumps(schema),))
 
-            # Update manifest in-memory
-            for i, entry in enumerate(self.manifest):
-                if array:
-                    entry[name] = file_names[i]  # already written
-                else:
-                    entry[name] = vals[i]
-
-            manifest_tmp = self.manifest_path.with_suffix(".json.tmp")
-            manifest_tmp.write_text("".join(f"{json.dumps(e)}\n" for e in self.manifest))
-            manifest_tmp.replace(self.manifest_path)
-
-            schema_tmp = self.schema_path.with_suffix(".json.tmp")
-            schema_tmp.write_text(json.dumps({"columns": self.columns,
-                                              "array_columns": list(self.array_columns)}))
-            schema_tmp.replace(self.schema_path)
+            # Update each row's JSON payload (ordered by rowid)
+            rows = list(self._db.execute("SELECT rowid, row_json FROM manifest ORDER BY rowid"))
+            for i, (rowid, row_json) in enumerate(rows):
+                entry = json.loads(row_json)
+                entry[name] = file_names[i] if array else vals[i]
+                self._db.execute("UPDATE manifest SET row_json=? WHERE rowid=?", (json.dumps(entry), rowid))
 
     def __getitem__(self, key):
         if isinstance(key, str):
@@ -141,7 +151,6 @@ class NpyTable:
 
     def get(self, columns: List[str], rows: List[int] | None = None) -> List[List[Any]]:
         with self._lock:
-            manifest_snapshot = [e.copy() for e in self.manifest]
             array_cols = set(self.array_columns)
             directory = self.directory
             columns_snapshot = list(self.columns)
@@ -150,14 +159,17 @@ class NpyTable:
         if invalid:
             raise KeyError(f"Unknown columns requested: {invalid}")
 
-        rows = range(len(manifest_snapshot)) if rows is None else rows
+        # Fetch all rows once, then slice in Python for simplicity
+        with self._lock:
+            rows_data = [json.loads(rj) for (rj,) in
+                         self._db.execute("SELECT row_json FROM manifest ORDER BY rowid")]
+            n = len(rows_data)
+            ordered_rows = list(range(n)) if rows is None else list(rows)
 
         return [
             [
-                np.load(directory / manifest_snapshot[r][col], mmap_mode="r")
-                if col in array_cols
-                else manifest_snapshot[r][col]
-                for r in rows
+                (np.load(directory / rows_data[r][col], mmap_mode="r") if col in array_cols else rows_data[r][col])
+                for r in ordered_rows
             ]
             for col in columns
         ]
