@@ -145,7 +145,7 @@ class WorldTrainer(BaseTrainer):
 
     @torch.no_grad()
     def attn_window_update(self):
-        """
+
         bi_warmup = getattr(self.train_cfg, "bidirectional_warmup", None)
         if bi_warmup is None:
             return
@@ -170,6 +170,7 @@ class WorldTrainer(BaseTrainer):
             apply(self.model, *online_updates[step])
         if step in ema_updates:
             apply(self.ema.ema_model, *ema_updates[step])
+        """
 
     def prep_batch(self, batch):
         """Move to cuda, and if necessary use encoder to convert rgb to latent (x)"""
@@ -236,7 +237,7 @@ class WorldTrainer(BaseTrainer):
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
-                # self.attn_window_update()
+                self.attn_window_update()
 
                 train_loss = self.train_step(mini_batches)
                 metrics.log('train_loss', train_loss)
