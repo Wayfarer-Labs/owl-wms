@@ -21,7 +21,7 @@ model:
   global_window: 64
   global_attn_period: 2
 
-  n_frames: 256  # num RoPE cached frames, doesn't impact model behavior
+  n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
 
   rope_impl: vid
 
