@@ -159,17 +159,23 @@ class NpyTable:
         if invalid:
             raise KeyError(f"Unknown columns requested: {invalid}")
 
-        # Fetch all rows once, then slice in Python for simplicity
+        # Project only requested columns via JSON1; optionally restrict to given rows.
+        extracts = ", ".join(f"json_extract(row_json, '$.\"{c}\"')" for c in columns)
+        base_sql = f"SELECT rowid, {extracts} FROM manifest"
         with self._lock:
-            rows_data = [json.loads(rj) for (rj,) in
-                         self._db.execute("SELECT row_json FROM manifest ORDER BY rowid")]
-            n = len(rows_data)
-            ordered_rows = list(range(n)) if rows is None else list(rows)
+            if rows is None:
+                ordered = self._db.execute(base_sql + " ORDER BY rowid").fetchall()
+            else:
+                rowids = [r + 1 for r in rows]  # Python 0-based → SQLite rowid 1-based
+                q = base_sql + f" WHERE rowid IN ({','.join('?' for _ in rowids)})"
+                fetched = self._db.execute(q, tuple(rowids)).fetchall()
+                m = {rid: rec for rid, *rec in fetched}
+                ordered = [(r + 1, *m[r + 1]) for r in rows]  # preserve caller order
 
-        return [
-            [
-                (np.load(directory / rows_data[r][col], mmap_mode="r") if col in array_cols else rows_data[r][col])
-                for r in ordered_rows
-            ]
-            for col in columns
-        ]
+        def materialize(i: int, col: str) -> List[Any]:
+            vs = [rec[i] for rec in ordered]  # i=1.. since col0 is rowid
+            if col in array_cols:
+                return [np.load(directory / v, mmap_mode="r") for v in vs]
+            return [json.loads(v) if isinstance(v, str) and v[:1] in ("[", "{") else v for v in vs]
+
+        return [materialize(i, col) for i, col in enumerate(columns, 1)]
