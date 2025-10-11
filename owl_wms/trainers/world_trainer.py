@@ -302,13 +302,13 @@ class WorldTrainer(BaseTrainer):
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
             x1 = torch.randn_like(x0)
             x_t = torch.lerp(x0, x1, sigma[:, :, None, None, None])
-            v_target = x1 - x0
 
         # TODO: maybe no_grad here the teacher section below?
+        kw = {**kw, "x": x_t, "sigma": sigma}
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            v_pred = self.model(x=x_t, sigma=sigma, curr_frame_mask=None, **kw)
+            v_pred = self.model(**kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
 
@@ -316,18 +316,17 @@ class WorldTrainer(BaseTrainer):
         # noised frames can only attend to clean frames
         kw2 = {
             **kw,
+            "x": torch.cat((x_t, x_hat), dim=1),
+            "sigma": torch.cat((sigma, clean_sigma), dim=1),
             "frame_timestamp": kw["frame_timestamp"].repeat(1, 2),
-            "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id", None) is not None else None
+            "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id", None) is not None else None,
+            "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N clean (1), N noised (0)
         }
 
         with self.autocast_ctx:
-            v_pred = self.model(
-                x=torch.cat((x_t, x_hat), dim=1),
-                sigma=torch.cat((sigma, clean_sigma), dim=1),
-                curr_frame_mask=(torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N clean (1), N noised (0)
-                **kw2
-            )[:, :N]  # only compute loss on x_t branch
+            v_pred = self.model(**kw2)[:, :N]  # only compute loss on x_t branch
 
+        v_target = x1 - x0
         losses = F.mse_loss(v_pred, v_target, reduction=reduction)
         return (losses, sigma[:, :N]) if return_sigma else losses
 
