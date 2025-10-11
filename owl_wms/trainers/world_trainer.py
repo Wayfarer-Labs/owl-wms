@@ -297,9 +297,6 @@ class WorldTrainer(BaseTrainer):
         else:
             return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    def fwd(self, model, *args, **kwargs):
-        return model(*args, **kwargs)
-
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
         B, N = x0.size(0), x0.size(1)
@@ -315,9 +312,15 @@ class WorldTrainer(BaseTrainer):
         # Predict priors given ground truth
         with self.autocast_ctx:
             # TODO: maybe no_grad this?
-            v_pred = model(**kw)
+            v_pred_hat = model(
+                x_t, sigma,
+                frame_timestamp=kw["frame_timestamp"],
+                prompt_emb=kw.get("prompt_emb"),
+                controller_inputs=kw.get("controller_inputs"),
+                doc_id=kw.get("doc_id"),
+            )
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
-        x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
+        x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat
 
         # Construct sequence with predicted clean frames and original noised frames
         # noised frames can only attend to clean frames
@@ -327,11 +330,18 @@ class WorldTrainer(BaseTrainer):
             "sigma": torch.cat((sigma, clean_sigma), dim=1),
             "frame_timestamp": kw["frame_timestamp"].repeat(1, 2),
             "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id", None) is not None else None,
-            "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N clean (1), N noised (0)
+            "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N noised (1), N clean (0)
         }
 
         with self.autocast_ctx:
-            v_pred = model(**kw2)
+            v_pred = model(
+                kw2["x"], kw2["sigma"],
+                frame_timestamp=kw2["frame_timestamp"],
+                curr_frame_mask=kw2["curr_frame_mask"],
+                prompt_emb=kw.get("prompt_emb"),
+                controller_inputs=kw.get("controller_inputs"),
+                doc_id=kw2.get("doc_id"),
+            )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
         v_target = x1 - x0
