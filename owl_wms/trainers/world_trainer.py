@@ -334,6 +334,8 @@ class WorldTrainer(BaseTrainer):
             "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N noised (1), N clean (0)
         }
 
+        dynamo.graph_break()
+
         with self.autocast_ctx:
             v_pred = model(
                 kw2["x"], kw2["sigma"],
