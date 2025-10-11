@@ -114,7 +114,7 @@ class WorldTrainer(BaseTrainer):
 
         # self.quantize(self.model)
         if self.world_size > 1:
-            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
+            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=False)
 
         raw = self.get_raw_model(self.model)
         self.ema = EMA(raw, beta=0.999, update_after_step=0, update_every=1, include_online_model=False)
