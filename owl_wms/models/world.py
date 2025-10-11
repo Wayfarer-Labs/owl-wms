@@ -133,11 +133,19 @@ class WorldDiT(nn.Module):
         for blk in self.blocks[1:]:
             blk.attn.rope = ref_rope
 
+        # TODO: REMOVE, just an experiment
+        self.prompt_proj = nn.Linear(2048, config.d_model, bias=False)
+        self.prompt_proj.weight.detach().zero_()
+        # ####
+
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
         ####
         # TODO: REMOVE, just an experiment
         if ctrl_emb is not None:
             cond = cond + ctrl_emb
+        if prompt_emb is not None:
+            prompt_emb = self.prompt_proj(prompt_emb["emb"]).mean(dim=1, keepdim=True)
+            cond = cond + prompt_emb
         ####
 
         t_pos = pos_ids["t_pos"]

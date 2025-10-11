@@ -65,9 +65,30 @@ class WindowedViewDataset(Dataset):
                 continue
             if not include_truncated and trunc:
                 continue
+
             for start in range(0, L, window_length):
                 # keep if any stride fits with phase=0; exact phase is handled in __getitem__
                 if start + max(self.sampling_periods) * window_length <= L:
+                    # If we're using captions (i.e., prompts), require at least one overlap.
+                    if self._captions_index is not None:
+                        s0 = start
+                        s_end = start + max(self.sampling_periods) * window_length - 1
+                        caps = self._captions_index[i] or []
+                        keep = False
+                        for cap in caps:
+                            fr = cap.get("frame_range")
+                            if fr:
+                                cmin, cmax = int(fr[0]), int(fr[1])
+                            else:
+                                fi = cap.get("frame_indices") or []
+                                if not fi:
+                                    continue
+                                cmin, cmax = int(fi[0]), int(fi[-1])
+                            if not (cmax < s0 or cmin > s_end):
+                                keep = True
+                                break
+                        if not keep:
+                            continue
                     self._index.append((i, start))
 
         uniq, counts = np.unique(np.asarray(self.fps, int), return_counts=True)
