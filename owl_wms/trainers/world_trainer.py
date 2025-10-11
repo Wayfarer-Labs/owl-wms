@@ -31,11 +31,6 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: fp32)
 
 
-# TODO: experimental
-torch._dynamo.config.optimize_ddp = False
-#####
-
-
 # TODO: replace with itertools.batched in python3.13
 batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
 
@@ -301,13 +296,13 @@ class WorldTrainer(BaseTrainer):
         with torch.no_grad():
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
             x1 = torch.randn_like(x0)
-            x_t = torch.lerp(x0, x1, sigma[:, :, None, None, None])
+            x_t = torch.lerp(x0, x1, sigma.view(B, N, 1, 1, 1))
 
-        # TODO: maybe no_grad here the teacher section below?
         kw = {**kw, "x": x_t, "sigma": sigma}
 
         # Predict priors given ground truth
         with self.autocast_ctx:
+            # TODO: maybe no_grad this?
             v_pred = self.model(**kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
