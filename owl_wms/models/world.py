@@ -190,10 +190,7 @@ class WorldModel(nn.Module):
         self.patch = tuple(getattr(config, "patch", (1, 1)))
 
         C, D = config.channels, config.d_model
-        self.patchify = nn.Sequential(
-            Rearrange('b n c h w -> (b n) c h w'),
-            nn.Conv2d(C, D, kernel_size=self.patch, stride=self.patch, bias=False),
-        )
+        self.patchify = nn.Conv2d(C, D, kernel_size=self.patch, stride=self.patch, bias=False)
         self.unpatchify = nn.Linear(D, C * math.prod(self.patch), bias=True)
         self.out_norm = owl_nn.AdaLN(config.d_model)
 
@@ -236,14 +233,11 @@ class WorldModel(nn.Module):
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
-        x = eo.rearrange(self.patchify(x), '(b n) d hp wp -> b (n hp wp) d', b=B, n=N)
+        x = self.patchify(x.reshape(B * N, C, H, W))
+        x = eo.rearrange(x.view(B, N, -1, Hp, Wp), 'b n d hp wp -> b (n hp wp) d')  # combine-only is fine
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
         x = F.silu(self.out_norm(x, cond))
-        x = eo.rearrange(
-            self.unpatchify(x),
-            'b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)',
-            n=N, hp=Hp, wp=Wp, ph=ph, pw=pw
-        )
+        x = self.unpatchify(x).reshape(B, N, C, Hp * ph, Wp * pw)
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):
