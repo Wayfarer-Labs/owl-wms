@@ -2,7 +2,6 @@ from typing import Optional, List
 from torch import Tensor
 
 import einops as eo
-from einops.layers.torch import Rearrange
 from tensordict import TensorDict
 import math
 
@@ -235,8 +234,9 @@ class WorldModel(nn.Module):
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
+        D = self.unpatchify.in_features
         x = self.patchify(x.reshape(B * N, C, H, W))
-        x = eo.rearrange(x.view(B, N, -1, Hp, Wp), 'b n d hp wp -> b (n hp wp) d')  # combine-only is fine
+        x = eo.rearrange(x.view(B, N, D, Hp, Wp), 'b n d hp wp -> b (n hp wp) d')
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
         x = F.silu(self.out_norm(x, cond))
         x = self.unpatchify(x).reshape(B, N, C, Hp * ph, Wp * pw)
