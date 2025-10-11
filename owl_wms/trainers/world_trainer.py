@@ -293,6 +293,9 @@ class WorldTrainer(BaseTrainer):
             return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
     @torch.compile
+    def fwd(self, model, *args, **kwargs):
+        return model(*args, **kwargs)
+
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
         B, N = x0.size(0), x0.size(1)
@@ -308,7 +311,7 @@ class WorldTrainer(BaseTrainer):
         # Predict priors given ground truth
         with self.autocast_ctx:
             # TODO: maybe no_grad this?
-            v_pred = self.model(**kw)
+            v_pred = self.fwd(model, **kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
 
@@ -324,7 +327,7 @@ class WorldTrainer(BaseTrainer):
         }
 
         with self.autocast_ctx:
-            v_pred = self.model(**kw2)[:, :N]  # only compute loss on x_t branch
+            v_pred = self.fwd(model, **kw2)[:, :N]  # only compute loss on x_t branch
 
         v_target = x1 - x0
         losses = F.mse_loss(v_pred, v_target, reduction=reduction)
