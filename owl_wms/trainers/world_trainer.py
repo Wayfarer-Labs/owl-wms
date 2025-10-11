@@ -30,12 +30,6 @@ dynamo.config.recompile_limit = 32
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: fp32)
 
-
-# TODO: REMOVE
-torch.autograd.set_detect_anomaly(True)
-# ####
-
-
 # TODO: replace with itertools.batched in python3.13
 batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
 
@@ -88,7 +82,13 @@ class WorldTrainer(BaseTrainer):
 
     @staticmethod
     def get_raw_model(model):
-        return getattr(model, "module", model)
+        while True:
+            if hasattr(model, "module"):
+                model = model.module
+            elif hasattr(model, "_orig_mod"):
+                model = model._orig_mod
+            else:
+                return model
 
     def save(self):
         if self.rank != 0:
@@ -235,6 +235,7 @@ class WorldTrainer(BaseTrainer):
         print(f"Device used: rank={self.rank}")
 
         self.load()
+        self.model = torch.compile(self.model, dynamic=True)
 
         # Dataset setup
         self.train_loader = self.train_loader()
@@ -292,7 +293,6 @@ class WorldTrainer(BaseTrainer):
         else:
             return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    @torch.compile
     def fwd(self, model, *args, **kwargs):
         return model(*args, **kwargs)
 
