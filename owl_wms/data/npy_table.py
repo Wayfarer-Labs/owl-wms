@@ -5,20 +5,25 @@ import uuid
 import numpy as np
 from pathlib import Path
 from typing import List, Any
+import os
 
 
 class NpyTable:
     def __init__(self, directory: str, columns: List[str] = None, array_columns: set[str] = None, primary_key: str = None):
-        self.directory = Path(directory)
+        self.directory = Path(directory).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-        # SQLite: single place for schema + rows
-        self.db_path = self.directory / "manifest.sqlite3"
-        self._db = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.db_path = str(self.directory / "manifest.sqlite3")
+        if not Path(self.db_path).exists():
+            raise FileNotFoundError(f"NpyTable DB not found: {self.db_path}")
+        self._db = None
+        self._pid = None
+        self._connect()
         self._db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
+            PRAGMA wal_checkpoint(TRUNCATE);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS manifest (row_json TEXT NOT NULL);
         """)
@@ -59,6 +64,19 @@ class NpyTable:
             )
 
     # TODO: @classmethod `def create(...)` to initialize
+
+    def _connect(self):
+        self._db = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._pid = os.getpid()
+
+    def _reopen_if_forked(self):
+        if self._pid != os.getpid():
+            try:
+                self._db.close()
+            except Exception:
+                pass
+            self._connect()
+            self._db.executescript("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA wal_checkpoint(TRUNCATE);")
 
     def __len__(self):
         with self._lock:
@@ -151,6 +169,7 @@ class NpyTable:
 
     def get(self, columns: List[str], rows: List[int] | None = None) -> List[List[Any]]:
         with self._lock:
+            self._reopen_if_forked()
             array_cols = set(self.array_columns)
             directory = self.directory
             columns_snapshot = list(self.columns)
@@ -166,11 +185,14 @@ class NpyTable:
             if rows is None:
                 ordered = self._db.execute(base_sql + " ORDER BY rowid").fetchall()
             else:
-                rowids = [r + 1 for r in rows]  # Python 0-based → SQLite rowid 1-based
-                q = base_sql + f" WHERE rowid IN ({','.join('?' for _ in rowids)})"
-                fetched = self._db.execute(q, tuple(rowids)).fetchall()
-                m = {rid: rec for rid, *rec in fetched}
-                ordered = [(r + 1, *m[r + 1]) for r in rows]  # preserve caller order
+                rowids = [int(r) + 1 for r in rows]  # normalize to builtin int
+                if len(rowids) == 1:
+                    fetched = self._db.execute(base_sql + " WHERE rowid = ?", (rowids[0],)).fetchall()
+                else:
+                    q = base_sql + f" WHERE rowid IN ({','.join('?' for _ in rowids)})"
+                    fetched = self._db.execute(q, tuple(rowids)).fetchall()
+                m = {int(rid): rec for rid, *rec in fetched}
+                ordered = [(ri, *m[ri]) for ri in rowids]
 
         def materialize(i: int, col: str) -> List[Any]:
             vs = [rec[i] for rec in ordered]  # i=1.. since col0 is rowid
