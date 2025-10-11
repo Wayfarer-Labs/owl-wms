@@ -292,10 +292,7 @@ class WorldTrainer(BaseTrainer):
         else:
             return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    @torch.compile(dynamic=True)
-    def fwd(self, model, *args, **kwargs):
-        return model(*args, **kwargs)
-
+    @torch.compile
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
         B, N = x0.size(0), x0.size(1)
@@ -324,8 +321,7 @@ class WorldTrainer(BaseTrainer):
         }
 
         with self.autocast_ctx:
-            v_pred = self.fwd(
-                model,
+            v_pred = self.model(
                 x=torch.cat((x_t, x_hat), dim=1),
                 sigma=torch.cat((sigma, clean_sigma), dim=1),
                 curr_frame_mask=(torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N clean (1), N noised (0)
