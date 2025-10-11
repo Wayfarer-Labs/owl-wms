@@ -311,9 +311,9 @@ class WorldTrainer(BaseTrainer):
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            """
             v_pred_hat = model(
-                x_t.repeat(1, 2), sigma.repeat(1, 2),
+                x_t.repeat(1, 2, 1, 1, 1),
+                sigma.repeat(1, 2),
                 frame_timestamp=kw["frame_timestamp"].repeat(1, 2),
                 curr_frame_mask=sigma.new_zeros((B, N), dtype=torch.bool).repeat(1, 2),
                 prompt_emb=kw.get("prompt_emb"),
@@ -330,7 +330,7 @@ class WorldTrainer(BaseTrainer):
                 controller_inputs=kw.get("controller_inputs"),
                 doc_id=kw.get("doc_id"),
             )
-
+            """
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat
 
