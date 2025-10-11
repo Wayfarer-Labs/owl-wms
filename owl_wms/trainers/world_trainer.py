@@ -287,9 +287,13 @@ class WorldTrainer(BaseTrainer):
         x0 = x
         B, N = x0.size(0), x0.size(1)
 
+        fps = kw["fps"]
+        doc_id = kw.get("doc_id", None)
+        kw = {k: v for k, v in kw.items() if k not in ("fps", "doc_id")}
+        frame_timestamp = getattr(model, "module", model).get_frame_timestamps(fps, N, x0.device)
+
         # sample diffusion forcing noised frames
         with torch.no_grad():
-            frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)
             sigma = torch.randn(B, N, 1, 1, 1, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
             x1 = torch.randn_like(x0)
             x_t = torch.lerp(x0, x1, sigma)
@@ -299,7 +303,7 @@ class WorldTrainer(BaseTrainer):
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            v_pred = model(x_t, sigma.view(B, N), frame_timestamp=frame_timestamp, **kw)
+            v_pred = model(x_t, sigma.view(B, N), frame_timestamp=frame_timestamp, doc_id=doc_id, **kw)
             x_hat = x_t + (self.train_cfg.noise_prev - sigma) * v_pred
 
         # Construct sequence with predicted clean frames and original noised frames
@@ -308,8 +312,7 @@ class WorldTrainer(BaseTrainer):
         x_t = torch.cat((x_t, x_hat), dim=1)
         # repeat labels: [B, 2N]
         frame_timestamp = frame_timestamp.repeat(1, 2)
-        if kw.get("doc_id", None) is not None:
-            kw["doc_id"] = kw["doc_id"].repeat(1, 2)
+        doc_id = doc_id.repeat(1, 2) if doc_id is not None else None
         # mask: true=sampled noises, false=predicted cleanss
         curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
 
@@ -318,6 +321,7 @@ class WorldTrainer(BaseTrainer):
                 x_t, sigma,
                 curr_frame_mask=curr_frame_mask,
                 frame_timestamp=frame_timestamp,
+                doc_id=doc_id,
                 **kw
             )[:, :N]  # only compute loss on x_t branch
 
