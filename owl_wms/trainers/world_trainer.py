@@ -315,6 +315,7 @@ class WorldTrainer(BaseTrainer):
             v_pred_hat = model(
                 x_t, sigma,
                 frame_timestamp=kw["frame_timestamp"],
+                curr_frame_mask=sigma.new_zeros((B, N), dtype=torch.bool),
                 prompt_emb=kw.get("prompt_emb"),
                 controller_inputs=kw.get("controller_inputs"),
                 doc_id=kw.get("doc_id"),
