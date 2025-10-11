@@ -31,6 +31,11 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: fp32)
 
 
+# TODO: experimental
+torch._dynamo.config.optimize_ddp = False
+#####
+
+
 # TODO: replace with itertools.batched in python3.13
 batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
 
@@ -266,7 +271,7 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
-            loss = self.fwd_step(batch)
+            loss = self.loss_step(batch)
             loss.backward()
             loss_sum += loss.item()
 
@@ -276,12 +281,15 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
-    @torch.compile
-    def fwd_step(self, batch):
+    def loss_step(self, batch):
         if getattr(self.train_cfg, "sfpt", False):
             return self.sfpt_loss(self.model, **batch) / self.accum_steps_per_device
         else:
             return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
+
+    @torch.compile(dynamic=True)
+    def fwd(self, model, *args, **kwargs):
+        return model(*args, **kwargs)
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
@@ -294,21 +302,21 @@ class WorldTrainer(BaseTrainer):
 
         # sample diffusion forcing noised frames
         with torch.no_grad():
-            sigma = torch.randn(B, N, 1, 1, 1, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
+            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
             x1 = torch.randn_like(x0)
-            x_t = torch.lerp(x0, x1, sigma)
+            x_t = torch.lerp(x0, x1, sigma[:, :, None, None, None])
             v_target = x1 - x0
 
         # TODO: maybe no_grad here the teacher section below?
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            v_pred = model(x_t, sigma.view(B, N), frame_timestamp=frame_timestamp, doc_id=doc_id, **kw)
-            x_hat = x_t + (self.train_cfg.noise_prev - sigma) * v_pred
+            v_pred = self.fwd(model, x_t, sigma, curr_frame_mask=None, frame_timestamp=frame_timestamp, doc_id=doc_id, **kw)
+            x_hat = x_t + (self.train_cfg.noise_prev - sigma[:, :, None, None, None]) * v_pred
 
         # Construct sequence with predicted clean frames and original noised frames
         # noised frames can only attend to clean frames
-        sigma = torch.cat((sigma.view(B, N), x0.new_full((B, N), self.train_cfg.noise_prev)), dim=1)
+        sigma = torch.cat((sigma, torch.full_like(sigma, self.train_cfg.noise_prev)), dim=1)
         x_t = torch.cat((x_t, x_hat), dim=1)
         # repeat labels: [B, 2N]
         frame_timestamp = frame_timestamp.repeat(1, 2)
@@ -317,7 +325,8 @@ class WorldTrainer(BaseTrainer):
         curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
 
         with self.autocast_ctx:
-            v_pred = model(
+            v_pred = self.fwd(
+                model,
                 x_t, sigma,
                 curr_frame_mask=curr_frame_mask,
                 frame_timestamp=frame_timestamp,
