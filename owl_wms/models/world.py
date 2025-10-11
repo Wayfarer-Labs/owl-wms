@@ -54,8 +54,6 @@ class ControllerInputEmbedding(nn.Module):
         return self.mlp(controller_input)
 
 
-
-
 class CondHead(nn.Module):
     """Per-layer conditioning head: bias_in → SiLU → Linear → chunk(n_cond)."""
     n_cond = 6

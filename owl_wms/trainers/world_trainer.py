@@ -280,34 +280,6 @@ class WorldTrainer(BaseTrainer):
     def fwd_step(self, batch):
         return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
 
-    @torch.compile(fullgraph=True)
-    def get_gaussian(self, x0, doc_id=None):
-        # Current frames' Gaussian noise (i.i.d. or PYoCo-correlated)
-        noise_dist = getattr(self.train_cfg, "noise_distribution", "iid")
-        if noise_dist == "iid":
-            return torch.randn_like(x0)
-
-        elif noise_dist == "pyoco_progressive":
-            B, N = x0.shape[:2]
-            alpha = 0.7  # 2.0  # best for progressive noise in PYoCo paper
-            s = (1 + alpha**2) ** -0.5
-            rho = alpha * s
-
-            eps = torch.randn_like(x0)
-            out = torch.empty_like(x0)
-
-            bounds = torch.zeros(B, N, dtype=torch.bool, device=x0.device)
-            bounds[:, 0] = True
-            if doc_id is not None:
-                bounds[:, 1:] = (doc_id[:, 1:] != doc_id[:, :-1])
-
-            out[:, 0] = eps[:, 0]
-            for t in range(1, N):
-                cand = rho * out[:, t - 1] + s * eps[:, t]
-                out[:, t] = torch.where(bounds[:, t], eps[:, t], cand).type_as(x0)
-
-            return out.to(x0.dtype)
-
     def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
@@ -319,15 +291,12 @@ class WorldTrainer(BaseTrainer):
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
 
-            # v_target = self.get_gaussian(x0, doc_id=kw.get("doc_id", None)) - x0
             v_target = torch.randn_like(x0) - x0  # iid
             frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)
 
             if getattr(self.train_cfg, "inference_matching", False):
                 # Construct sequence of constant-noise, "denoised", previous frames
-                noise_prev_range = sorted(getattr(self.train_cfg, "noise_prev_range", [self.train_cfg.noise_prev] * 2))
-                prior_sigma = x0.new_empty((B, N)).uniform_(*noise_prev_range)
-                sigma = torch.cat((sigma, prior_sigma), dim=1)
+                sigma = torch.cat((sigma, x0.new_full((B, N), self.train_cfg.noise_prev)), dim=1)
 
                 # repeat labels: [B, 2N]
                 v_target = v_target.repeat(1, 2, 1, 1, 1)
