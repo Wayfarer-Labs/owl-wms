@@ -205,6 +205,11 @@ class WorldTrainer(BaseTrainer):
         # scale latents
         batch["x"] = (batch["x"] / self.train_cfg.vae_scale).bfloat16()
 
+        # prepare frame temporal position ids (timestamps)
+        batch["frame_timestamp"] = getattr(self.model, "module", self.model).get_frame_timestamps(
+            batch.pop("fps"), batch["x"].size(1), batch["x"].device
+        )
+
         return batch
 
     def train_loader(self):
@@ -295,11 +300,6 @@ class WorldTrainer(BaseTrainer):
         x0 = x
         B, N = x0.size(0), x0.size(1)
 
-        fps = kw["fps"]
-        doc_id = kw.get("doc_id", None)
-        kw = {k: v for k, v in kw.items() if k not in ("fps", "doc_id")}
-        frame_timestamp = getattr(model, "module", model).get_frame_timestamps(fps, N, x0.device)
-
         # sample diffusion forcing noised frames
         with torch.no_grad():
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
@@ -311,27 +311,25 @@ class WorldTrainer(BaseTrainer):
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            v_pred = self.fwd(model, x_t, sigma, curr_frame_mask=None, frame_timestamp=frame_timestamp, doc_id=doc_id, **kw)
-            x_hat = x_t + (self.train_cfg.noise_prev - sigma[:, :, None, None, None]) * v_pred
+            v_pred = self.model(x=x_t, sigma=sigma, curr_frame_mask=None, **kw)
+        clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
+        x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
 
         # Construct sequence with predicted clean frames and original noised frames
         # noised frames can only attend to clean frames
-        sigma = torch.cat((sigma, torch.full_like(sigma, self.train_cfg.noise_prev)), dim=1)
-        x_t = torch.cat((x_t, x_hat), dim=1)
-        # repeat labels: [B, 2N]
-        frame_timestamp = frame_timestamp.repeat(1, 2)
-        doc_id = doc_id.repeat(1, 2) if doc_id is not None else None
-        # mask: true=sampled noises, false=predicted cleanss
-        curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
+        kw2 = {
+            **kw,
+            "frame_timestamp": kw["frame_timestamp"].repeat(1, 2),
+            "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id", None) is not None else None
+        }
 
         with self.autocast_ctx:
             v_pred = self.fwd(
                 model,
-                x_t, sigma,
-                curr_frame_mask=curr_frame_mask,
-                frame_timestamp=frame_timestamp,
-                doc_id=doc_id,
-                **kw
+                x=torch.cat((x_t, x_hat), dim=1),
+                sigma=torch.cat((sigma, clean_sigma), dim=1),
+                curr_frame_mask=(torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N clean (1), N noised (0)
+                **kw2
             )[:, :N]  # only compute loss on x_t branch
 
         losses = F.mse_loss(v_pred, v_target, reduction=reduction)
