@@ -31,6 +31,11 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: fp32)
 
 
+# TODO: REMOVE
+torch.autograd.set_detect_anomaly(True)
+# ####
+
+
 # TODO: replace with itertools.batched in python3.13
 batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
 
