@@ -110,7 +110,7 @@ class WorldTrainer(BaseTrainer):
         self.model = self.model.cuda()
 
         # Compile BEFORE DDP (TODO REVIEW)
-        self.model = torch.compile(self.model)
+        self.model = torch.compile(self.model, dynamic=True)
 
         # self.quantize(self.model)
         if self.world_size > 1:
