@@ -311,7 +311,7 @@ class WorldTrainer(BaseTrainer):
         # Predict priors given ground truth
         with self.autocast_ctx:
             # TODO: maybe no_grad this?
-            v_pred = self.fwd(model, **kw)
+            v_pred = model(**kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred
 
@@ -327,7 +327,8 @@ class WorldTrainer(BaseTrainer):
         }
 
         with self.autocast_ctx:
-            v_pred = self.fwd(model, **kw2)[:, :N]  # only compute loss on x_t branch
+            v_pred = model(**kw2)
+            v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
         v_target = x1 - x0
         losses = F.mse_loss(v_pred, v_target, reduction=reduction)
