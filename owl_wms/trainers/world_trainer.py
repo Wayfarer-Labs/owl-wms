@@ -300,11 +300,11 @@ class WorldTrainer(BaseTrainer):
         # Predict priors given ground truth
         with self.autocast_ctx:
             v_pred = model(x_t, sigma.view(B, N), frame_timestamp=frame_timestamp, **kw)
-            x_hat = x_t + (self.noise_prev - sigma) * v_pred
+            x_hat = x_t + (self.train_cfg.noise_prev - sigma) * v_pred
 
         # Construct sequence with predicted clean frames and original noised frames
         # noised frames can only attend to clean frames
-        sigma = torch.cat((sigma.view(B, N), x0.new_full((B, N), self.noise_prev)), dim=1)
+        sigma = torch.cat((sigma.view(B, N), x0.new_full((B, N), self.train_cfg.noise_prev)), dim=1)
         x_t = torch.cat((x_t, x_hat), dim=1)
         # repeat labels: [B, 2N]
         frame_timestamp = frame_timestamp.repeat(1, 2)
