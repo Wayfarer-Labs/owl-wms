@@ -38,9 +38,10 @@ model:
 train:
   trainer_id: world
 
+  sfpt: true
   inference_matching: false
-  noise_prev: 0.2062
-  bidirectional_warmup: 40000
+  noise_prev: 0.0089
+  bidirectional_warmup: null
 
   total_accum_steps: 32
 

@@ -278,7 +278,51 @@ class WorldTrainer(BaseTrainer):
 
     @torch.compile
     def fwd_step(self, batch):
-        return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
+        if getattr(self.train_cfg, "sfpt", False):
+            return self.sfpt_loss(self.model, **batch) / self.accum_steps_per_device
+        else:
+            return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
+
+    def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+        x0 = x
+        B, N = x0.size(0), x0.size(1)
+
+        # sample diffusion forcing noised frames
+        with torch.no_grad():
+            frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)
+            sigma = torch.randn(B, N, 1, 1, 1, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
+            x1 = torch.randn_like(x0)
+            x_t = torch.lerp(x0, x1, sigma)
+            v_target = x1 - x0
+
+        # TODO: maybe no_grad here the teacher section below?
+
+        # Predict priors given ground truth
+        with self.autocast_ctx:
+            v_pred = model(x_t, sigma.view(B, N), frame_timestamp=frame_timestamp, **kw)
+            x_hat = x_t + (self.noise_prev - sigma) * v_pred
+
+        # Construct sequence with predicted clean frames and original noised frames
+        # noised frames can only attend to clean frames
+        sigma = torch.cat((sigma.view(B, N), x0.new_full((B, N), self.noise_prev)), dim=1)
+        x_t = torch.cat((x_t, x_hat), dim=1)
+        # repeat labels: [B, 2N]
+        frame_timestamp = frame_timestamp.repeat(1, 2)
+        if kw.get("doc_id", None) is not None:
+            kw["doc_id"] = kw["doc_id"].repeat(1, 2)
+        # mask: true=sampled noises, false=predicted cleanss
+        curr_frame_mask = (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1)
+
+        with self.autocast_ctx:
+            v_pred = model(
+                x_t, sigma,
+                curr_frame_mask=curr_frame_mask,
+                frame_timestamp=frame_timestamp,
+                **kw
+            )[:, :N]  # only compute loss on x_t branch
+
+        losses = F.mse_loss(v_pred, v_target, reduction=reduction)
+        return (losses, sigma[:, :N]) if return_sigma else losses
 
     def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
