@@ -310,19 +310,10 @@ class WorldTrainer(BaseTrainer):
             x1 = torch.randn_like(x0)
             x_t = torch.lerp(x0, x1, sigma.view(B, N, 1, 1, 1))
 
-        kw = {**kw, "x": x_t, "sigma": sigma}
-
         # Predict priors given ground truth
         with self.autocast_ctx:
             # TODO: maybe no_grad this?
-            v_pred_hat = model(
-                x_t, sigma,
-                frame_timestamp=kw["frame_timestamp"],
-                curr_frame_mask=sigma.new_zeros((B, N), dtype=torch.bool),
-                prompt_emb=kw.get("prompt_emb"),
-                controller_inputs=kw.get("controller_inputs"),
-                doc_id=kw.get("doc_id"),
-            )
+            v_pred_hat = model(x_t, sigma, **kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat
 
@@ -330,8 +321,6 @@ class WorldTrainer(BaseTrainer):
         # noised frames can only attend to clean frames
         kw2 = {
             **kw,
-            "x": torch.cat((x_t, x_hat), dim=1),
-            "sigma": torch.cat((sigma, clean_sigma), dim=1),
             "frame_timestamp": kw["frame_timestamp"].repeat(1, 2),
             "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id", None) is not None else None,
             "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N noised (1), N clean (0)
@@ -339,12 +328,9 @@ class WorldTrainer(BaseTrainer):
 
         with self.autocast_ctx:
             v_pred = model(
-                kw2["x"], kw2["sigma"],
-                frame_timestamp=kw2["frame_timestamp"],
-                curr_frame_mask=kw2["curr_frame_mask"],
-                prompt_emb=kw.get("prompt_emb"),
-                controller_inputs=kw.get("controller_inputs"),
-                doc_id=kw2.get("doc_id"),
+                torch.cat((x_t, x_hat), dim=1),
+                torch.cat((sigma, clean_sigma), dim=1),
+                **kw2
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
