@@ -34,6 +34,11 @@ torch.set_float32_matmul_precision("high")  # (low: bf16, high: tf32, highest: f
 batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)), ())
 
 
+# TODO REMOVE
+torch._dynamo.config.optimize_ddp = False
+#####
+
+
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
     def __init__(self, *args, **kwargs):
