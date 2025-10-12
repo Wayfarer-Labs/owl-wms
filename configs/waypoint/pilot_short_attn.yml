@@ -23,7 +23,7 @@ model:
 
   n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
 
-  rope_impl: vid
+  rope_impl: motion
 
   sink_attn: false
   gated_attn: true
@@ -34,13 +34,17 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
+  text_embedding_dim: 2048
+  text_conditioning: additive
+  text_cond_dropout: 0.1
+  # text_conditioning: cross_attention
 
 train:
   trainer_id: world
 
-  sfpt: true
+  sfpt: false
   inference_matching: false
-  noise_prev: 0.0089
+  noise_prev: 0.2
   bidirectional_warmup: null
 
   total_accum_steps: 32

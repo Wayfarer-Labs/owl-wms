@@ -84,6 +84,9 @@ class WorldDiTBlock(nn.Module):
         self.mlp = owl_nn.MLP(config)
         self.cond_head = CondHead(config)
 
+        if config.text_conditioning == "cross_attention":
+            self.text_cross_attn = nn.CrossAttention(config, config.text_embedding_dim)
+
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
         0) Causal Frame Attention
@@ -95,13 +98,19 @@ class WorldDiTBlock(nn.Module):
         residual = x
         x = owl_nn.ada_rmsnorm(x, s0, b0)
         x = self.attn(x, pos_ids, block_mask, kv_cache)
-        x = owl_nn.ada_gate(x, g0)
-        x = x + residual
+        x = owl_nn.ada_gate(x, g0) + residual
+
+        if prompt_emb is not None and self.config.text_conditioning == "cross_attention":
+            x = self.text_cross_attn(
+                x,
+                context=prompt_emb["emb"],
+                context_pad_mask=prompt_emb["pad_mask"]
+            ) + x
 
         def cond_mlp(xm, sm, bm, gm):
-            res = xm
+            residual = xm
             xm = self.mlp(owl_nn.ada_rmsnorm(xm, sm, bm))
-            return owl_nn.ada_gate(xm, gm) + res
+            return owl_nn.ada_gate(xm, gm) + residual
 
         do_ckpt = self.config.gradient_checkpointing and self.training
         x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, s1, b1, g1)
@@ -115,8 +124,8 @@ class WorldDiT(nn.Module):
         self.config = config
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
 
-        self.local_window = config.local_window  # nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
-        self.global_window = config.global_window  # nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
+        self.local_window = nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
+        self.global_window = nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
 
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
@@ -131,20 +140,9 @@ class WorldDiT(nn.Module):
         for blk in self.blocks[1:]:
             blk.attn.rope = ref_rope
 
-        # TODO: REMOVE, just an experiment
-        # self.prompt_proj = nn.Linear(2048, config.d_model, bias=False)
-        # self.prompt_proj.weight.detach().zero_()
-        # ####
-
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
-        ####
-        # TODO: REMOVE, just an experiment
-        if ctrl_emb is not None:
-            cond = cond + ctrl_emb
-        # if prompt_emb is not None:
-        #    prompt_emb = self.prompt_proj(prompt_emb["emb"]).mean(dim=1, keepdim=True)
-        #    cond = cond + prompt_emb
-        ####
+        # if ctrl_emb is not None:
+        #    cond = cond + ctrl_emb
 
         t_pos = pos_ids["t_pos"]
         if kv_cache is not None:
@@ -194,6 +192,35 @@ class WorldModel(nn.Module):
         self.unpatchify = nn.Linear(D, C * math.prod(self.patch), bias=True)
         self.out_norm = owl_nn.AdaLN(config.d_model)
 
+        # Experimental
+        if self.config.text_conditioning == "additive":
+            self.null_prompt = nn.Parameter(torch.zeros(1, self.config.text_embedding_dim))
+            self.prompt_proj = nn.Linear(self.config.text_embedding_dim, config.d_model, bias=True)
+            self.prompt_proj.weight.detach().zero_()
+            self.prompt_proj.bias.detach().zero_()
+        # ####
+
+    def additive_text_conditioning(self, cond, prompt_emb):
+        # Experimental, may be sustituted with cross attention
+        if self.text_conditioning != "additive":
+            return cond
+
+        null_prompt = self.null_prompt.view(1, 1, -1).type_as(cond)
+
+        if prompt_emb is None:
+            prompt_emb = null_prompt
+        else:
+            w = (~prompt_emb["pad_mask"]).float()
+            den = w.sum(1, keepdim=True).unsqueeze(-1).clamp_min(1.0)
+            prompt_emb = (w.unsqueeze(1) @ prompt_emb["emb"]) / den
+
+        p = getattr(self.config, "text_cond_dropout", 0.0)
+        if self.training and p > 0.0:
+            drop = (torch.rand(cond.size(0), 1, 1, device=cond.device) < p)
+            prompt_emb = torch.where(drop, null_prompt, prompt_emb)
+
+        return cond + self.prompt_proj(prompt_emb)
+
     def forward(
         self,
         x: Tensor,
@@ -230,6 +257,7 @@ class WorldModel(nn.Module):
 
         # embed
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
+        cond = self.additive_text_conditioning(cond, prompt_emb)
         ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
 
         D = self.unpatchify.in_features

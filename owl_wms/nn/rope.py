@@ -16,7 +16,7 @@ def get_rope_cls(cls_name):
     elif cls_name == "motion":
         return MotionRoPE
     elif cls_name == "vid":
-        return MotionRoPE
+        return VidRoPE
     else:
         raise ValueError(f"Invalid RoPE class: {cls_name}")
 

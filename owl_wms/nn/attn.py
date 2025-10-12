@@ -142,8 +142,8 @@ class Attn(nn.Module):
             y = flex_attention(q, k, v, block_mask=bm, enable_gqa=self.enable_gqa)
 
         if self.gated_attn:
-            gates = torch.sigmoid(self.gate_proj(x[..., :self.n_heads]))  # (b, t, h)
-            y = y * gates.permute(0, 2, 1).unsqueeze(-1)                  # (b, h, t, d)
+            gates = torch.sigmoid(self.gate_proj(x[..., :self.n_heads]))
+            y = y * gates.permute(0, 2, 1).unsqueeze(-1)
         y = eo.rearrange(y, "b h t d -> b t (h d)")
         y = self.out_proj(y)
         return y
@@ -154,51 +154,16 @@ class CrossAttention(nn.Module):
         super().__init__()
         assert config.d_model % config.n_heads == 0
         self.n_heads = config.n_heads
-        self.q = nn.Linear(config.d_model, config.d_model)
-        self.kv = nn.Linear(context_dim or config.d_model, config.d_model * 2)
-        self.o = nn.Linear(config.d_model, config.d_model)
+        self.q_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+        self.k_proj = nn.Linear(context_dim or config.d_model, config.d_model, bias=False)
+        self.v_proj = nn.Linear(context_dim or config.d_model, config.d_model, bias=False)
+        self.out_proj = nn.Linear(config.d_model, config.d_model, bias=False)
 
     def forward(self, x, context, context_pad_mask=None):
-        q = eo.rearrange(self.q(x), 'b n (h d) -> b h n d', h=self.n_heads)
-        k, v = eo.rearrange(self.kv(context), "b m (two h d) -> two b h m d", two=2, h=self.n_heads)
+        q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
+        k = eo.rearrange(self.k_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
+        v = eo.rearrange(self.v_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
         attn_mask = None if context_pad_mask is None else context_pad_mask[:, None, None, :]
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-        out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
-        return self.o(out)
-
-
-# HACK - clean up
-class CrossAttentionSameFrame(nn.Module):
-    def __init__(self, config, context_dim=None):
-        super().__init__()
-        assert config.d_model % config.n_heads == 0
-        self.n_heads = config.n_heads
-        self.q = nn.Linear(config.d_model, config.d_model)
-        self.kv = nn.Linear(context_dim or config.d_model, config.d_model * 2)
-        self.o = nn.Linear(config.d_model, config.d_model)
-
-    def forward(self, x, context, context_pad_mask=None):
-        q = eo.rearrange(self.q(x), 'b n (h d) -> b h n d', h=self.n_heads)
-        k, v = eo.rearrange(self.kv(context), "b m (two h d) -> two b h m d", two=2, h=self.n_heads)
-        # Per-frame mask via flex_attention block mask: each query token attends only to its frame's controller token
-        B, H, Lq, _ = q.shape
-        M = k.size(2)
-        assert Lq % M == 0, "query length must be an integer multiple of #context frames"
-        tpf = Lq // M  # tokens per frame
-        # int32 helps compiled block-mask perf/compat
-        q_frame = (torch.arange(Lq, device=x.device, dtype=torch.int32) // tpf)  # [Lq]
-
-        # Optional padding: keep only unpadded keys
-        assert context_pad_mask is None
-        #ctx_keep = None if context_pad_mask is None else (~context_pad_mask).to(device=x.device)
-
-        def mask_mod(b, h, q_idx, kv_idx):
-            same_frame = (q_frame[q_idx] == kv_idx)
-            #if ctx_keep is not None:
-            #    return same_frame & ctx_keep[b, kv_idx]
-            return same_frame
-
-        block_mask = create_block_mask(mask_mod, B=B, H=H, Q_LEN=Lq, KV_LEN=M, device=x.device)
-        out = flex_attention(q, k, v, block_mask=block_mask)
         out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
         return self.o(out)
