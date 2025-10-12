@@ -8,7 +8,7 @@ model:
   d_model: 2560
   mlp_ratio: 4
 
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   ####
 
   tokens_per_frame: 256
@@ -34,11 +34,7 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
-  # text_conditioning: additive
-  text_conditioning: cross_attention
-  # text_conditioning: null
-  text_embedding_dim: 2048
-  text_cond_dropout: 0.1
+  text_conditioning: null
 
 
 train:
@@ -52,7 +48,6 @@ train:
   total_accum_steps: 32
 
   epochs: 10000
-
 
   opt: Muon
   opt_kwargs:
@@ -85,7 +80,6 @@ train:
   prompt_encoder_model_id: google/umt5-xl
 
   wandb_watch: false
-
 
   data_id: multi
   data_kwargs:
