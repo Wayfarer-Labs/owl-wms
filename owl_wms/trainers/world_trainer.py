@@ -38,9 +38,6 @@ batched = lambda it, n: iter(lambda it=iter(it): tuple(itertools.islice(it, n)),
 torch._dynamo.config.optimize_ddp = False
 #####
 
-# REMOVE
-torch.autograd.set_detect_anomaly(True)
-
 
 class WorldTrainer(BaseTrainer):
     """Trainer for WorldModel"""
