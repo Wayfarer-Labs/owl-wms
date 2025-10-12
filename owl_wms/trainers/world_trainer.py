@@ -293,11 +293,11 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
-    def loss_step(self, batch, rediction="mean", return_sigma=False):
+    def loss_step(self, batch, reduction="mean", return_sigma=False):
         if getattr(self.train_cfg, "sfpt", False):
-            loss = self.sfpt_loss(self.model, **batch, rediction=rediction, return_sigma=return_sigma)
+            loss = self.sfpt_loss(self.model, **batch, reduction=reduction, return_sigma=return_sigma)
         else:
-            loss = self.conditional_flow_matching_loss(self.model, **batch, rediction=rediction, return_sigma=return_sigma)
+            loss = self.conditional_flow_matching_loss(self.model, **batch, reduction=reduction, return_sigma=return_sigma)
         return loss / self.accum_steps_per_device
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
