@@ -286,7 +286,7 @@ class WorldTrainer(BaseTrainer):
         loss_sum = 0
         for batch in mini_batches:
             batch = self.prep_batch(batch)
-            loss = self.loss_step(batch)
+            loss = self.loss_step(self.model, batch)
             loss.backward()
             loss_sum += loss.item()
 
@@ -296,12 +296,15 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
-    def loss_step(self, batch, reduction="mean", return_sigma=False):
+    def loss_step(self, model, batch, reduction="mean", return_sigma=False):
         if getattr(self.train_cfg, "sfpt", False):
-            loss = self.sfpt_loss(self.model, **batch, reduction=reduction, return_sigma=return_sigma)
+            loss = self.sfpt_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         else:
-            loss = self.conditional_flow_matching_loss(self.model, **batch, reduction=reduction, return_sigma=return_sigma)
-        return loss / self.accum_steps_per_device
+            loss = self.conditional_flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
+        if return_sigma:
+            loss, sigma = loss
+            return (loss / self.accum_steps_per_device), sigma
+        return loss
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
@@ -476,7 +479,7 @@ class WorldTrainer(BaseTrainer):
 
         for batch in loader:
             batch = self.prep_batch(batch)
-            per, sig = self.loss_step(model, reduction="none", return_sigma=True, **batch)
+            per, sig = self.loss_step(model, batch, reduction="none", return_sigma=True)
             bsz = int(batch["x"].shape[0])
 
             pf = per.mean(dim=(0, 2, 3, 4)).to(device=device, dtype=torch.float64)  # [N]
@@ -539,8 +542,8 @@ class WorldTrainer(BaseTrainer):
         if self.train_cfg.num_seed_frames:
             vid = vid[:, :self.train_cfg.num_seed_frames]
 
-        lw = int(ema_model.transformer.local_window.item())
-        gw = int(ema_model.transformer.global_window.item())
+        lw = ema_model.transformer.local_window  # int(ema_model.transformer.local_window.item())
+        gw = ema_model.transformer.global_window  # int(ema_model.transformer.global_window.item())
         fps = int(eval_batch["fps"])
 
         def mk_labels(fps_val: int, n: int):

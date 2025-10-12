@@ -15,8 +15,6 @@ class NpyTable:
         self._lock = threading.Lock()
 
         self.db_path = str(self.directory / "manifest.sqlite3")
-        if not Path(self.db_path).exists():
-            raise FileNotFoundError(f"NpyTable DB not found: {self.db_path}")
         self._db = None
         self._pid = None
         self._connect()
