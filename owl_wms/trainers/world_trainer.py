@@ -114,12 +114,9 @@ class WorldTrainer(BaseTrainer):
         # Online model, EMA, Optimizer
         self.model = self.model.cuda()
 
-        # Compile BEFORE DDP (TODO REVIEW)
-        self.model = torch.compile(self.model, dynamic=True)
-
         # self.quantize(self.model)
         if self.world_size > 1:
-            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=False)
+            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
         raw = self.get_raw_model(self.model)
         self.ema = EMA(raw, beta=0.999, update_after_step=0, update_every=1, include_online_model=False)
@@ -244,7 +241,7 @@ class WorldTrainer(BaseTrainer):
         print(f"Device used: rank={self.rank}")
 
         self.load()
-        # self.model = torch.compile(self.model, dynamic=True)
+        self.model = torch.compile(self.model, dynamic=True)
 
         # Dataset setup
         self.train_loader = self.train_loader()
