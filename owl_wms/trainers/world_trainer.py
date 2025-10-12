@@ -303,6 +303,8 @@ class WorldTrainer(BaseTrainer):
         return (loss / self.accum_steps_per_device)
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+        assert self.train_cfg.noise_prev == 0.0, "No evidenced strategy for handling noise_prev > 0.0"
+
         x0 = x
         B, N = x0.size(0), x0.size(1)
 
@@ -314,7 +316,6 @@ class WorldTrainer(BaseTrainer):
 
         # Predict priors given ground truth
         with self.autocast_ctx:
-            # TODO: maybe no_grad this?
             v_pred_hat = model(x_t, sigma, **kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
         x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat
@@ -336,8 +337,15 @@ class WorldTrainer(BaseTrainer):
             )
             v_pred = v_pred[:, :N]  # only compute loss on x_t branch
 
+        # combined loss
         v_target = x1 - x0
-        losses = F.mse_loss(v_pred, v_target, reduction=reduction)
+        L_main = F.mse_loss(v_pred, v_target, reduction=reduction)
+        L_hat = F.mse_loss(v_pred_hat, v_target, reduction=reduction)
+        if reduction == "none":
+            delta = (clean_sigma - sigma).abs().view(B, N, 1, 1, 1)
+            L_hat = (delta * (v_pred_hat - v_target)**2).mean()
+        lambda_hat = 0.1
+        losses = L_main + lambda_hat * L_hat
         return (losses, sigma[:, :N]) if return_sigma else losses
 
     def flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
@@ -567,6 +575,8 @@ class WorldTrainer(BaseTrainer):
 
         wandb_out = {}
         for key, cfg in samplers_cfg.items():
+            noise_prev = float(cfg.get("noise_prev", self.train_cfg.noise_prev))
+
             # keep same base inputs for each config
             vid = vid_init
             nsf = int(cfg.get("num_seed_frames", 0) or 0)
@@ -578,7 +588,7 @@ class WorldTrainer(BaseTrainer):
                     ema_model, vid, prompt_emb, controller_inputs,
                     fps=raw_batch["fps"],
                     num_frames=int(cfg["num_generated_frames"]),
-                    noise_prev=float(cfg.get("noise_prev", self.train_cfg.noise_prev)),
+                    noise_prev=noise_prev,
                     noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
                 )
 
@@ -600,7 +610,7 @@ class WorldTrainer(BaseTrainer):
 
             if self.rank == 0:
                 n_out = 0 if video_out is None else video_out.size(0)
-                labels_out = mk_labels(fps, n_out, float(cfg["noise_prev"]))
+                labels_out = mk_labels(fps, n_out, noise_prev)
                 samples = to_wandb_samples(
                     video_out, mouse, btn,
                     labels=labels_out, num_gt_frames=num_gt_frames,
