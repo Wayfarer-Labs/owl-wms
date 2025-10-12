@@ -356,7 +356,7 @@ class WorldTrainer(BaseTrainer):
             sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
 
             v_target = torch.randn_like(x0) - x0  # iid
-            frame_timestamp = getattr(model, "module", model).get_frame_timestamps(kw.pop("fps"), N, x0.device)
+            frame_timestamp = kw.pop("frame_timestamp")
 
             if getattr(self.train_cfg, "inference_matching", False):
                 # Construct sequence of constant-noise, "denoised", previous frames
