@@ -570,9 +570,7 @@ class WorldTrainer(BaseTrainer):
         if self.pg_cpu is not None:
             _bufs = [None] * self.world_size
             dist.all_gather_object(_bufs, literal_prompt, group=self.pg_cpu)
-            literal_prompt_all = [
-                p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else [])
-            ]
+            literal_prompt_all = [p for b in _bufs for p in (b if isinstance(b, list) else [b])]
         else:
             literal_prompt_all = literal_prompt
 
@@ -580,27 +578,29 @@ class WorldTrainer(BaseTrainer):
         for key, cfg in samplers_cfg.items():
             noise_prev = float(cfg.get("noise_prev", self.train_cfg.noise_prev))
 
-            # keep same base inputs for each config
             vid = vid_init
             nsf = int(cfg.get("num_seed_frames", 0) or 0)
-            if nsf:
-                vid = vid[:, :nsf]
+            # Always slice, even when nsf == 0
+            vid = vid[:, :nsf]
+            # Keep controller inputs in sync with the seed prefix length
+            ci_prefix = None if controller_inputs is None else controller_inputs[:, :nsf]
+            num_gen = int(cfg["num_generated_frames"])
 
             with self.autocast_ctx:
                 latent_vid = sampler(
-                    ema_model, vid, prompt_emb, controller_inputs,
+                    ema_model, vid, prompt_emb, ci_prefix,
                     fps=raw_batch["fps"],
-                    num_frames=int(cfg["num_generated_frames"]),
+                    num_frames=num_gen,
                     noise_prev=noise_prev,
                     noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
                 )
 
             # post-process per-config
             if self.sampler_only_return_generated:
-                latent_vid = None if latent_vid is None else latent_vid[:, vid.size(1):]
-                ci_slice = None if controller_inputs is None else controller_inputs[:, vid.size(1):]
+                latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
+                ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:]
             else:
-                ci_slice = controller_inputs
+                ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]
 
             video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
 

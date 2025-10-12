@@ -34,18 +34,19 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
+  text_conditioning: additive
+  # text_conditioning: cross_attention
+  # text_conditioning: null
   text_embedding_dim: 2048
   text_cond_dropout: 0.1
-  # text_conditioning: additive
-  # text_conditioning: cross_attention
-  text_conditioning: null
+
 
 train:
   trainer_id: world
 
-  sfpt: true
+  sfpt: false
   inference_matching: false
-  noise_prev: 0.0
+  noise_prev: 0.2
   bidirectional_warmup: null
 
   total_accum_steps: 32
@@ -61,7 +62,7 @@ train:
     adamw_wd: 1.0e-4
     adamw_eps: 1.0e-6
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj]
+    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj, null_prompt, prompt_proj]
     adamw_low_lr_keys: []
     adamw_low_lr_mul: 0.1
 

@@ -85,7 +85,7 @@ class WorldDiTBlock(nn.Module):
         self.cond_head = CondHead(config)
 
         if config.text_conditioning == "cross_attention":
-            self.text_cross_attn = nn.CrossAttention(config, config.text_embedding_dim)
+            self.text_cross_attn = owl_nn.CrossAttention(config, config.text_embedding_dim)
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -194,7 +194,7 @@ class WorldModel(nn.Module):
 
         # Experimental
         if self.config.text_conditioning == "additive":
-            self.null_prompt = nn.Parameter(torch.zeros(1, self.config.text_embedding_dim))
+            self.null_prompt = nn.Parameter(torch.zeros(self.config.text_embedding_dim))
             self.prompt_proj = nn.Linear(self.config.text_embedding_dim, config.d_model, bias=True)
             self.prompt_proj.weight.detach().zero_()
             self.prompt_proj.bias.detach().zero_()

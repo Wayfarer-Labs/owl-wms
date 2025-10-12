@@ -83,8 +83,8 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
             sizes = [cv2.getTextSize(l, font, scale, thick)[0] for l in lines]
             total_h = sum(h for (_, h) in sizes) + gap * (len(lines) - 1)
             bottom_y = (y_pos - 10) if button is not None else (frame.shape[0] - margin)
-            x0, y0 = margin - pad, max(0, bottom_y - total_h - 2 * pad)
-            x1, y1 = margin + avail_w + pad, min(frame.shape[0], bottom_y + pad)
+            x0, y0 = 0, bottom_y - total_h - 2 * pad
+            x1, y1 = frame.shape[1], bottom_y + pad
             overlay = frame.copy()
             cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
