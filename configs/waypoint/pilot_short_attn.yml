@@ -35,16 +35,17 @@ model:
   cfg_prob: 0.1  # TODO: implement, currently unused
 
   text_embedding_dim: 2048
-  text_conditioning: additive
   text_cond_dropout: 0.1
+  # text_conditioning: additive
   # text_conditioning: cross_attention
+  text_conditioning: null
 
 train:
   trainer_id: world
 
-  sfpt: false
+  sfpt: true
   inference_matching: false
-  noise_prev: 0.2
+  noise_prev: 0.0
   bidirectional_warmup: null
 
   total_accum_steps: 32

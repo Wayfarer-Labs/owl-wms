@@ -341,10 +341,7 @@ class WorldTrainer(BaseTrainer):
         v_target = x1 - x0
         L_main = F.mse_loss(v_pred, v_target, reduction=reduction)
         L_hat = F.mse_loss(v_pred_hat, v_target, reduction=reduction)
-        if reduction == "none":
-            delta = (clean_sigma - sigma).abs().view(B, N, 1, 1, 1)
-            L_hat = (delta * (v_pred_hat - v_target)**2).mean()
-        lambda_hat = 0.1
+        lambda_hat = 0.25
         losses = L_main + lambda_hat * L_hat
         return (losses, sigma[:, :N]) if return_sigma else losses
 
