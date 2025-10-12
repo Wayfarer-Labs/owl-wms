@@ -293,11 +293,11 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
-    def loss_step(self, batch):
+    def loss_step(self, batch, **kw):
         if getattr(self.train_cfg, "sfpt", False):
-            return self.sfpt_loss(self.model, **batch) / self.accum_steps_per_device
+            return self.sfpt_loss(self.model, **batch, **kw) / self.accum_steps_per_device
         else:
-            return self.conditional_flow_matching_loss(self.model, **batch) / self.accum_steps_per_device
+            return self.conditional_flow_matching_loss(self.model, **batch, **kw) / self.accum_steps_per_device
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
@@ -486,7 +486,7 @@ class WorldTrainer(BaseTrainer):
 
         for batch in loader:
             batch = self.prep_batch(batch)
-            per, sig = self.conditional_flow_matching_loss(model, reduction="none", return_sigma=True, **batch)
+            per, sig = self.loss_step(model, reduction="none", return_sigma=True, **batch)
             bsz = int(batch["x"].shape[0])
 
             pf = per.mean(dim=(0, 2, 3, 4)).to(device=device, dtype=torch.float64)  # [N]
