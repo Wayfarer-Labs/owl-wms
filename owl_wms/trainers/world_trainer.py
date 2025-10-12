@@ -244,7 +244,6 @@ class WorldTrainer(BaseTrainer):
         print(f"Device used: rank={self.rank}")
 
         self.load()
-        self.model = torch.compile(self.model, dynamic=True)
 
         # Dataset setup
         self.train_loader = self.train_loader()
@@ -296,6 +295,7 @@ class WorldTrainer(BaseTrainer):
 
         return loss_sum
 
+    @torch.compile
     def loss_step(self, model, batch, reduction="mean", return_sigma=False):
         if getattr(self.train_cfg, "sfpt", False):
             loss = self.sfpt_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
