@@ -68,7 +68,11 @@ class AVCachingSampler:
 
         # initialize running noised history once at snapped noise_prev
         g_iter = self.iter_gaussians(x[:, :1], noise_distribution=noise_distribution)
-        g_hist = torch.cat([next(g_iter) for _ in range(init_len)], dim=1)
+
+        if init_len:
+            g_hist = torch.cat([next(g_iter) for _ in range(init_len)], dim=1)
+        else:
+            g_hist = x.new_empty(size=(x.size(0), 0, *x.shape[2:]))
         hist = torch.lerp(x, g_hist, noise_prev)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
