@@ -201,7 +201,7 @@ class WorldModel(nn.Module):
         # ####
 
     def additive_text_conditioning(self, cond, prompt_emb):
-        # Experimental, may be sustituted with cross attention
+        # Experimental, may be substituted with cross attention
         if self.config.text_conditioning != "additive":
             return cond
 
