@@ -157,8 +157,8 @@ class WorldDiT(nn.Module):
             t_pos=t_pos,
             curr_frame_mask=curr_frame_mask,
             device=x.device,
-            local_window=self.local_window,
-            global_window=self.global_window,
+            local_window=int(self.local_window),
+            global_window=int(self.global_window),
         )
         for block, block_mask, in zip(self.blocks, block_masks):
             x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
