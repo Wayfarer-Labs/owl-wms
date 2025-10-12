@@ -587,6 +587,6 @@ class WorldTrainer(BaseTrainer):
             return to_wandb_samples(
                 video_out, mouse, btn,
                 labels=labels_out, num_gt_frames=num_gt_frames,
-                prompts=literal_prompt,
+                prompts=(literal_prompt or None),
             )
         return None
