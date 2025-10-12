@@ -554,7 +554,7 @@ class WorldTrainer(BaseTrainer):
         with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model, vid, prompt_emb, controller_inputs,
-                fps=eval_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
+                fps=raw_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
                 noise_prev=self.train_cfg.noise_prev,
                 noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
             )
