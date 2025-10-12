@@ -1,5 +1,4 @@
 from ema_pytorch import EMA
-from pathlib import Path
 import tqdm
 import wandb
 import itertools
@@ -534,58 +533,76 @@ class WorldTrainer(BaseTrainer):
         eval_batch = self.prep_batch(raw_batch)
         # ########
 
-        vid, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
-        if self.train_cfg.num_seed_frames:
-            vid = vid[:, :self.train_cfg.num_seed_frames]
+        vid_init, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
         lw = ema_model.transformer.local_window  # int(ema_model.transformer.local_window.item())
         gw = ema_model.transformer.global_window  # int(ema_model.transformer.global_window.item())
         fps = int(raw_batch["fps"])
 
-        def mk_labels(fps_val: int, n: int):
-            base = {"noise_prev": self.train_cfg.noise_prev, "local attn": lw, "global attn": gw}
+        def mk_labels(fps_val: int, n: int, noise_prev: float):
+            base = {"noise_prev": noise_prev, "local attn": lw, "global attn": gw}
             return [{"fps": fps_val, **base} for _ in range(n)]
 
-        # ---- Generate ----
-        with self.autocast_ctx:
-            latent_vid = sampler(
-                ema_model, vid, prompt_emb, controller_inputs,
-                fps=raw_batch["fps"], num_frames=self.train_cfg.num_generated_frames,
-                noise_prev=self.train_cfg.noise_prev,
-                noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
-            )
+        # ---- Prepare samplers config (multi or single for backward-compat) ----
+        samplers_cfg = getattr(self.train_cfg, "samplers", None)
+        if not samplers_cfg:
+            samplers_cfg = {
+                "samples": {
+                    "num_seed_frames": getattr(self.train_cfg, "num_seed_frames", 0),
+                    "noise_prev": self.train_cfg.noise_prev,
+                    "num_generated_frames": self.train_cfg.num_generated_frames,
+                }
+            }
 
-        if self.sampler_only_return_generated:
-            latent_vid = None if latent_vid is None else latent_vid[:, vid.size(1):]
-            controller_inputs = None if controller_inputs is None else controller_inputs[:, vid.size(1):]
-
-        video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
-
-        # ---- Optional latent artifact ----
-        if getattr(self.train_cfg, "eval_sample_dir", None):
-            lat_cpu = self._gather_concat_cpu(latent_vid)
-            if self.rank == 0:
-                out_dir = Path(self.train_cfg.eval_sample_dir)
-                out_dir.mkdir(parents=True, exist_ok=True)
-                torch.save(lat_cpu, out_dir / f"vid.{self.total_step_counter}.pt")
-
-        # ---- Gather & log ----
-        video_out = self._gather_concat_cpu(video_out)
-        ci = self._gather_concat_cpu(controller_inputs)
-        mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
+        # ---- Generate for each sampler config using the SAME input ----
         if self.pg_cpu is not None:
             _bufs = [None] * self.world_size
             dist.all_gather_object(_bufs, literal_prompt, group=self.pg_cpu)
-            literal_prompt = [p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else [])]
+            literal_prompt_all = [p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else []]
+        else:
+            literal_prompt_all = literal_prompt
 
-        num_gt_frames = 0 if self.sampler_only_return_generated else self.train_cfg.num_seed_frames
+        wandb_out = {}
+        for key, cfg in samplers_cfg.items():
+            # keep same base inputs for each config
+            vid = vid_init
+            nsf = int(cfg.get("num_seed_frames", 0) or 0)
+            if nsf:
+                vid = vid[:, :nsf]
 
-        if self.rank == 0:
-            n_out = 0 if video_out is None else video_out.size(0)
-            labels_out = mk_labels(fps, n_out)
-            return to_wandb_samples(
-                video_out, mouse, btn,
-                labels=labels_out, num_gt_frames=num_gt_frames,
-                prompts=(literal_prompt or None),
-            )
-        return None
+            with self.autocast_ctx:
+                latent_vid = sampler(
+                    ema_model, vid, prompt_emb, controller_inputs,
+                    fps=raw_batch["fps"],
+                    num_frames=int(cfg["num_generated_frames"]),
+                    noise_prev=float(cfg.get("noise_prev", self.train_cfg.noise_prev)),
+                    noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
+                )
+
+            # post-process per-config
+            if self.sampler_only_return_generated:
+                latent_vid = None if latent_vid is None else latent_vid[:, vid.size(1):]
+                ci_slice = None if controller_inputs is None else controller_inputs[:, vid.size(1):]
+            else:
+                ci_slice = controller_inputs
+
+            video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
+
+            # ---- Gather & log per-config ----
+            video_out = self._gather_concat_cpu(video_out)
+            ci = self._gather_concat_cpu(ci_slice)
+            mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
+
+            num_gt_frames = 0 if self.sampler_only_return_generated else nsf
+
+            if self.rank == 0:
+                n_out = 0 if video_out is None else video_out.size(0)
+                labels_out = mk_labels(fps, n_out, float(cfg["noise_prev"]))
+                samples = to_wandb_samples(
+                    video_out, mouse, btn,
+                    labels=labels_out, num_gt_frames=num_gt_frames,
+                    prompts=(literal_prompt_all or None),
+                )
+                wandb_out[f"samples/{key}"] = samples
+
+        return wandb_out if self.rank == 0 else None
