@@ -8,16 +8,12 @@ import os
 import numpy as np
 
 
-def _put_text_with_box(img, text, x, y, fg, bg=(0,0,0), alpha=0.6,
-                       font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.6, thick=2, pad=4):
-    (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
-    x0, y0, x1, y1 = x - pad, y - th - pad, x + tw + pad, y + bl + pad
-    overlay = img.copy()
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), bg, -1)
-    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-    cv2.putText(img, text, (x, y), font, scale, (0,0,0), thick + 2, cv2.LINE_AA)
-    cv2.putText(img, text, (x, y), font, scale, fg, thick, cv2.LINE_AA)
-    return (tw, th, bl)
+def _fit_scale(text, font, scale, thick, max_w, min_scale=0.35):
+    """Return a scale that fits `text` within `max_w` pixels."""
+    ((tw, _), _) = cv2.getTextSize(str(text), font, scale, thick)
+    if tw <= max_w or tw == 0:
+        return scale
+    return max(min_scale, scale * (max_w / tw))
 
 
 def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
@@ -67,33 +63,36 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
 
             # Draw label
             label = KEYBINDS[i]
-            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-            text_x = x + (box_width - text_size[0]) // 2
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            base = 0.5
+            scale = _fit_scale(label, font, base, 1, box_width - 6)
+            (tw, th), _ = cv2.getTextSize(label, font, scale, 1)
+            text_x = x + (box_width - tw) // 2
             text_y = y_pos - 5  # 5px above box
-            cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+            cv2.putText(frame, label, (text_x, text_y), font, scale, (255,255,255), 1)
 
     # Bottom prompt (wrapped, full-width box)
     if prompts:
         import textwrap
-        font, scale, thick, gap = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2, 4
+        font, base_scale, thick, gap = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2, 4
         margin, pad = 10, 8
-        lines = textwrap.wrap(str(prompts), width=60)
+        lines = textwrap.wrap(str(prompts), width=60)  # simple wrap; we'll shrink to pixel width
         if lines:
+            avail_w = frame.shape[1] - 2 * margin
+            scale = min(_fit_scale(l, font, base_scale, thick, avail_w) for l in lines)
             sizes = [cv2.getTextSize(l, font, scale, thick)[0] for l in lines]
             total_h = sum(h for (_, h) in sizes) + gap * (len(lines) - 1)
-            bottom_y = frame.shape[0] - margin
-            if button is not None:
-                bottom_y = y_pos - 10
-            x0, y0 = 0, bottom_y - total_h - 2 * pad
-            x1, y1 = frame.shape[1], bottom_y + pad
+            bottom_y = (y_pos - 10) if button is not None else (frame.shape[0] - margin)
+            x0, y0 = margin - pad, max(0, bottom_y - total_h - 2 * pad)
+            x1, y1 = margin + avail_w + pad, min(frame.shape[0], bottom_y + pad)
             overlay = frame.copy()
             cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
             y = y0 + pad
-            for (l, (_, h)) in zip(lines, sizes):
-                cv2.putText(frame, l, (margin, y + h), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
-                cv2.putText(frame, l, (margin, y + h), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
-                y += h + gap
+            for (l, (tw, th)) in zip(lines, sizes):
+                cv2.putText(frame, l, (margin, y + th), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+                cv2.putText(frame, l, (margin, y + th), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+                y += th + gap
 
     # Top-right badge ("GT"/"AI") + labels inside ONE semi-transparent box
     x_margin, y_margin, gap, pad = 5, 5, 4, 6
@@ -106,8 +105,16 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
         for k, v in labels.items():
             lines.append((f"{k}: {v}", (255,255,255), 0.6, 2))
     if lines:
-        # Measure block
-        sizes = [cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, sc, th)[0] for (t,_,sc,th) in lines]
+        # Measure block with per-line width fit
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        avail_w = frame.shape[1] - 2 * x_margin - 2 * pad
+        fitted = []
+        sizes = []
+        for (t, col, sc, th) in lines:
+            sc = _fit_scale(t, font, sc, th, avail_w)
+            (tw, thh), _ = cv2.getTextSize(t, font, sc, th)
+            fitted.append((t, col, sc, th))
+            sizes.append((tw, thh))
         max_w = max(w for (w,h) in sizes)
         total_h = sum(h for (w,h) in sizes) + gap*(len(lines)-1)
         x_right = frame.shape[1] - x_margin
@@ -121,7 +128,7 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
         # Draw texts with outline
         y = y_text
-        for (text, color, sc, th), (tw, thh) in zip(lines, sizes):
+        for (text, color, sc, th), (tw, thh) in zip(fitted, sizes):
             y += thh
             x = x_right - tw
             cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, sc, (0,0,0), th+2, cv2.LINE_AA)
