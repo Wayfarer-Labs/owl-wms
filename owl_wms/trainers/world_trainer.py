@@ -544,7 +544,7 @@ class WorldTrainer(BaseTrainer):
 
         lw = ema_model.transformer.local_window  # int(ema_model.transformer.local_window.item())
         gw = ema_model.transformer.global_window  # int(ema_model.transformer.global_window.item())
-        fps = int(eval_batch["fps"])
+        fps = int(raw_batch["fps"])
 
         def mk_labels(fps_val: int, n: int):
             base = {"noise_prev": self.train_cfg.noise_prev, "local attn": lw, "global attn": gw}
