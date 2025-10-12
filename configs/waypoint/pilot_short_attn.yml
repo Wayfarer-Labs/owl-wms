@@ -38,8 +38,8 @@ model:
 train:
   trainer_id: world
 
-  sfpt: false
-  inference_matching: true
+  sfpt: true
+  inference_matching: false
   noise_prev: 0.0089
   bidirectional_warmup: null
 
