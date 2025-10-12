@@ -295,7 +295,7 @@ class WorldTrainer(BaseTrainer):
         if getattr(self.train_cfg, "sfpt", False):
             loss = self.sfpt_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         else:
-            loss = self.conditional_flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
+            loss = self.flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         if return_sigma:
             loss, sigma = loss
             loss = (loss / self.accum_steps_per_device)
@@ -340,7 +340,7 @@ class WorldTrainer(BaseTrainer):
         losses = F.mse_loss(v_pred, v_target, reduction=reduction)
         return (losses, sigma[:, :N]) if return_sigma else losses
 
-    def conditional_flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+    def flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         """
         x0: [B, N, C, H, W] clean latents (sigma=0.0)
         """
@@ -559,7 +559,9 @@ class WorldTrainer(BaseTrainer):
         if self.pg_cpu is not None:
             _bufs = [None] * self.world_size
             dist.all_gather_object(_bufs, literal_prompt, group=self.pg_cpu)
-            literal_prompt_all = [p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else []]
+            literal_prompt_all = [
+                p for b in _bufs for p in ((b if isinstance(b, list) else [b]) if b is not None else [])
+            ]
         else:
             literal_prompt_all = literal_prompt
 
