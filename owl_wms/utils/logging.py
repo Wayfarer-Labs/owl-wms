@@ -169,12 +169,9 @@ def to_wandb_samples(video, mouse, btn, labels, num_gt_frames, prompts=None):
         )
         samples.append(wandb.Video(str(path), format="mp4"))
 
-    artifacts = {"samples": samples}
-    if depth_gif is not None:
-        artifacts["depth_gif"] = depth_gif
-    if flow_gif is not None:
-        artifacts["flow_gif"] = flow_gif
-    return artifacts
+    assert depth_gif is None, "Not implemented"
+    assert flow_gif is None, "Not implemented"
+    return samples
 
 
 def write_video_with_audio(path, vid, audio, fps=60,audio_fps=44100):

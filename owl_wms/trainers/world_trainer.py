@@ -298,8 +298,9 @@ class WorldTrainer(BaseTrainer):
             loss = self.conditional_flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         if return_sigma:
             loss, sigma = loss
-            return (loss / self.accum_steps_per_device), sigma
-        return loss
+            loss = (loss / self.accum_steps_per_device)
+            return loss, sigma
+        return (loss / self.accum_steps_per_device)
 
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         x0 = x
