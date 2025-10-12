@@ -49,7 +49,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 48  # 64
+      seq_len: 64
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
