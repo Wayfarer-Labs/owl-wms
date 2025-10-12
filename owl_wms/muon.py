@@ -1,4 +1,5 @@
 from muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
+import warnings
 
 
 def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
@@ -16,9 +17,8 @@ def init_muon(model, rank: int = 0, world_size: int = 1, **kwargs):
     # validate keys
     names = list(named.keys())
     for key in adamw_keys:
-        assert any(key in n for n in names), (
-            f"AdamW key '{key}' not found in model parameters: {names}"
-        )
+        if not any(key in n for n in names):
+            warnings.warn(f"AdamW key '{key}' not found in model parameters")
 
     # split
     match = lambda name, keys: any(k in name for k in keys)
