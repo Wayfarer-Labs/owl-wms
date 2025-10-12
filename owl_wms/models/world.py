@@ -220,10 +220,9 @@ class WorldModel(nn.Module):
 
         pos_ids = self.get_pos_ids(frame_timestamp, Hp, Wp)
 
-        if curr_frame_mask is None:
-            curr_frame_mask = sigma.new_zeros((B, N), dtype=torch.bool)
-        torch._assert(curr_frame_mask.size(1) == N, "curr_frame_mask must be frame-length")
-        curr_frame_mask = curr_frame_mask.repeat_interleave(Hp * Wp, 1)
+        if curr_frame_mask is not None:
+            torch._assert(curr_frame_mask.size(1) == N, "curr_frame_mask must be frame-length")
+            curr_frame_mask = curr_frame_mask.repeat_interleave(Hp * Wp, 1)
 
         assert doc_id is None or kv_cache is None, "Cannot use sequence packing with kv caching"
         if doc_id is not None:
