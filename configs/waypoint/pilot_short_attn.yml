@@ -8,7 +8,7 @@ model:
   d_model: 2560
   mlp_ratio: 4
 
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   ####
 
   tokens_per_frame: 256
