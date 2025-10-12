@@ -403,7 +403,7 @@ class WorldTrainer(BaseTrainer):
         timer.reset()
 
         # eval / sample step
-        if self.total_step_counter % self.train_cfg.sample_interval == 0:
+        if self.total_step_counter % self.train_cfg.sample_interval == 0 and self.total_step_counter > 0:
             eval_wandb_dict = self.eval_step(sampler)
             sample_wandb_dict = self.sample_step(sampler)
             if self.rank == 0:
