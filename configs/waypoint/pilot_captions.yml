@@ -46,7 +46,9 @@ train:
   sfpt: false
   inference_matching: false
   noise_prev: 0.2
-  bidirectional_warmup: null
+
+  image_only_warmup: null
+  bidirectional_warmup: 27500
 
   total_accum_steps: 32
 
@@ -67,8 +69,8 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0
-  output_path: /mnt/data/waypoint_1/models/pilot_stage0
+  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0/${oc.env:RUN_NAME}
+  output_path: /mnt/data/waypoint_1/models/pilot_stage0/${oc.env:RUN_NAME}
   resume_ckpt: null
 
   sample_interval: 5000
@@ -149,14 +151,14 @@ train:
 
     prefix_1:
       num_seed_frames: 1
-      num_generated_frames: 180
+      num_generated_frames: 60
 
     prefix_0:
       num_seed_frames: 0
-      num_generated_frames: 180
+      num_generated_frames: 60
 
 
 wandb:
-  name: louiscastricato  # lapp0-andrew-lapp
-  project: waypoint_1  # owl
+  name: wayfarerlabs
+  project: waypoint_pilot
   run_name: ${oc.env:RUN_NAME}

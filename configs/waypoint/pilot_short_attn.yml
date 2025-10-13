@@ -64,8 +64,8 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0
-  output_path: /mnt/data/waypoint_1/models/pilot_stage0
+  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0/${oc.env:RUN_NAME}
+  output_path: /mnt/data/waypoint_1/models/pilot_stage0/${oc.env:RUN_NAME}
   resume_ckpt: null
 
   sample_interval: 5000
