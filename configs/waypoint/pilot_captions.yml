@@ -96,7 +96,7 @@ train:
       sampling_periods: [1]
       legal_fps: [30]
     loaders:
-      - data_id: sequence_packing
+      - data_id: cod
         data_kwargs:
           dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_3/train/
           sampling_periods: [1]
