@@ -163,16 +163,27 @@ class WorldTrainer(BaseTrainer):
     def attn_window_update(self):
 
         bi_warmup = getattr(self.train_cfg, "bidirectional_warmup", None)
-        if bi_warmup is None:
-            return
+        if bi_warmup is not None and self.total_step_counter == 0:
+            self.model.module.transformer.attn_masker.config.causal = False
         elif bi_warmup == 0 or bi_warmup == self.total_step_counter:
             self.model.module.transformer.attn_masker.config.causal = True
-        elif self.total_step_counter == 0:
-            self.model.module.transformer.attn_masker.config.causal = False
-        return
+
+        def apply_window(model, local_window, global_window):
+            # step -> (local_window, global_window)
+            self.set_buffer(model, "transformer.local_window", torch.tensor(local_window, dtype=torch.int32))
+            self.set_buffer(model, "transformer.global_window", torch.tensor(global_window, dtype=torch.int32))
+
+        image_only_warmup = getattr(self.train_cfg, "image_only_warmup", None)
+        if image_only_warmup:
+            if self.total_step_counter == 0:
+                apply_window(self.model, 1, 1)
+                apply_window(self.ema.ema_model, 1, 1)
+            if image_only_warmup == self.total_step_counter:
+                apply_window(self.model, self.model_cfg.local_window, self.model_cfg.global_window)
+                apply_window(self.ema.ema_model, self.model_cfg.local_window, self.model_cfg.global_window)
+
         """
-        # step -> (local_window, global_window)
-        # online_updates = {0: (1, 1), 50000: (2, 4), 100000: (3, 9), 150000: (4, 16)}
+        # online_updates = {0: (1, 1), 50000: (2, 4), 100000: (3, 9), 150000: (4, 16)}1
         online_updates = {0: (1, 1), 50_000: (8, 32)}
         ema_updates = online_updates
         # TODO: Need to assert that the final step window is equal to model config
@@ -601,6 +612,7 @@ class WorldTrainer(BaseTrainer):
 
             # post-process per-config
             if self.sampler_only_return_generated:
+                latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
                 ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:]
             else:
                 ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]

@@ -8,7 +8,7 @@ model:
   d_model: 2560
   mlp_ratio: 4
 
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   ####
 
   tokens_per_frame: 256
@@ -40,10 +40,11 @@ model:
 train:
   trainer_id: world
 
-  sfpt: true
-  inference_matching: false
-  noise_prev: 0.0
-  bidirectional_warmup: null
+  sfpt: false  # true
+  noise_prev: 0.2  # 0.0
+  image_only_warmup: 12500
+  bidirectional_warmup: 27500
+
 
   total_accum_steps: 32
 
@@ -85,7 +86,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 128
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
