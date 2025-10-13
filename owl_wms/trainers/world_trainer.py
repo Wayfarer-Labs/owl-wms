@@ -542,35 +542,15 @@ class WorldTrainer(BaseTrainer):
         sigma_means = (bin_sums / torch.clamp_min(bin_counts, 1)).tolist()
         return loss, (list(range(len(ys))), ys), (list(range(num_bins)), sigma_means)
 
+    @torch.inference_mode()
     def sample_step(self, sampler):
         ema_model = self.ema.ema_model
         ema_model.eval()
 
-        # ---- Batch & labels ----
-
-        # TODO: Clean this up
+        # Get this GPU's batch (only responsibility of the helper)
         raw_batch = next(self.sample_loader)
-        # keep literal prompt(s) before prep_batch() converts them to embeddings
-        literal_prompt = raw_batch.get("prompt")
-        if literal_prompt is None and "captions" in raw_batch:
-            literal_prompt = [
-                (caps[min(caps, key=int)].get("setting", "") if caps else "")
-                for caps in raw_batch["captions"]
-            ]
-        eval_batch = self.prep_batch(raw_batch)
-        # ########
 
-        vid_init, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
-
-        lw = int(ema_model.transformer.local_window)
-        gw = int(ema_model.transformer.global_window)
-        fps = int(raw_batch["fps"])
-
-        def mk_labels(fps_val: int, n: int, noise_prev: float):
-            base = {"noise_prev": noise_prev, "local attn": lw, "global attn": gw}
-            return [{"fps": fps_val, **base} for _ in range(n)]
-
-        # ---- Prepare samplers config (multi or single for backward-compat) ----
+        # Build configs (multi or single, for backward-compat)
         samplers_cfg = getattr(self.train_cfg, "samplers", None)
         if not samplers_cfg:
             samplers_cfg = {
@@ -581,7 +561,77 @@ class WorldTrainer(BaseTrainer):
                 }
             }
 
-        # ---- Generate for each sampler config using the SAME input ----
+        # Independent calls per config
+        wandb_out = {}
+        for key, cfg in samplers_cfg.items():
+            out = self.sample_step_single(sampler, raw_batch, cfg, tag=key)
+            if self.rank == 0 and out:
+                wandb_out.update(out)
+
+        return wandb_out if self.rank == 0 else None
+
+    def sample_step_single(self, sampler, raw_batch, sample_cfg, tag: str):
+        """
+        Run a single, independent sampling pass for one config (`sample_cfg`)
+        using `raw_batch` from this GPU's dataloader. Returns a dict suitable
+        for wandb logging on rank 0, else None.
+        """
+        ema_model = self.ema.ema_model
+        ema_model.eval()
+
+        # Keep literal prompt(s) before prep_batch() converts to embeddings
+        literal_prompt = raw_batch.get("prompt")
+        if literal_prompt is None and "captions" in raw_batch:
+            literal_prompt = [
+                (caps[min(caps, key=int)].get("setting", "") if caps else "")
+                for caps in raw_batch["captions"]
+            ]
+
+        eval_batch = self.prep_batch(raw_batch)
+        vid_init = eval_batch["x"]
+        prompt_emb = eval_batch.get("prompt_emb")
+        controller_inputs = eval_batch.get("controller_inputs")  # pass FULL ctrl to sampler
+        fps = int(raw_batch["fps"])
+
+        # Per-config params (independent)
+        nsf = int(sample_cfg.get("num_seed_frames", 0) or 0)
+        num_gen = int(sample_cfg["num_generated_frames"])
+        noise_prev = float(sample_cfg.get("noise_prev", self.train_cfg.noise_prev))
+
+        # Slice seed prefix for input; keep full ctrl for safe indexing in the sampler
+        vid_prefix = vid_init[:, :nsf]
+        ctrl_full = controller_inputs  # None or full sequence; sampler will index per-frame
+
+        with self.autocast_ctx:
+            latent_vid = sampler(
+                ema_model,
+                vid_prefix,
+                prompt_emb,
+                ctrl_full,
+                fps=raw_batch["fps"],
+                num_frames=num_gen,
+                noise_prev=noise_prev,
+                noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
+            )
+
+        # Post-process according to only_return_generated policy
+        if self.sampler_only_return_generated:
+            latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
+            ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:nsf + num_gen]
+            num_gt_frames = 0
+        else:
+            ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]
+            num_gt_frames = nsf
+
+        # Decode
+        video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
+
+        # Gather per-config outputs across ranks
+        video_out = self._gather_concat_cpu(video_out)
+        ci = self._gather_concat_cpu(ci_slice)
+        mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
+
+        # Gather literal prompts (for logging) across ranks
         if self.pg_cpu is not None:
             _bufs = [None] * self.world_size
             dist.all_gather_object(_bufs, literal_prompt, group=self.pg_cpu)
@@ -589,51 +639,22 @@ class WorldTrainer(BaseTrainer):
         else:
             literal_prompt_all = literal_prompt
 
-        wandb_out = {}
-        for key, cfg in samplers_cfg.items():
-            noise_prev = float(cfg.get("noise_prev", self.train_cfg.noise_prev))
+        # Labels
+        lw = int(ema_model.transformer.local_window)
+        gw = int(ema_model.transformer.global_window)
+        def mk_labels(fps_val: int, n: int, noise_prev_val: float):
+            base = {"noise_prev": noise_prev_val, "local attn": lw, "global attn": gw}
+            return [{"fps": fps_val, **base} for _ in range(n)]
 
-            vid = vid_init
-            nsf = int(cfg.get("num_seed_frames", 0) or 0)
-            # Always slice, even when nsf == 0
-            vid = vid[:, :nsf]
-            # Keep controller inputs in sync with the seed prefix length
-            ci_prefix = None if controller_inputs is None else controller_inputs[:, :nsf]
-            num_gen = int(cfg["num_generated_frames"])
+        if self.rank == 0:
+            n_out = 0 if video_out is None else video_out.size(0)
+            labels_out = mk_labels(fps, n_out, noise_prev)
 
-            with self.autocast_ctx:
-                latent_vid = sampler(
-                    ema_model, vid, prompt_emb, ci_prefix,
-                    fps=raw_batch["fps"],
-                    num_frames=num_gen,
-                    noise_prev=noise_prev,
-                    noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
-                )
+            samples = to_wandb_samples(
+                video_out, mouse, btn,
+                labels=labels_out, num_gt_frames=num_gt_frames,
+                prompts=(literal_prompt_all or None),
+            )
+            return {f"samples/{tag}": samples}
 
-            # post-process per-config
-            if self.sampler_only_return_generated:
-                latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
-                ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:]
-            else:
-                ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]
-
-            video_out = self.decode_fn(latent_vid * self.train_cfg.vae_scale)
-
-            # ---- Gather & log per-config ----
-            video_out = self._gather_concat_cpu(video_out)
-            ci = self._gather_concat_cpu(ci_slice)
-            mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
-
-            num_gt_frames = 0 if self.sampler_only_return_generated else nsf
-
-            if self.rank == 0:
-                n_out = 0 if video_out is None else video_out.size(0)
-                labels_out = mk_labels(fps, n_out, noise_prev)
-                samples = to_wandb_samples(
-                    video_out, mouse, btn,
-                    labels=labels_out, num_gt_frames=num_gt_frames,
-                    prompts=(literal_prompt_all or None),
-                )
-                wandb_out[f"samples/{key}"] = samples
-
-        return wandb_out if self.rank == 0 else None
+        return None

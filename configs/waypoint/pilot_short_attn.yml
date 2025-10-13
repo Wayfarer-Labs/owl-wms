@@ -147,7 +147,7 @@ train:
       num_seed_frames: 1
       num_generated_frames: 60
 
-    prefix_1:
+    prefix_0:
       num_seed_frames: 0
       num_generated_frames: 60
 
