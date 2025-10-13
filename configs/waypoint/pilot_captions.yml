@@ -23,7 +23,7 @@ model:
 
   n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
 
-  rope_impl: vid
+  rope_impl: motion
 
   sink_attn: false
   gated_attn: true
@@ -34,74 +34,24 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
+  text_conditioning: additive
+  # text_conditioning: cross_attention
+  # text_conditioning: null
+  text_embedding_dim: 2048
+  text_cond_dropout: 0.1
 
 train:
   trainer_id: world
 
+  sfpt: false
   inference_matching: false
-  noise_prev: 0.2062
+  noise_prev: 0.2
   bidirectional_warmup: null
 
   total_accum_steps: 32
 
-  data_id: multi
-  data_kwargs:
-    defaults:
-      batch_size: 1
-      seq_len: 128
-      batch_columns: ["rgblatents", "fps", "captions"]
-      latent_column: "rgblatents"
-      sampling_periods: [1]
-      legal_fps: [30]
-    loaders:
-      - data_id: cod
-        data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/train/
-          sampling_periods: [1]
-
-  n_eval_loss_samples: 8192
-  eval_data_id: multi
-  eval_data_kwargs:
-    defaults:
-      batch_size: 1
-      seq_len: 192
-      batch_columns: ["rgblatents", "fps", "captions"]
-      latent_column: "rgblatents"
-      sampling_periods: [1]
-      legal_fps: [30]
-    loaders:
-      - data_id: cod
-        data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/eval/
-          sampling_periods: [1]
-
-  sample_data_id: multi
-  sample_data_kwargs:
-    defaults:
-      batch_size: 1
-      seq_len: 320
-      batch_columns: ["rgblatents", "fps", "captions"]
-      latent_column: "rgblatents"
-      sampling_periods: [1]
-      legal_fps: [30]
-    loaders:
-      - data_id: cod
-        data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/eval/
-          sampling_periods: [1]
-
-  sampler_id: av_caching
-  sampler_kwargs:
-    n_steps: 40
-    cfg_scale: 1.0
-    only_return_generated: false
-  sampling_batch_size: 1
-  num_seed_frames: 30
-  num_generated_frames: 290
-  n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
-  eval_sample_dir: null
-
   epochs: 10000
+
 
   opt: Muon
   opt_kwargs:
@@ -111,7 +61,7 @@ train:
     adamw_wd: 1.0e-4
     adamw_eps: 1.0e-6
     adamw_betas: [0.9, 0.95]
-    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj]
+    adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj, null_prompt, prompt_proj]
     adamw_low_lr_keys: []
     adamw_low_lr_mul: 0.1
 
@@ -134,6 +84,73 @@ train:
   prompt_encoder_model_id: google/umt5-xl
 
   wandb_watch: false
+
+
+  data_id: multi
+  data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 64
+      batch_columns: ["rgblatents", "fps", "captions"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]
+      legal_fps: [30]
+    loaders:
+      - data_id: sequence_packing
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_3/train/
+          sampling_periods: [1]
+
+  n_eval_loss_samples: 8192
+  eval_data_id: multi
+  eval_data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 192
+      batch_columns: ["rgblatents", "fps", "captions"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]
+      legal_fps: [30]
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_3/eval/
+          sampling_periods: [1]
+
+  sample_data_id: multi
+  sample_data_kwargs:
+    defaults:
+      batch_size: 1
+      seq_len: 320
+      batch_columns: ["rgblatents", "fps", "captions"]
+      latent_column: "rgblatents"
+      sampling_periods: [1]
+      legal_fps: [30]
+    loaders:
+      - data_id: cod
+        data_kwargs:
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_3/eval/
+          sampling_periods: [1]
+
+  sampler_id: av_caching
+  sampler_kwargs:
+    n_steps: 40
+    cfg_scale: 1.0
+    only_return_generated: false
+
+  sampling_batch_size: 1  # TODO: doesn't work
+  n_samples: 16  # TODO: this doesn't work, we always do 1 sample per GPU
+
+  samplers:
+    prefix_30:
+      num_seed_frames: 30
+      # noise_prev: default to train noise_prev if unspecified
+      num_generated_frames: 290
+
+    prefix_0:
+      num_seed_frames: 1
+      num_generated_frames: 180
+
 
 wandb:
   name: louiscastricato  # lapp0-andrew-lapp

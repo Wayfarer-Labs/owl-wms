@@ -265,7 +265,11 @@ class WorldModel(nn.Module):
         x = eo.rearrange(x.view(B, N, D, Hp, Wp), 'b n d hp wp -> b (n hp wp) d')
         x = self.transformer(x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id, kv_cache, curr_frame_mask)
         x = F.silu(self.out_norm(x, cond))
-        x = self.unpatchify(x).reshape(B, N, C, Hp * ph, Wp * pw)
+        x = eo.rearrange(
+            self.unpatchify(x),
+            'b (n hp wp) (c ph pw) -> b n c (hp ph) (wp pw)',
+            n=N, hp=Hp, wp=Wp, ph=ph, pw=pw
+        )
         return x
 
     def get_frame_timestamps(self, fps: torch.Tensor, num_frames: int, device):

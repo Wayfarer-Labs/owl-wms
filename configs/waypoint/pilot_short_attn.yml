@@ -93,7 +93,7 @@ train:
     loaders:
       - data_id: sequence_packing
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_2/train/
+          dataset_path: /mnt/data/waypoint_1/wm_npy/MKIF_360P_3/train/
           sampling_periods: [1]
 
   n_eval_loss_samples: 8192
