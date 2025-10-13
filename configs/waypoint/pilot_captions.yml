@@ -34,8 +34,8 @@ model:
 
   cfg_prob: 0.1  # TODO: implement, currently unused
 
-  text_conditioning: additive
-  # text_conditioning: cross_attention
+  # text_conditioning: additive
+  text_conditioning: cross_attention
   # text_conditioning: null
   text_embedding_dim: 2048
   text_cond_dropout: 0.1
