@@ -564,13 +564,13 @@ class WorldTrainer(BaseTrainer):
         # Independent calls per config
         wandb_out = {}
         for key, cfg in samplers_cfg.items():
-            out = self.sample_step_single(sampler, raw_batch, cfg, tag=key)
+            out = self.sample_step_single(sampler, raw_batch, cfg)
             if self.rank == 0 and out:
-                wandb_out.update(out)
+                wandb_out[f"samples/{key}"] = out
 
         return wandb_out if self.rank == 0 else None
 
-    def sample_step_single(self, sampler, raw_batch, sample_cfg, tag: str):
+    def sample_step_single(self, sampler, raw_batch, sample_cfg):
         """
         Run a single, independent sampling pass for one config (`sample_cfg`)
         using `raw_batch` from this GPU's dataloader. Returns a dict suitable
@@ -655,6 +655,6 @@ class WorldTrainer(BaseTrainer):
                 labels=labels_out, num_gt_frames=num_gt_frames,
                 prompts=(literal_prompt_all or None),
             )
-            return {f"samples/{tag}": samples}
+            return samples
 
         return None

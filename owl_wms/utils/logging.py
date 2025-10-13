@@ -12,6 +12,7 @@ from .vis import draw_frames
 
 import os
 import pathlib
+import uuid
 
 
 class LogHelper:
@@ -159,8 +160,9 @@ def to_wandb_samples(video, mouse, btn, labels, num_gt_frames, prompts=None):
     out_dir = pathlib.Path("temp_vids")
     out_dir.mkdir(exist_ok=True)
     samples = []
+    _uid = uuid.uuid4().hex[:8]
     for i, clip in enumerate(video):
-        path = out_dir / f"{i:04}.mp4"
+        path = out_dir / f"{_uid}_{i:04}.mp4"
         write_video_with_audio(
             str(path),
             np.moveaxis(clip, 1, -1),                 # [T, H, W, C]
