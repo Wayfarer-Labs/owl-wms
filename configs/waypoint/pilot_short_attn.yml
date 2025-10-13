@@ -86,7 +86,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 128
+      seq_len: 64
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -143,10 +143,13 @@ train:
       # noise_prev: default to train noise_prev if unspecified
       num_generated_frames: 290
 
-    prefix_0:
+    prefix_1:
       num_seed_frames: 1
-      num_generated_frames: 180
+      num_generated_frames: 60
 
+    prefix_1:
+      num_seed_frames: 0
+      num_generated_frames: 60
 
 wandb:
   name: wayfarerlabs
