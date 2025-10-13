@@ -359,8 +359,7 @@ class WorldTrainer(BaseTrainer):
         v_target = x1 - x0
         L_main = F.mse_loss(v_pred, v_target, reduction=reduction)
         L_hat = F.mse_loss(v_pred_hat, v_target, reduction=reduction)
-        lambda_hat = 0.25
-        losses = L_main + lambda_hat * L_hat
+        losses = L_main * 0.25 + L_hat
         return (losses, sigma[:, :N]) if return_sigma else losses
 
     def flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):

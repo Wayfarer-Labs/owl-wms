@@ -40,10 +40,10 @@ model:
 train:
   trainer_id: world
 
-  sfpt: false  # true
-  noise_prev: 0.2  # 0.0
-  image_only_warmup: 12500
-  bidirectional_warmup: 27500
+  sfpt: true
+  noise_prev: 0.0
+  image_only_warmup: null
+  bidirectional_warmup: null
 
 
   total_accum_steps: 32
