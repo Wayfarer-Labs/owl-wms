@@ -149,6 +149,6 @@ train:
 
 
 wandb:
-  name: louiscastricato  # lapp0-andrew-lapp
-  project: waypoint_1  # owl
+  name: wayfarerlabs
+  project: waypoint_pilot
   run_name: ${oc.env:RUN_NAME}
