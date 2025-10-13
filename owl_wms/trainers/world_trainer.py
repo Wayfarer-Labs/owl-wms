@@ -547,8 +547,8 @@ class WorldTrainer(BaseTrainer):
 
         vid_init, prompt_emb, controller_inputs = [eval_batch.get(k) for k in ("x", "prompt_emb", "controller_inputs")]
 
-        lw = ema_model.transformer.local_window  # int(ema_model.transformer.local_window.item())
-        gw = ema_model.transformer.global_window  # int(ema_model.transformer.global_window.item())
+        lw = int(ema_model.transformer.local_window)
+        gw = int(ema_model.transformer.global_window)
         fps = int(raw_batch["fps"])
 
         def mk_labels(fps_val: int, n: int, noise_prev: float):
@@ -597,7 +597,6 @@ class WorldTrainer(BaseTrainer):
 
             # post-process per-config
             if self.sampler_only_return_generated:
-                latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
                 ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:]
             else:
                 ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]
