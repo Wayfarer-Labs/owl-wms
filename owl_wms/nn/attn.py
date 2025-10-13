@@ -163,6 +163,7 @@ class CrossAttention(nn.Module):
         q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
         k = eo.rearrange(self.k_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
         v = eo.rearrange(self.v_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
+        q, k = rms_norm(q), rms_norm(k)
         attn_mask = None if context_pad_mask is None else context_pad_mask[:, None, None, :]
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
