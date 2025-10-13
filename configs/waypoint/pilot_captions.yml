@@ -147,8 +147,12 @@ train:
       # noise_prev: default to train noise_prev if unspecified
       num_generated_frames: 290
 
-    prefix_0:
+    prefix_1:
       num_seed_frames: 1
+      num_generated_frames: 180
+
+    prefix_0:
+      num_seed_frames: 0
       num_generated_frames: 180
 
 
