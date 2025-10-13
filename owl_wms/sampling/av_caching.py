@@ -67,7 +67,10 @@ class AVCachingSampler:
         noise_prev = _sigmas_wo_last[torch.argmin((_sigmas_wo_last - torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)).abs()).item()]
 
         # initialize running noised history once at snapped noise_prev
-        g_iter = self.iter_gaussians(x[:, :1], noise_distribution=noise_distribution)
+        if x.size(1) > 0:
+            g_iter = self.iter_gaussians(x[:, :1], noise_distribution=noise_distribution)
+        else:
+            g_iter = self.iter_gaussians(x.new_empty((x.size(0), 1, *x.shape[2:])), noise_distribution=noise_distribution)
 
         if init_len:
             g_hist = torch.cat([next(g_iter) for _ in range(init_len)], dim=1)
