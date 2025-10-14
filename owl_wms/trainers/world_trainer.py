@@ -279,7 +279,7 @@ class WorldTrainer(BaseTrainer):
                     disable=self.rank != 0,
                     desc=f"Epoch: {epoch}"
             ):
-                # self.attn_window_update()
+                self.attn_window_update()
 
                 train_loss = self.train_step(mini_batches)
                 metrics.log('train_loss', train_loss)
