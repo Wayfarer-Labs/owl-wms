@@ -47,8 +47,8 @@ train:
   inference_matching: false
   noise_prev: 0.2
 
-  image_only_warmup: null # 12500
-  bidirectional_warmup: 22500
+  image_only_warmup: 12500
+  bidirectional_warmup: null  # 22500
 
   total_accum_steps: 32
 
