@@ -125,20 +125,20 @@ class VidRoPE(RoPE):
         x_off = torch.arange(W, dtype=torch.float32) - ((W - 1) / 2.0)  # [W]
         y_off = torch.arange(H, dtype=torch.float32) - ((H - 1) / 2.0)  # [H]
 
-        fx = re_x.forward(tpos[:, None, None] + x_off[None, None, :])  # [T,1,W,2px]
-        fy = re_y.forward(tpos[:, None, None] + y_off[None, :, None])  # [T,H,1,2py]
-        ft = re_t.forward(tpos)[:, None, None, :].expand(T, H, W, 2 * pt)  # [T,H,W,2pt]
+        # rotary_embedding_torch returns 2 entries per pair; keep every other to get pair angles
+        fx = re_x.forward(tpos[:, None, None] + x_off[None, None, :])[..., ::2]  # [T,1,W,px]
+        fy = re_y.forward(tpos[:, None, None] + y_off[None, :, None])[..., ::2]  # [T,H,1,py]
+        ft = re_t.forward(tpos)[..., ::2][:, None, None, :].expand(T, H, W, pt)  # [T,H,W,pt]
 
-        # true pairwise interleave of x & y within the lower dims
-        fxp = fx.expand(T, H, W, 2 * px).contiguous().view(T, H, W, px, 2)
-        fyp = fy.expand(T, H, W, 2 * py).contiguous().view(T, H, W, py, 2)
-        fxy = torch.empty(T, H, W, 2 * px, 2, dtype=fxp.dtype, device=fxp.device)
-        fxy[..., 0::2, :] = fxp
-        fxy[..., 1::2, :] = fyp
-        fxy = fxy.reshape(T, H, W, 4 * px)                              # [T,H,W, 2*(2px)]
+        # pairwise interleave x & y at the pair level
+        fx = fx.expand(T, H, W, px)
+        fy = fy.expand(T, H, W, py)
+        fxy = torch.empty(T, H, W, px + py, dtype=fx.dtype, device=fx.device)
+        fxy[..., 0::2] = fx
+        fxy[..., 1::2] = fy
 
-        freqs = torch.cat([fxy, ft], dim=-1)                            # [T,H,W, 2*(2px+pt)] == [T,H,W, hd]
-        return freqs.reshape(T * H * W, hd)
+        freqs = torch.cat([fxy, ft], dim=-1)                            # [T,H,W,P]
+        return freqs.reshape(T * H * W, P)
 
 
 class MotionRoPE(RoPE):
