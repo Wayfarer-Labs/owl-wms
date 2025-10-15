@@ -22,6 +22,7 @@ class PromptEncoder(nn.Module):
     """Callable for text -> UMT5 embedding"""
     def __init__(self, model_id="google/umt5-xl", dtype=torch.bfloat16):
         super().__init__()
+        self.dtype = dtype
         self.tok = AutoTokenizer.from_pretrained(model_id)
         self.encoder = UMT5EncoderModel.from_pretrained(model_id, torch_dtype=dtype).eval()
 
@@ -29,7 +30,7 @@ class PromptEncoder(nn.Module):
     def encode(self, inputs):
         return self.encoder(**inputs).last_hidden_state
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def forward(self, texts: List[str]):
         texts = [ftfy.fix_text(t) for t in texts]
         inputs = self.tok(
@@ -39,7 +40,7 @@ class PromptEncoder(nn.Module):
             truncation=True,
             max_length=512
         ).to(self.encoder.device)
-        emb = self.encode(inputs)
+        emb = self.encode(inputs).to(self.dtype)
         pad_mask = ~inputs["attention_mask"].bool()  # True = PAD (ignore)
         return TensorDict({"emb": emb, "pad_mask": pad_mask}, batch_size=[emb.size(0)])
 
@@ -112,8 +113,8 @@ class WorldDiTBlock(nn.Module):
             xm = self.mlp(owl_nn.ada_rmsnorm(xm, sm, bm))
             return owl_nn.ada_gate(xm, gm) + residual
 
-        do_ckpt = self.config.gradient_checkpointing and self.training
-        x = owl_nn.maybe_ckpt(do_ckpt, cond_mlp, x, s1, b1, g1)
+        do_mlp_ckpt = getattr(self.config, "mlp_gradient_checkpointing", False) and self.training
+        x = owl_nn.maybe_ckpt(do_mlp_ckpt, cond_mlp, x, s1, b1, g1)
 
         return x
 
@@ -159,8 +160,11 @@ class WorldDiT(nn.Module):
             local_window=self.local_window,
             global_window=self.global_window,
         )
+        do_layer_ckpt = getattr(self.config, "layer_gradient_checkpointing", False) and self.training
         for block, block_mask, in zip(self.blocks, block_masks):
-            x = block(x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+            def _block(x_):
+                return block(x_, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+            x = owl_nn.maybe_ckpt(do_layer_ckpt, _block, x)
         return x
 
 

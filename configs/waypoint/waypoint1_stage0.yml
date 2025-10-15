@@ -8,7 +8,7 @@ model:
   d_model: 4096
   mlp_ratio: 4
 
-  gradient_checkpointing: true
+  mlp_gradient_checkpointing: true
   ####
 
   tokens_per_frame: 256
@@ -18,7 +18,7 @@ model:
 
   base_fps: 30  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 64
+  global_window: 32
   global_attn_period: 2
 
   n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
@@ -43,12 +43,12 @@ train:
 
   sfpt: false
   noise_prev: 0.2
-  image_only_warmup: null # 12500  # TODO: decide
-  bidirectional_warmup: null  # 27500  # TODO: decide
+  image_only_warmup: 250000
+  bidirectional_warmup: null
 
-  total_accum_steps: 32
+  total_accum_steps: 64
 
-  epochs: 10000
+  epochs: 10
 
   opt: Muon
   opt_kwargs:
@@ -86,7 +86,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 32
       batch_columns: ["rgblatents", "fps", "captions"]
       latent_column: "rgblatents"
       sampling_periods: [1]
