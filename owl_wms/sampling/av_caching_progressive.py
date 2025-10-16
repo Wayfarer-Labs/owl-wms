@@ -97,6 +97,7 @@ class AVCachingSampler:
 
         B = seq.size(0)
 
+        noise = torch.randn_like(seq)
         for step in range(self.n_steps):
             L = seq.size(1)
             H = L - 1
@@ -105,7 +106,7 @@ class AVCachingSampler:
             idx = (step + d).clamp(max=sig.numel() - 1)                         # per-history indices
             w_hist = sig[idx].view(1, H, *([1] * (seq.ndim - 2)))               # broadcast to history shape
             seq_in = seq.clone()
-            seq_in[:, :-1] = torch.lerp(seq[:, :-1], torch.randn_like(seq[:, :-1]), w_hist)
+            seq_in[:, :-1] = torch.lerp(seq[:, :-1], noise[:, :-1], w_hist)
             sigma = seq.new_zeros(B, L, device=seq.device, dtype=seq.dtype)
             sigma[:, :-1] = sig[idx].view(1, H).expand(B, H)                    # history sigmas (no-op if H==0)
             sigma[:, -1] = sig[min(step, sig.numel() - 1)]                      # current frame sigma
@@ -127,6 +128,7 @@ class AVCachingSampler:
             ).prev_sample
 
             # after step 0, drop history and continue with last `uncached_k` frames
+            noise = noise[:, -uncached_k:]
             seq = seq[:, -uncached_k:]
             ts = ts[:, -uncached_k:]
             ctrl = ctrl[:, -uncached_k:] if ctrl is not None else None

@@ -67,8 +67,8 @@ train:
   output_path: /mnt/data/waypoint_1/models/pilot_stage0/${oc.env:RUN_NAME}
   resume_ckpt: null
 
-  sample_interval: 5000
-  save_interval: 10000
+  sample_interval: 2000
+  save_interval: 100000000
 
   vae_id: null
   vae_batch_size: 4
@@ -129,7 +129,7 @@ train:
 
   sampler_id: av_caching_progressive
   sampler_kwargs:
-    n_steps: 40
+    n_steps: 20
     cfg_scale: 1.0
     only_return_generated: false
 
@@ -140,7 +140,7 @@ train:
     prefix_50:
       num_seed_frames: 50
       # noise_prev: default to train noise_prev if unspecified
-      num_generated_frames: 100
+      num_generated_frames: 150
 
 wandb:
   name: wayfarerlabs
