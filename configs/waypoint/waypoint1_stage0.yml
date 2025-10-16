@@ -43,7 +43,7 @@ train:
 
   sfpt: false
   noise_prev: 0.2
-  image_only_warmup: 250000
+  image_only_warmup: 25000
   bidirectional_warmup: null
 
   total_accum_steps: 64
@@ -64,9 +64,9 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/waypoint1_stage0/${oc.env:RUN_NAME}
+  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/waypoint1_stage0/2${oc.env:RUN_NAME}
   output_path: /mnt/data/waypoint_1/models/waypoint1_stage0/${oc.env:RUN_NAME}
-  resume_ckpt: null
+  resume_ckpt: /mnt/data/waypoint_1/checkpoints/waypoint1_stage0/FAT-Lambda-Single-Frame-Warmup/step_70000.pt
 
   sample_interval: 5000
   save_interval: 10000
