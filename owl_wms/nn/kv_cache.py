@@ -125,11 +125,12 @@ class StaticKVCache(nn.Module):
         end = start + T
 
         torch._assert(end <= self.k.size(3), "KV cache overflow")
-        torch._assert(T >= self.n_uncached, "chunk shorter than n_uncached")
 
         self.k[layer, :, :, start:end, :].copy_(k)
         self.v[layer, :, :, start:end, :].copy_(v)
-        self.kv_offset[layer].fill_(end - self.n_uncached)
+        new_off = torch.clamp(end - self.n_uncached, min=0)
+        new_off = torch.maximum(new_off, start)
+        self.kv_offset[layer].copy_(new_off)
 
         return self.k[layer, :, :, :end, :], self.v[layer, :, :, :end, :]  # TODO: make static kv
 
