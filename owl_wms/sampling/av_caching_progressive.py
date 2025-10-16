@@ -45,9 +45,11 @@ class AVCachingSampler:
         noise_prev: Tensor = 0.0,  # TODO: remove, unused
         num_frames: int = 120,
         noise_distribution: str = "iid",
-        uncached_k: int = 1,
+        # uncached_k: int = 1,  # now self.n_steps
     ):
         """Generate `num_frames` new frames and return updated tensors."""
+        uncached_k = self.n_steps
+
         init_len = x.size(1)
 
         seq_len = init_len + num_frames
@@ -70,11 +72,7 @@ class AVCachingSampler:
             if controller_input is not None:
                 ctrl = torch.cat((ctrl, controller_input[:, init_len + idx:init_len + idx + 1]), dim=1)
             ts = torch.cat((ts, frame_timestamps[0, init_len + idx:init_len + idx + 1].unsqueeze(0)), dim=1)
-
-            seq, ctrl, ts = self.denoise_frame(
-                model, prompt_emb, kv_cache, seq=seq, ctrl=ctrl, ts=ts, uncached_k=uncached_k
-
-            )
+            seq, ctrl, ts = self.denoise_frame(model, prompt_emb, kv_cache, seq, ctrl, ts, uncached_k)
             latents.append(seq[:, -1:])
             seq = torch.cat([seq[:, -uncached_k:], torch.randn_like(x.new_empty((x.size(0), 1, *x.shape[2:])))], dim=1)
 
@@ -99,18 +97,19 @@ class AVCachingSampler:
 
         B = seq.size(0)
 
-        # history sigmas at snapped sigma (formerly noise_prev)
-        sigma_hist = seq.new_zeros((B, seq.size(1) - 1))
-
         for step in range(self.n_steps):
-            # history sigmas = 0, last frame follows scheduler
-            sigma_hist = seq.new_zeros((B, seq.size(1) - 1))
-            sigma_last = self.scheduler.sigmas[step].expand(B, 1).to(seq.device, seq.dtype)
-            sigma = torch.cat([sigma_hist, sigma_last], dim=1)
+            L = seq.size(1)
+            sig = self.scheduler.sigmas.to(seq.device, seq.dtype)
+            w = min(L, sig.numel() - step)
+            s = sig[step:step + w].flip(0)
+            sigma = seq.new_zeros(B, L, device=seq.device, dtype=seq.dtype)
+            sigma[:, -w:] = s
+            print(f"sigma: {sigma}")
+            seq_in = torch.lerp(seq, torch.randn_like(seq), sigma.view(B, L, *([1] * (seq.ndim - 2))))
 
             v = self.fwd(
                 model,
-                seq,
+                seq_in,
                 sigma=sigma,
                 frame_timestamp=ts,
                 prompt_emb=prompt_emb,
