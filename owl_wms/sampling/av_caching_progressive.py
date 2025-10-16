@@ -109,6 +109,7 @@ class AVCachingSampler:
             sigma = seq.new_zeros(B, L, device=seq.device, dtype=seq.dtype)
             sigma[:, :-1] = sig[idx].view(1, H).expand(B, H)                    # history sigmas (no-op if H==0)
             sigma[:, -1] = sig[min(step, sig.numel() - 1)]                      # current frame sigma
+            print(f"step: {step}, sigma: {list(sigma)}")
 
             v = self.fwd(
                 model,

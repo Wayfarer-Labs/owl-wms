@@ -320,6 +320,21 @@ class WorldTrainer(BaseTrainer):
             return loss, sigma
         return (loss / self.accum_steps_per_device)
 
+    @staticmethod
+    def fopp_sigmas(B: int, N: int, device, dtype):
+        """
+        Continuous form of FoPP from https://arxiv.org/pdf/2503.07418
+        non-decreasing times in (0,1) with a uniform pivot.
+        """
+        def fopp_one():
+            f = torch.randint(N, ())
+            u = torch.rand((), device=device, dtype=dtype)
+            L = torch.sort(u * torch.rand(f, device=device, dtype=dtype)).values
+            R = u + torch.sort((1 - u) * torch.rand(N - 1 - f, device=device, dtype=dtype)).values
+            return torch.cat([L, u[None], R])
+
+        return torch.stack([fopp_one() for _ in range(B)], dim=0)
+
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         assert self.train_cfg.noise_prev == 0.0, "No evidenced strategy for handling noise_prev > 0.0"
 
@@ -371,7 +386,10 @@ class WorldTrainer(BaseTrainer):
 
         with torch.no_grad():
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
-            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
+            if getattr(self.train_cfg, "fopp_sigma", False):
+                sigma = self.fopp_sigmas(B, N, device=x0.device, dtype=x0.dtype)  # FoPP
+            else:
+                sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
 
             v_target = torch.randn_like(x0) - x0  # iid
             frame_timestamp = kw.pop("frame_timestamp")
