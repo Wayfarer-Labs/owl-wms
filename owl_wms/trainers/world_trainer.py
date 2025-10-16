@@ -451,10 +451,7 @@ class WorldTrainer(BaseTrainer):
         if self.rank == 0:
             # Log eval scalar now (no step=) so it doesn't collide with training rows
             if eval_loss is not None:
-                wandb.log(
-                    {"eval_loss": float(eval_loss), "eval_at_step": self.total_step_counter},
-                    step=self.total_step_counter
-                )
+                wandb.log({"eval_loss": float(eval_loss), "eval_at_step": self.total_step_counter})
             eval_wandb_dict = {}
             # log scalar history so the LinePlot renders in Charts (no Tables created)
             if timestep_loss_curve and timestep_loss_curve[0]:
