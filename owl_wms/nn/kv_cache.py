@@ -138,14 +138,14 @@ class StaticKVCache(nn.Module):
     def upsert_t_pos(self, t_pos):
         """Insert per-batch frame ids and return the KV-length view."""
         assert t_pos.ndim == 2
-        assert (self.kv_offset == self.t_pos_offset).all(), "kv_offset should = t_pos_offset before upsert"
         torch._assert(t_pos.size(0) == self.t_pos.size(0), "Batch mismatch in t_pos")
 
-        start = self.t_pos_offset
+        start = torch.maximum(self.t_pos_offset, self.kv_offset.min())
         S = t_pos.size(1)
         end = start + S
         torch._assert(end <= self.t_pos.size(1), "KV cache overflow (t_pos)")
 
         self.t_pos[:, start:end].copy_(t_pos)
-        self.t_pos_offset.fill_(end - self.n_uncached)
+        new_off = torch.maximum(start, torch.clamp(end - self.n_uncached, min=0))
+        self.t_pos_offset.copy_(new_off)
         return self.t_pos[:, :end]
