@@ -99,13 +99,17 @@ class AVCachingSampler:
 
         for step in range(self.n_steps):
             L = seq.size(1)
+            H = L - 1
             sig = self.scheduler.sigmas.to(seq.device, seq.dtype)
-            w = min(L, sig.numel() - step)
-            s = sig[step:step + w].flip(0)
+            d = torch.arange(H, 0, -1, device=seq.device)                      # distances H..1 (empty if H==0)
+            idx = (step + d).clamp(max=sig.numel() - 1)                         # per-history indices
+            w_hist = sig[idx].view(1, H, *([1] * (seq.ndim - 2)))               # broadcast to history shape
+            seq_in = seq.clone()
+            seq_in[:, :-1] = torch.lerp(seq[:, :-1], torch.randn_like(seq[:, :-1]), w_hist)
             sigma = seq.new_zeros(B, L, device=seq.device, dtype=seq.dtype)
-            sigma[:, -w:] = s
-            print(f"sigma: {sigma}")
-            seq_in = torch.lerp(seq, torch.randn_like(seq), sigma.view(B, L, *([1] * (seq.ndim - 2))))
+            sigma[:, :-1] = sig[idx].view(1, H).expand(B, H)                    # history sigmas (no-op if H==0)
+            sigma[:, -1] = sig[min(step, sig.numel() - 1)]                      # current frame sigma
+            print(f"step: {step}, sigma: {list(sigma)}")
 
             v = self.fwd(
                 model,
