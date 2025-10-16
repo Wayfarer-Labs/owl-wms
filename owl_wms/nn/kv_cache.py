@@ -99,6 +99,7 @@ class StaticKVCache(nn.Module):
         super().__init__()
 
         # Exclude last N tokens from caching
+        self.tpf = config.tokens_per_frame
         self.n_uncached = config.tokens_per_frame * n_uncached_frames
 
         B = batch_size
@@ -118,7 +119,7 @@ class StaticKVCache(nn.Module):
     @torch.inference_mode()
     def upsert(self, k: Tensor, v: Tensor, layer: int):
         T = k.size(2)
-        torch._assert((T % self.n_uncached) == 0, "KV insert must be frame-aligned")
+        torch._assert((T % self.tpf) == 0, "KV insert must be frame-aligned")
 
         start = self.kv_offset[layer]
         end = start + T
