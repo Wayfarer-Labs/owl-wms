@@ -98,7 +98,7 @@ class AVCachingSampler:
 
         B = seq.size(0)
 
-        noise = torch.randn_like(seq)
+        noise = torch.randn_like(seq, dtype=torch.float32)
         for step in range(self.n_steps):
             L = seq.size(1)
             H = L - 1
@@ -110,7 +110,7 @@ class AVCachingSampler:
             sigma[:, -1] = sig_f32[step]                         # current frame
 
             seq_in = seq.clone()
-            seq_in[:, :-1] = torch.lerp(seq[:, :-1], noise[:, :-1], sigma[:, :-1])
+            seq_in[:, :-1] = torch.lerp(seq[:, :-1].float(), noise[:, :-1], sigma[:, :-1]).type_as(seq)
 
             v = self.fwd(
                 model,
