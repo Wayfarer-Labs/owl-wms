@@ -94,6 +94,7 @@ class AVCachingSampler:
     ):
         """Run all denoising steps for new frame (seq = cat(hist, gaussian))."""
         self.scheduler.set_timesteps(self.n_steps)
+        sig_f32 = self.scheduler.sigmas.to(seq.device, torch.float32)
 
         B = seq.size(0)
 
@@ -101,15 +102,15 @@ class AVCachingSampler:
         for step in range(self.n_steps):
             L = seq.size(1)
             H = L - 1
-            sig = self.scheduler.sigmas.to(seq.device, seq.dtype)
             d = torch.arange(H, 0, -1, device=seq.device)                      # distances H..1 (empty if H==0)
-            idx = (step + d).clamp(max=sig.numel() - 1)                         # per-history indices
-            w_hist = sig[idx].view(1, H, *([1] * (seq.ndim - 2)))               # broadcast to history shape
+            idx = (step + d).clamp(max=sig_f32.numel() - 1)                         # per-history indices
+
+            sigma = torch.zeros(B, L, device=seq.device, dtype=torch.float32)
+            sigma[:, :-1] = sig_f32[idx].view(1, H).expand(B, H)  # history
+            sigma[:, -1] = sig_f32[step]                         # current frame
+
             seq_in = seq.clone()
-            seq_in[:, :-1] = torch.lerp(seq[:, :-1], noise[:, :-1], w_hist)
-            sigma = seq.new_zeros(B, L, device=seq.device, dtype=seq.dtype)
-            sigma[:, :-1] = sig[idx].view(1, H).expand(B, H)                    # history sigmas (no-op if H==0)
-            sigma[:, -1] = sig[min(step, sig.numel() - 1)]                      # current frame sigma
+            seq_in[:, :-1] = torch.lerp(seq[:, :-1], noise[:, :-1], sigma[:, :-1])
 
             v = self.fwd(
                 model,
