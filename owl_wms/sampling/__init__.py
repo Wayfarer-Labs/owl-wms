@@ -11,6 +11,9 @@ def get_sampler_cls(sampler_id):
         """
         from .av_caching import AVCachingSampler
         return AVCachingSampler
+    elif sampler_id == "av_caching_progressive":
+        from .av_caching_progressive import AVCachingSampler
+        return AVCachingSampler
     elif sampler_id == "av_causal":
         """
         Audio+Video sampler with causal sampling, caches noisy history on first diffusion step.

@@ -95,11 +95,11 @@ class SingleKVCache:
 
 
 class StaticKVCache(nn.Module):
-    def __init__(self, config, max_seq_len, batch_size, dtype):
+    def __init__(self, config, max_seq_len, batch_size, dtype, n_uncached_frames=1):
         super().__init__()
 
         # Exclude last N tokens from caching
-        self.n_uncached = config.tokens_per_frame  # TODO: remove and change so we cache all but latest t_pos
+        self.n_uncached = config.tokens_per_frame * n_uncached_frames
 
         B = batch_size
         H = getattr(config, "n_kv_heads", config.n_heads)
