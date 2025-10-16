@@ -110,7 +110,11 @@ class AVCachingSampler:
             sigma[:, -1] = sig_f32[step]                         # current frame
 
             seq_in = seq.clone()
-            seq_in[:, :-1] = torch.lerp(seq[:, :-1].float(), noise[:, :-1], sigma[:, :-1]).type_as(seq)
+            seq_in[:, :-1] = torch.lerp(
+                seq[:, :-1].float(),
+                noise[:, :-1],
+                sig_f32[idx].view(1, H, *([1] * (seq.ndim - 2)))
+            ).type_as(seq)
 
             v = self.fwd(
                 model,
