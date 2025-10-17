@@ -335,6 +335,14 @@ class WorldTrainer(BaseTrainer):
 
         return torch.stack([fopp_one() for _ in range(B)], dim=0)
 
+    def progressive_with_clean(self, B: int, N: int, device, dtype):
+        p = self.train_cfg.noise_prev
+        R = self.train_cfg.sampler_kwargs.n_steps
+        r = (1 - p) * torch.rand(B, R, device=device, dtype=dtype) + p
+        r = r.sort(dim=-1).values
+        pref = torch.full((B, N - R), p, device=device, dtype=dtype)
+        return torch.cat((pref, r), dim=1)
+
     def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         assert self.train_cfg.noise_prev == 0.0, "No evidenced strategy for handling noise_prev > 0.0"
 
@@ -386,7 +394,9 @@ class WorldTrainer(BaseTrainer):
 
         with torch.no_grad():
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
-            if getattr(self.train_cfg, "fopp_sigma", False):
+            if getattr(self.train_cfg, "pwc_sigma", False):
+                sigma = self.progressive_with_clean(B, N, device=x0.device, dtype=x0.dtype)  # FoPP
+            elif getattr(self.train_cfg, "fopp_sigma", False):
                 sigma = self.fopp_sigmas(B, N, device=x0.device, dtype=x0.dtype)  # FoPP
             else:
                 sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)

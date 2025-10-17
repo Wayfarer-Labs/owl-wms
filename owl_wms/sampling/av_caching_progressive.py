@@ -76,7 +76,7 @@ class AVCachingSampler:
                 ctrl = torch.cat((ctrl, controller_input[:, init_len + idx:init_len + idx + 1]), dim=1)
             ts = torch.cat((ts, frame_timestamps[0, init_len + idx:init_len + idx + 1].unsqueeze(0)), dim=1)
 
-            x, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, x, ctrl, ts, noise, uncached_k)
+            x, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, x, ctrl, ts, noise, uncached_k, noise_prev)
 
             latents.append(x[:, -1:])
 
@@ -96,6 +96,7 @@ class AVCachingSampler:
         ts: torch.Tensor,
         noise: torch.Tensor,
         uncached_k: int,
+        noise_prev: float,
     ):
         """Run all denoising steps for new frame (seq = cat(hist, gaussian))."""
         B = seq.size(0)
@@ -107,8 +108,8 @@ class AVCachingSampler:
             idx = (step + d).clamp(max=self.sigmas.numel() - 1)                         # per-history indices
 
             sigma = torch.zeros(B, L, device=seq.device, dtype=torch.float32)
-            sigma[:, :-1] = self.sigmas[idx].view(1, H).expand(B, H)  # history
-            sigma[:, -1] = self.sigmas[step]                         # current frame
+            sigma[:, :-1] = self.sigmas[idx].view(1, H).expand(B, H).clamp_min_(noise_prev)
+            sigma[:, -1] = self.sigmas[step]  # current frame
 
             seq_in = seq.clone()
             seq_in[:, :-1] = torch.lerp(

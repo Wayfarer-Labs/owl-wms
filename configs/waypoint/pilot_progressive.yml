@@ -40,9 +40,9 @@ model:
 train:
   trainer_id: world
 
-  fopp_sigma: true
+  pwc_sigma: true
   sfpt: false
-  noise_prev: 0.0
+  noise_prev: 0.01
   image_only_warmup: null
   bidirectional_warmup: null
 
@@ -86,7 +86,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 96
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
