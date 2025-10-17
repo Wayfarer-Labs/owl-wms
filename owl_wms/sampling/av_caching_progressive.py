@@ -23,7 +23,8 @@ class AVCachingSampler:
 
         self.n_steps = n_steps
         self.scheduler = FlowMatchEulerDiscreteScheduler(shift=3.0)
-        self.sched_step_kw = sched_step_kw or {}
+        self.scheduler.set_timesteps(self.n_steps)
+        self.sigmas = self.scheduler.sigmas
 
         # self.scheduler = FlowMatchHeunDiscreteScheduler(shift=3.0)
         # self.sched_step_kw = sched_step_kw or {}  # must be passed to self.scheduler.step(...)
@@ -31,8 +32,6 @@ class AVCachingSampler:
         #     prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=3.0, timestep_spacing="trailing")
         # )
         # self.sched_step_kw = {}  # must be empty for unipc
-
-        self.scheduler.set_timesteps(n_steps)
 
     @torch.inference_mode()
     def __call__(
@@ -48,6 +47,7 @@ class AVCachingSampler:
         # uncached_k: int = 1,  # now self.n_steps
     ):
         """Generate `num_frames` new frames and return updated tensors."""
+        self.sigmas = self.sigmas.to(device=x.device, dtype=x.dtype)
         uncached_k = self.n_steps
 
         init_len = x.size(1)
@@ -64,24 +64,21 @@ class AVCachingSampler:
         # initialize running noised history once at snapped noise_prev
         ctrl = controller_input[:, :init_len] if controller_input is not None else None
         ts = frame_timestamps[0, :init_len].unsqueeze(0)
-
-        # Concatenate once before passing
-        seq = torch.cat([x, torch.randn_like(x.new_empty((x.size(0), 1, *x.shape[2:])))], dim=1)
-        noise = torch.randn_like(seq, dtype=torch.float32)
-        noise[:, -1:] = seq[:, -1:].float()   # ensure first current frame shares its base noise
+        noise = torch.randn_like(x, dtype=torch.float32)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
+
+            new_noise = torch.randn_like(noise.new_empty((x.size(0), 1, *x.shape[2:])))
+            noise = torch.cat([noise, new_noise], dim=1)
+            x = torch.cat([x, new_noise.type_as(x)], dim=1)
+
             if controller_input is not None:
                 ctrl = torch.cat((ctrl, controller_input[:, init_len + idx:init_len + idx + 1]), dim=1)
             ts = torch.cat((ts, frame_timestamps[0, init_len + idx:init_len + idx + 1].unsqueeze(0)), dim=1)
 
-            seq, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, seq, ctrl, ts, noise, uncached_k)
+            x, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, x, ctrl, ts, noise, uncached_k)
 
-            latents.append(seq[:, -1:])
-
-            new_noise = torch.randn_like(noise.new_empty((x.size(0), 1, *x.shape[2:])))
-            noise = torch.cat([noise, new_noise], dim=1)
-            seq = torch.cat([seq, new_noise.type_as(seq)], dim=1)
+            latents.append(x[:, -1:])
 
         return torch.cat(latents, dim=1)
 
@@ -101,26 +98,23 @@ class AVCachingSampler:
         uncached_k: int,
     ):
         """Run all denoising steps for new frame (seq = cat(hist, gaussian))."""
-        self.scheduler.set_timesteps(self.n_steps)
-        sig_f32 = self.scheduler.sigmas.to(seq.device, torch.float32)
-
         B = seq.size(0)
 
         for step in range(self.n_steps):
             L = seq.size(1)
             H = L - 1
             d = torch.arange(H, 0, -1, device=seq.device)                      # distances H..1 (empty if H==0)
-            idx = (step + d).clamp(max=sig_f32.numel() - 1)                         # per-history indices
+            idx = (step + d).clamp(max=self.sigmas.numel() - 1)                         # per-history indices
 
             sigma = torch.zeros(B, L, device=seq.device, dtype=torch.float32)
-            sigma[:, :-1] = sig_f32[idx].view(1, H).expand(B, H)  # history
-            sigma[:, -1] = sig_f32[step]                         # current frame
+            sigma[:, :-1] = self.sigmas[idx].view(1, H).expand(B, H)  # history
+            sigma[:, -1] = self.sigmas[step]                         # current frame
 
             seq_in = seq.clone()
             seq_in[:, :-1] = torch.lerp(
                 seq[:, :-1].float(),
                 noise[:, :-1],
-                sig_f32[idx].view(1, H, *([1] * (seq.ndim - 2)))
+                self.sigmas[idx].view(1, H, *([1] * (seq.ndim - 2)))
             ).type_as(seq)
 
             v = self.fwd(
@@ -133,11 +127,8 @@ class AVCachingSampler:
                 kv_cache=kv_cache
             )[:, -1:]  # only the new frame’s eps
 
-            seq[:, -1:] = self.scheduler.step(
-                model_output=v,
-                timestep=self.scheduler.timesteps[step],
-                sample=seq[:, -1:],
-            ).prev_sample
+            dsigma = self.sigmas[step + 1] - self.sigmas[step]
+            seq[:, -1:] = (seq[:, -1:] + dsigma * v).type_as(seq)
 
             # after step 0, drop history and continue with last `uncached_k` frames
             noise = noise[:, -uncached_k:]
