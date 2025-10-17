@@ -113,8 +113,8 @@ class AVCachingSampler:
             seq_in = seq.clone()
             seq_in[:, :-1] = torch.lerp(
                 seq[:, :-1].float(),
-                noise[:, :-1],
-                self.sigmas[idx].view(1, H, *([1] * (seq.ndim - 2)))
+                noise[:, :-1].float(),
+                self.sigmas[idx].view(1, H, *([1] * (seq.ndim - 2))).float()
             ).type_as(seq)
 
             v = self.fwd(
@@ -131,7 +131,7 @@ class AVCachingSampler:
             seq[:, -1:] = (seq[:, -1:] + dsigma * v).type_as(seq)
 
             # after step 0, drop history and continue with last `uncached_k` frames
-            noise = noise[:, -uncached_k:]
+            noise = torch.randn_like(noise[:, -uncached_k:])  # HACK: new noise, might be better
             seq = seq[:, -uncached_k:]
             ts = ts[:, -uncached_k:]
             ctrl = ctrl[:, -uncached_k:] if ctrl is not None else None
