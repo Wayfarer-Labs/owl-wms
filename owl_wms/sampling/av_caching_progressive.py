@@ -67,14 +67,21 @@ class AVCachingSampler:
 
         # Concatenate once before passing
         seq = torch.cat([x, torch.randn_like(x.new_empty((x.size(0), 1, *x.shape[2:])))], dim=1)
+        noise = torch.randn_like(seq, dtype=torch.float32)
+        noise[:, -1:] = seq[:, -1:].float()   # ensure first current frame shares its base noise
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             if controller_input is not None:
                 ctrl = torch.cat((ctrl, controller_input[:, init_len + idx:init_len + idx + 1]), dim=1)
             ts = torch.cat((ts, frame_timestamps[0, init_len + idx:init_len + idx + 1].unsqueeze(0)), dim=1)
-            seq, ctrl, ts = self.denoise_frame(model, prompt_emb, kv_cache, seq, ctrl, ts, uncached_k)
+
+            seq, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, seq, ctrl, ts, noise, uncached_k)
+
             latents.append(seq[:, -1:])
-            seq = torch.cat([seq[:, -uncached_k:], torch.randn_like(x.new_empty((x.size(0), 1, *x.shape[2:])))], dim=1)
+
+            new_noise = torch.randn_like(noise.new_empty((x.size(0), 1, *x.shape[2:])))
+            noise = torch.cat([noise, new_noise], dim=1)
+            seq = torch.cat([seq, new_noise.type_as(seq)], dim=1)
 
         return torch.cat(latents, dim=1)
 
@@ -90,6 +97,7 @@ class AVCachingSampler:
         seq: torch.Tensor,
         ctrl: Optional[torch.Tensor],
         ts: torch.Tensor,
+        noise: torch.Tensor,
         uncached_k: int,
     ):
         """Run all denoising steps for new frame (seq = cat(hist, gaussian))."""
@@ -98,7 +106,6 @@ class AVCachingSampler:
 
         B = seq.size(0)
 
-        noise = torch.randn_like(seq, dtype=torch.float32)
         for step in range(self.n_steps):
             L = seq.size(1)
             H = L - 1
@@ -138,4 +145,4 @@ class AVCachingSampler:
             ts = ts[:, -uncached_k:]
             ctrl = ctrl[:, -uncached_k:] if ctrl is not None else None
 
-        return seq, ctrl, ts
+        return seq, ctrl, ts, noise
