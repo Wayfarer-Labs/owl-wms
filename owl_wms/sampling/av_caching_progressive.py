@@ -71,7 +71,7 @@ class AVCachingSampler:
         prev_rollouts[-hist.size(0):] = torch.lerp(
             hist.unsqueeze(1),
             torch.randn_like(hist).unsqueeze(1),
-            self.sigmas.clamp_min(float(noise_prev)).reshape(1, self.n_steps, *([1] * (hist.ndim - 1)))
+            self.sigmas[: self.n_steps].reshape(1, self.n_steps, *([1] * (hist.ndim - 1)))
         ).type_as(x)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
@@ -119,8 +119,6 @@ class AVCachingSampler:
             dist = torch.arange(L - 1, -1, -1, device=seq.device)
             idx_all = (step + dist).clamp_max(self.n_steps - 1)
             sigma = self.sigmas[idx_all][None].expand(B, -1)
-            if H:
-                sigma[:, :-1] = sigma[:, :-1].clamp_min_(float(noise_prev))  # clamp history only
             sigma[:, -1] = float(self.sigmas[step])                          # exact for current frame
             seq_in = seq.clone()
             R = min(H, prev_rollouts.size(0))
