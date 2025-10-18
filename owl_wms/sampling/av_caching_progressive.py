@@ -47,7 +47,7 @@ class AVCachingSampler:
         # uncached_k: int = 1,  # now self.n_steps
     ):
         """Generate `num_frames` new frames and return updated tensors."""
-        self.sigmas = self.sigmas.to(device=x.device, dtype=x.dtype)
+        self.sigmas = self.sigmas.to(device=x.device)
         uncached_k = self.n_steps
 
         init_len = x.size(1)
@@ -64,19 +64,31 @@ class AVCachingSampler:
         # initialize running noised history once at snapped noise_prev
         ctrl = controller_input[:, :init_len] if controller_input is not None else None
         ts = frame_timestamps[0, :init_len].unsqueeze(0)
-        noise = torch.randn_like(x, dtype=torch.float32)
+
+        # denoising steps for last `uncached_k` frames
+        prev_rollouts = x.new_full((uncached_k, self.n_steps, x.size(0), *x.shape[2:]), torch.nan)
+        hist = x[:, -min(uncached_k, x.size(1)):].transpose(0, 1).float()
+        prev_rollouts[-hist.size(0):] = torch.lerp(
+            hist.unsqueeze(1),
+            torch.randn_like(hist).unsqueeze(1),
+            self.sigmas.clamp_min(float(noise_prev)).reshape(1, self.n_steps, *([1] * (hist.ndim - 1)))
+        ).type_as(x)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
-
-            new_noise = torch.randn_like(noise.new_empty((x.size(0), 1, *x.shape[2:])))
-            noise = torch.cat([noise, new_noise], dim=1)
-            x = torch.cat([x, new_noise.type_as(x)], dim=1)
+            new_noise = torch.randn_like(x.new_empty((x.size(0), 1, *x.shape[2:])))
+            x = torch.cat([x, new_noise], dim=1)
 
             if controller_input is not None:
                 ctrl = torch.cat((ctrl, controller_input[:, init_len + idx:init_len + idx + 1]), dim=1)
             ts = torch.cat((ts, frame_timestamps[0, init_len + idx:init_len + idx + 1].unsqueeze(0)), dim=1)
 
-            x, ctrl, ts, noise = self.denoise_frame(model, prompt_emb, kv_cache, x, ctrl, ts, noise, uncached_k, noise_prev)
+            x, ctrl, ts, new_rollout = self.denoise_frame(
+                model, prompt_emb, kv_cache, x, ctrl, ts, prev_rollouts, uncached_k, noise_prev
+            )
+
+            # slide window of history frames
+            prev_rollouts = torch.roll(prev_rollouts, shifts=-1, dims=0)
+            prev_rollouts[-1] = new_rollout
 
             latents.append(x[:, -1:])
 
@@ -94,29 +106,29 @@ class AVCachingSampler:
         seq: torch.Tensor,
         ctrl: Optional[torch.Tensor],
         ts: torch.Tensor,
-        noise: torch.Tensor,
+        prev_rollouts: torch.Tensor,
         uncached_k: int,
         noise_prev: float,
     ):
         """Run all denoising steps for new frame (seq = cat(hist, gaussian))."""
         B = seq.size(0)
+        new_rollout = seq.new_empty((self.n_steps, B, *seq.shape[2:]))
 
         for step in range(self.n_steps):
-            L = seq.size(1)
-            H = L - 1
-            d = torch.arange(H, 0, -1, device=seq.device)                      # distances H..1 (empty if H==0)
-            idx = (step + d).clamp(max=self.sigmas.numel() - 1)                         # per-history indices
-
-            sigma = torch.zeros(B, L, device=seq.device, dtype=torch.float32)
-            sigma[:, :-1] = self.sigmas[idx].view(1, H).expand(B, H).clamp_min_(noise_prev)
-            sigma[:, -1] = self.sigmas[step]  # current frame
-
+            L, H = seq.size(1), seq.size(1) - 1
+            dist = torch.arange(L - 1, -1, -1, device=seq.device)
+            idx_all = (step + dist).clamp_max(self.n_steps - 1)
+            sigma = self.sigmas[idx_all][None].expand(B, -1)
+            if H:
+                sigma[:, :-1] = sigma[:, :-1].clamp_min_(float(noise_prev))  # clamp history only
+            sigma[:, -1] = float(self.sigmas[step])                          # exact for current frame
             seq_in = seq.clone()
-            seq_in[:, :-1] = torch.lerp(
-                seq[:, :-1].float(),
-                noise[:, :-1].float(),
-                self.sigmas[idx].view(1, H, *([1] * (seq.ndim - 2))).float()
-            ).type_as(seq)
+            R = min(H, prev_rollouts.size(0))
+            if R:
+                hist_steps = idx_all[-R - 1:-1]  # (R,)
+                for i in range(R):  # diagonal pick: (history i, step hist_steps[i])
+                    s = int(hist_steps[i])
+                    seq_in[:, -R - 1 + i] = prev_rollouts[-R + i, s]
 
             v = self.fwd(
                 model,
@@ -128,13 +140,13 @@ class AVCachingSampler:
                 kv_cache=kv_cache
             )[:, -1:]  # only the new frame’s eps
 
-            dsigma = self.sigmas[step + 1] - self.sigmas[step]
+            dsigma = (self.sigmas[min(step + 1, self.n_steps - 1)] - self.sigmas[step]).type_as(seq)
             seq[:, -1:] = (seq[:, -1:] + dsigma * v).type_as(seq)
+            new_rollout[step] = seq[:, -1:].squeeze(1)
 
-            # after step 0, drop history and continue with last `uncached_k` frames
-            noise = torch.randn_like(noise[:, -uncached_k:])  # HACK: new noise, might be better
             seq = seq[:, -uncached_k:]
             ts = ts[:, -uncached_k:]
-            ctrl = ctrl[:, -uncached_k:] if ctrl is not None else None
+            if ctrl is not None:
+                ctrl = ctrl[:, -uncached_k:]
 
-        return seq, ctrl, ts, noise
+        return seq, ctrl, ts, new_rollout
