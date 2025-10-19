@@ -126,9 +126,9 @@ train:
           dataset_path: /mnt/data/lapp0/cod_data_BlackOpsColdWar_npy/train
           sampling_periods: [1]
 
-  sampler_id: av_caching_progressive
+  sampler_id: av_caching
   sampler_kwargs:
-    n_steps: 40
+    n_steps: 20
     cfg_scale: 1.0
     only_return_generated: false
 
@@ -138,16 +138,7 @@ train:
   samplers:
     prefix_30:
       num_seed_frames: 30
-      # noise_prev: default to train noise_prev if unspecified
       num_generated_frames: 290
-
-    prefix_1:
-      num_seed_frames: 1
-      num_generated_frames: 60
-
-    prefix_0:
-      num_seed_frames: 0
-      num_generated_frames: 60
 
 wandb:
   name: wayfarerlabs
