@@ -171,8 +171,8 @@ def to_wandb_samples(video, mouse, btn, labels, num_gt_frames, prompts=None):
         )
         samples.append(wandb.Video(str(path), format="mp4"))
 
-    assert depth_gif is None, "Not implemented"
-    assert flow_gif is None, "Not implemented"
+    if depth_gif is not None or flow_gif is not None:
+        print("Warning, produced depth gif, but not displaying")
     return samples
 
 
