@@ -8,7 +8,7 @@ model:
   d_model: 2560
   mlp_ratio: 4
 
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   ####
 
   tokens_per_frame: 256
@@ -40,9 +40,8 @@ model:
 train:
   trainer_id: world
 
-  pwc_sigma: true
-  sfpt: false
-  noise_prev: 0.01
+  prog_flow: true
+  noise_prev: 0.00
   image_only_warmup: null
   bidirectional_warmup: null
 
@@ -86,7 +85,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 96
+      seq_len: 64
       batch_columns: ["rgblatents", "fps"]
       latent_column: "rgblatents"
       sampling_periods: [1]
@@ -130,7 +129,7 @@ train:
 
   sampler_id: av_caching_progressive
   sampler_kwargs:
-    n_steps: 20
+    n_steps: 16
     cfg_scale: 1.0
     only_return_generated: false
 

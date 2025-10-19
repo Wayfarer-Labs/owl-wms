@@ -49,9 +49,9 @@ def get_block_mask(
         # current prev attn: previous frames are noised at a contant level, current frames noised at random level
         # matches inference behavior
         if curr_frame_mask is not None:
-            is_curr_q = curr_frame_mask[b, abs_q]
-            is_curr_kv = curr_frame_mask[b, kv]
-            prev_curr_mask = (~is_curr_q & ~is_curr_kv) | (is_curr_q & ((t_kv == t_q) == is_curr_kv))
+            cid_q, cid_kv = curr_frame_mask[b, abs_q], curr_frame_mask[b, kv]
+            prev_curr_mask = ((cid_kv == 0) & ((cid_q == 0) | (t_kv != t_q))) \
+                | ((cid_kv == cid_q) & (cid_q >= 1) & (t_kv == t_q))
         else:
             prev_curr_mask = True
         # ########

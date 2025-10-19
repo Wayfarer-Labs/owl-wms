@@ -310,7 +310,9 @@ class WorldTrainer(BaseTrainer):
 
     @torch.compile
     def loss_step(self, model, batch, reduction="mean", return_sigma=False):
-        if getattr(self.train_cfg, "sfpt", False):
+        if getattr(self.train_cfg, "prog_flow", False):
+            loss = self.progressive_flow_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
+        elif getattr(self.train_cfg, "sfpt", False):
             loss = self.sfpt_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         else:
             loss = self.flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
@@ -395,7 +397,7 @@ class WorldTrainer(BaseTrainer):
         with torch.no_grad():
             # sigma = torch.rand(B, N, device=x0.device, dtype=x0.dtype)  # Optional: U(0,1)
             if getattr(self.train_cfg, "pwc_sigma", False):
-                sigma = self.progressive_with_clean(B, N, device=x0.device, dtype=x0.dtype)  # FoPP
+                sigma = self.progressive_with_clean(B, N, device=x0.device, dtype=x0.dtype)
             elif getattr(self.train_cfg, "fopp_sigma", False):
                 sigma = self.fopp_sigmas(B, N, device=x0.device, dtype=x0.dtype)  # FoPP
             else:
@@ -433,6 +435,57 @@ class WorldTrainer(BaseTrainer):
             )[:, :N]  # only compute loss on x_t branch
 
         losses = F.mse_loss(v_pred, v_target[:, :N], reduction=reduction)
+        return (losses, sigma[:, :N]) if return_sigma else losses
+
+    def progressive_flow_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+        """
+        x0: [B, N, C, H, W] clean latents (sigma=0.0)
+        """
+        x0 = x
+        B, N = x0.size(0), x0.size(1)
+
+        def ernest_khalimov_sampler(K, device=None, dtype=torch.float32):
+            assert N % K == 0
+            L = N // K
+
+            def one_seq():
+                seg = torch.rand(K + 1, L, device=device, dtype=dtype).sort(-1).values
+                r = int(torch.randint(0, L + 1, (), device=device))
+                x = torch.cat([seg[0, :r], seg[1:K].flatten(), seg[K]], -1)[:N]
+                ids = torch.cat([torch.zeros(r, device=device, dtype=torch.long),
+                                 torch.arange(1, K, device=device).repeat_interleave(L),
+                                 torch.full((L,), K, device=device, dtype=torch.long)], -1)[:N]
+                return x, ids
+
+            sigmas, seq_ids = zip(*(one_seq() for _ in range(B)))
+            return torch.stack(sigmas), torch.stack(seq_ids)
+
+        with torch.no_grad():
+            assert self.train_cfg.noise_prev == 0.0
+            num_subsequences = N // self.train_cfg.sampler_kwargs.n_steps
+            sigma, sigma_ids = ernest_khalimov_sampler(K=num_subsequences, device=x0.device, dtype=x0.dtype)
+
+            # concatenate zero noise sigma
+            sigma = torch.cat((sigma, x0.new_full((B, N), self.train_cfg.noise_prev)), dim=1)
+            sigma_ids = torch.cat((sigma_ids + 1, torch.zeros_like(sigma_ids)), dim=1)
+
+            x0 = x0.repeat(1, 2, 1, 1, 1)
+            frame_timestamp = kw.pop("frame_timestamp").repeat(1, 2)
+            if kw.get("doc_id", None) is not None:
+                kw["doc_id"] = kw["doc_id"].repeat(1, 2)
+
+            v_target = torch.randn_like(x0) - x0  # iid
+            x_t = (x0 + v_target * sigma.view(B, -1, 1, 1, 1)).type_as(x0)
+
+        with self.autocast_ctx:
+            v_pred = model(
+                x_t, sigma,
+                curr_frame_mask=sigma_ids,
+                frame_timestamp=frame_timestamp,
+                **kw
+            )
+
+        losses = F.mse_loss(v_pred[:, :N], v_target[:, :N], reduction=reduction)
         return (losses, sigma[:, :N]) if return_sigma else losses
 
     @torch.inference_mode()
