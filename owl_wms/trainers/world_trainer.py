@@ -445,12 +445,13 @@ class WorldTrainer(BaseTrainer):
         B, N = x0.size(0), x0.size(1)
 
         def ernest_khalimov_sampler(K, device=None, dtype=torch.float32):
+            """Generates packed sigmas"""
             assert N % K == 0
             L = N // K
 
             def one_seq():
                 seg = torch.rand(K + 1, L, device=device, dtype=dtype).sort(-1).values
-                r = int(torch.randint(0, L + 1, (), device=device))
+                r = torch.randint(0, L, (), device=device)
                 x = torch.cat([seg[0, :r], seg[1:K].flatten(), seg[K]], -1)[:N]
                 ids = torch.cat([torch.zeros(r, device=device, dtype=torch.long),
                                  torch.arange(1, K, device=device).repeat_interleave(L),
@@ -461,6 +462,8 @@ class WorldTrainer(BaseTrainer):
             return torch.stack(sigmas), torch.stack(seq_ids)
 
         with torch.no_grad():
+            v_target = torch.randn_like(x0) - x0  # iid
+
             assert self.train_cfg.noise_prev == 0.0
             num_subsequences = N // self.train_cfg.sampler_kwargs.n_steps
             sigma, sigma_ids = ernest_khalimov_sampler(K=num_subsequences, device=x0.device, dtype=x0.dtype)
@@ -469,12 +472,14 @@ class WorldTrainer(BaseTrainer):
             sigma = torch.cat((sigma, x0.new_full((B, N), self.train_cfg.noise_prev)), dim=1)
             sigma_ids = torch.cat((sigma_ids + 1, torch.zeros_like(sigma_ids)), dim=1)
 
+            # repeat
             x0 = x0.repeat(1, 2, 1, 1, 1)
+            v_target = v_target.repeat(1, 2, 1, 1, 1)
             frame_timestamp = kw.pop("frame_timestamp").repeat(1, 2)
             if kw.get("doc_id", None) is not None:
                 kw["doc_id"] = kw["doc_id"].repeat(1, 2)
 
-            v_target = torch.randn_like(x0) - x0  # iid
+            # compute inputs based on noise level and velocity
             x_t = (x0 + v_target * sigma.view(B, -1, 1, 1, 1)).type_as(x0)
 
         with self.autocast_ctx:

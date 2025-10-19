@@ -69,9 +69,10 @@ class AVCachingSampler:
         prev_rollouts = x.new_full((uncached_k, self.n_steps, x.size(0), *x.shape[2:]), torch.nan)
         hist = x[:, -min(uncached_k, x.size(1)):].transpose(0, 1).float()
         prev_rollouts[-hist.size(0):] = torch.lerp(
-            hist.unsqueeze(1),
-            torch.randn_like(hist).unsqueeze(1),
-            self.sigmas[: self.n_steps].reshape(1, self.n_steps, *([1] * (hist.ndim - 1)))
+            hist.unsqueeze(1),                              # clean
+            torch.randn_like(hist).unsqueeze(1),           # noise
+            self.sigmas[1:self.n_steps + 1]                # shape: (n_steps,)
+                .reshape(1, self.n_steps, *([1] * (hist.ndim - 1)))
         ).type_as(x)
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
@@ -87,7 +88,7 @@ class AVCachingSampler:
             )
 
             # slide window of history frames
-            prev_rollouts = torch.roll(prev_rollouts, shifts=-1, dims=0)
+            prev_rollouts = x.new_full((uncached_k, self.n_steps + 1, B, *x.shape[2:]), torch.nan)
             prev_rollouts[-1] = new_rollout
 
             latents.append(x[:, -1:])
@@ -117,16 +118,18 @@ class AVCachingSampler:
         for step in range(self.n_steps):
             L, H = seq.size(1), seq.size(1) - 1
             dist = torch.arange(L - 1, -1, -1, device=seq.device)
-            idx_all = (step + dist).clamp_max(self.n_steps - 1)
+            idx_all = (step + dist).clamp_max(self.n_steps)
+            # to ignore clean step: .clamp_max(self.n_steps - 1)
             sigma = self.sigmas[idx_all][None].expand(B, -1)
-            sigma[:, -1] = float(self.sigmas[step])                          # exact for current frame
+            assert (sigma[:, -1] == self.sigmas[step]).all()
             seq_in = seq.clone()
             R = min(H, prev_rollouts.size(0))
             if R:
                 hist_steps = idx_all[-R - 1:-1]  # (R,)
                 for i in range(R):  # diagonal pick: (history i, step hist_steps[i])
-                    s = int(hist_steps[i])
-                    seq_in[:, -R - 1 + i] = prev_rollouts[-R + i, s]
+                    s = int(hist_steps[i])  # scheduler index in [0..n_steps]
+                    if s > 0:  # cache stores indices 1..n_steps at slots 0..n_steps-1
+                        seq_in[:, -R - 1 + i] = prev_rollouts[-R + i, s - 1]
 
             v = self.fwd(
                 model,
@@ -138,7 +141,7 @@ class AVCachingSampler:
                 kv_cache=kv_cache
             )[:, -1:]  # only the new frame’s eps
 
-            dsigma = (self.sigmas[min(step + 1, self.n_steps - 1)] - self.sigmas[step]).type_as(seq)
+            dsigma = (self.sigmas[step + 1] - self.sigmas[step])
             seq[:, -1:] = (seq[:, -1:] + dsigma * v).type_as(seq)
             new_rollout[step] = seq[:, -1:].squeeze(1)
 
