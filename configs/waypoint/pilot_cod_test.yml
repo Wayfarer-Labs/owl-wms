@@ -108,7 +108,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/lapp0/cod_data_BlackOpsColdWar_npy/train
+          dataset_path: /mnt/data/lapp0/cod_data_BlackOpsColdWar_npy/eval
           sampling_periods: [1]
 
   sample_data_id: multi
@@ -123,7 +123,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/lapp0/cod_data_BlackOpsColdWar_npy/train
+          dataset_path: /mnt/data/lapp0/cod_data_BlackOpsColdWar_npy/eval
           sampling_periods: [1]
 
   sampler_id: av_caching
