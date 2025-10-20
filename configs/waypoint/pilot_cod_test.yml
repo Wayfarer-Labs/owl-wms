@@ -72,7 +72,7 @@ train:
   vae_id: null
   vae_batch_size: 4
 
-  vae_scale: 0.93
+  vae_scale: 0.7
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/wp1_depth.yml
   vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/waypoint_1_vae_owlc_depth/step_230000.pt
 
