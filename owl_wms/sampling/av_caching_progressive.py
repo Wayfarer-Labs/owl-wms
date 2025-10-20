@@ -68,7 +68,7 @@ class AVCachingSampler:
         # denoising steps for last `uncached_k` frames
         prev_rollouts = x.new_full((uncached_k, self.n_steps, x.size(0), *x.shape[2:]), torch.nan)
         hist = x[:, -min(uncached_k, x.size(1)):].transpose(0, 1).float()
-        prev_rollouts[-hist.size(0):] = torch.lerp(
+        prev_rollouts[:hist.size(0)] = torch.lerp(
             hist.unsqueeze(1),                              # clean
             torch.randn_like(hist).unsqueeze(1),           # noise
             self.sigmas[1:self.n_steps + 1]                # shape: (n_steps,)
@@ -123,13 +123,16 @@ class AVCachingSampler:
             sigma = self.sigmas[idx_all][None].expand(B, -1)
             assert (sigma[:, -1] == self.sigmas[step]).all()
             seq_in = seq.clone()
-            R = min(H, prev_rollouts.size(0))
-            if R:
-                hist_steps = idx_all[-R - 1:-1]  # (R,)
-                for i in range(R):  # diagonal pick: (history i, step hist_steps[i])
-                    s = int(hist_steps[i])  # scheduler index in [0..n_steps]
-                    if s > 0:  # cache stores indices 1..n_steps at slots 0..n_steps-1
-                        seq_in[:, -R - 1 + i] = prev_rollouts[-R + i, s - 1]
+            # Align prev_rollouts rows with absolute seq positions [-K .. -2]
+            K = uncached_k
+            R = min(H, K - 1)  # history frames only
+            if R > 0:
+                oldest = max(0, L - K)  # absolute index for position -K (or 0 if fewer than K frames)
+                for offset in range(R):  # maps rows 0..R-1 -> positions [-K .. -2]
+                    pos = oldest + offset
+                    s = int(idx_all[pos])  # scheduler index in [0..n_steps]
+                    if s > 0:              # cache stores σ[1..] in slots [0..]
+                        seq_in[:, pos] = prev_rollouts[offset, s - 1]
 
             v = self.fwd(
                 model,
