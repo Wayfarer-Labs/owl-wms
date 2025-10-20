@@ -40,11 +40,11 @@ model:
 train:
   trainer_id: world
 
-  noise_prev: 0.0
+  noise_prev: 0.2
   image_only_warmup: null
   bidirectional_warmup: null
 
-  total_accum_steps: 8
+  total_accum_steps: 16
 
   epochs: 10000
 
