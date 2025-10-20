@@ -88,7 +88,7 @@ class AVCachingSampler:
             )
 
             # slide window of history frames
-            prev_rollouts = x.new_full((uncached_k, self.n_steps + 1, B, *x.shape[2:]), torch.nan)
+            prev_rollouts = x.new_full((uncached_k, self.n_steps + 1, x.size(0), *x.shape[2:]), torch.nan)
             prev_rollouts[-1] = new_rollout
 
             latents.append(x[:, -1:])
