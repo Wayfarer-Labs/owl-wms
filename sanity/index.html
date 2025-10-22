@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebGL Inference Demo</title>
+<style>
+ html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+ #glcanvas { width:100%; height:100%; display:block; }
+ #stats { position:absolute; top:0; left:0; color:#0f0; font-family:monospace; padding:5px; background:rgba(0,0,0,0.5); }
+ </style>
+ <!-- TensorFlow.js (WebGL backend) -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js"></script>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+<div id="stats"></div>
+<script>
+ // ------------------------------------------------------------
+ // Configuration
+ // ------------------------------------------------------------
+ const WIDTH =640;
+ const HEIGHT =360;
+ const MOUSE_SCALE =0.01; // same as Python version
+ const TARGET_FPS =60;
+ const MODEL_URL = "model/model.json"; // <-- replace with your model path
+
+ // ------------------------------------------------------------
+ // Global state
+ // ------------------------------------------------------------
+ const buttonState = new Array(11).fill(false); //0-10 as in Python code
+ let lastMousePos = null;
+ let mouseDelta = [0,0];
+ let model = null;
+ let frameCounter =0;
+ let pipeFpsSum =0;
+ let totalFpsSum =0;
+ let statsT0 = performance.now();
+
+ // ------------------------------------------------------------
+ // Helper: clamp value to [-1,1]
+ // ------------------------------------------------------------
+ function clamp(v) { return Math.max(-1, Math.min(1, v)); }
+
+ // ------------------------------------------------------------
+ // Input handling (keyboard & mouse)
+ // ------------------------------------------------------------
+ const KEYMAP = {
+ // key: button index
+ "KeyW":0,
+ "KeyA":1,
+ "KeyS":2,
+ "KeyD":3,
+ "ShiftLeft":4,
+ "Space":5,
+ "KeyR":6,
+ "KeyF":7,
+ "KeyE":8,
+ // mouse buttons1 (left) and3 (right) handled separately
+ };
+
+ window.addEventListener('keydown', (e) => {
+ if (e.code === 'Escape' || e.key === 'q') {
+ // In a browser we cannot close the window, just stop the loop
+ running = false;
+ }
+ // Pipeline control shortcuts (optional)
+ if (e.code === 'KeyY') { if (model && model.init) model.init(); }
+ if (e.code === 'KeyU') { if (model && model.restart) model.restart(); }
+ if (e.code === 'ArrowUp') { /* increase mouse scaler if needed */ }
+ if (e.code === 'ArrowDown') { /* decrease mouse scaler if needed */ }
+ if (e.code in KEYMAP) {
+ buttonState[KEYMAP[e.code]] = true;
+ }
+ });
+ window.addEventListener('keyup', (e) => {
+ if (e.code in KEYMAP) {
+ buttonState[KEYMAP[e.code]] = false;
+ }
+ });
+ window.addEventListener('mousedown', (e) => {
+ if (e.button ===0) buttonState[9] = true; // left
+ if (e.button ===2) buttonState[10] = true; // right
+ });
+ window.addEventListener('mouseup', (e) => {
+ if (e.button ===0) buttonState[9] = false;
+ if (e.button ===2) buttonState[10] = false;
+ });
+ window.addEventListener('mousemove', (e) => {
+ const rect = canvas.getBoundingClientRect();
+ const pos = [e.clientX - rect.left, e.clientY - rect.top];
+ if (lastMousePos === null) {
+ lastMousePos = pos;
+ mouseDelta = [0,0];
+ } else {
+ const dx = (pos[0] - lastMousePos[0]) * MOUSE_SCALE;
+ const dy = (pos[1] - lastMousePos[1]) * MOUSE_SCALE;
+ mouseDelta = [clamp(dx), clamp(dy)];
+ lastMousePos = pos;
+ }
+ });
+ // Prevent context menu on right‑click (so we can capture button3)
+ window.addEventListener('contextmenu', e => e.preventDefault());
+
+ // ------------------------------------------------------------
+ // WebGL setup – simple textured quad
+ // ------------------------------------------------------------
+ const canvas = document.getElementById('glcanvas');
+ canvas.width = WIDTH;
+ canvas.height = HEIGHT;
+ const gl = canvas.getContext('webgl2');
+ if (!gl) {
+ alert('WebGL2 not supported in this browser');
+ }
+
+ // Vertex shader (covers full screen)
+ const vsSource = `#version300 es
+ precision highp float;
+ const vec2[4] positions = vec2[4](
+ vec2(-1.0, -1.0),
+ vec2(1.0, -1.0),
+ vec2(-1.0,1.0),
+ vec2(1.0,1.0)
+ );
+ const vec2[4] texCoords = vec2[4](
+ vec2(0.0,1.0),
+ vec2(1.0,1.0),
+ vec2(0.0,0.0),
+ vec2(1.0,0.0)
+ );
+ out vec2 vTexCoord;
+ void main() {
+ gl_Position = vec4(positions[gl_VertexID],0.0,1.0);
+ vTexCoord = texCoords[gl_VertexID];
+ }`;
+
+ // Fragment shader – samples from a texture containing RGB data
+ const fsSource = `#version300 es
+ precision highp float;
+ in vec2 vTexCoord;
+ uniform sampler2D uTexture;
+ out vec4 outColor;
+ void main() {
+ vec3 rgb = texture(uTexture, vTexCoord).rgb;
+ outColor = vec4(rgb,1.0);
+ }`;
+
+ function compileShader(src, type) {
+ const shader = gl.createShader(type);
+ gl.shaderSource(shader, src);
+ gl.compileShader(shader);
+ if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+ console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+ gl.deleteShader(shader);
+ return null;
+ }
+ return shader;
+ }
+ const vertexShader = compileShader(vsSource, gl.VERTEX_SHADER);
+ const fragmentShader = compileShader(fsSource, gl.FRAGMENT_SHADER);
+ const program = gl.createProgram();
+ gl.attachShader(program, vertexShader);
+ gl.attachShader(program, fragmentShader);
+ gl.linkProgram(program);
+ if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+ console.error('Program link error:', gl.getProgramInfoLog(program));
+ }
+ gl.useProgram(program);
+ const texLocation = gl.getUniformLocation(program, 'uTexture');
+
+ // Create texture that will hold the inference output
+ const texture = gl.createTexture();
+ gl.activeTexture(gl.TEXTURE0);
+ gl.bindTexture(gl.TEXTURE_2D, texture);
+ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+ // Allocate empty texture
+ gl.texImage2D(gl.TEXTURE_2D,0, gl.RGB8, WIDTH, HEIGHT,0, gl.RGB, gl.UNSIGNED_BYTE, null);
+ gl.uniform1i(texLocation,0);
+
+ // ------------------------------------------------------------
+ // Inference wrapper (TensorFlow.js)
+ // ------------------------------------------------------------
+ async function loadModel() {
+ // Adjust backend to WebGL (default) and enable float16 if desired
+ await tf.setBackend('webgl');
+ await tf.ready();
+ model = await tf.loadGraphModel(MODEL_URL);
+ console.log('Model loaded');
+ }
+
+ // Convert mouse delta and button state into tensors matching the Python pipeline signature
+ function prepareInputs() {
+ // mouse_tensor: shape [2] (float16) – we use float32 then cast
+ const mouseTensor = tf.tensor(mouseDelta, [2], 'float32').cast('float16');
+ // btn_tensor: shape [11] bool – tf.bool
+ const btnTensor = tf.tensor(buttonState, [11], 'bool');
+ return { mouseTensor, btnTensor };
+ }
+
+ // Run a single inference step and return a Uint8Array ready for texture upload
+ async function runInference() {
+ const { mouseTensor, btnTensor } = prepareInputs();
+ const t0 = performance.now();
+ // Assuming the model expects a dict with keys 'mouse' and 'buttons'
+ const outputs = model.execute({ mouse: mouseTensor, buttons: btnTensor });
+ // outputs shape expected: [1,3, H, W] or [3, H, W]
+ let frameTensor = outputs;
+ if (Array.isArray(outputs)) frameTensor = outputs[0]; // handle list output
+ // Ensure shape [3, H, W]
+ if (frameTensor.shape.length ===4) {
+ // [1,3,H,W] -> squeeze batch dim
+ frameTensor = tf.squeeze(frameTensor, [0]);
+ }
+ // Convert from [-1,1] float to [0,255] Uint8
+ const scaled = tf.tidy(() => {
+ // (x +1) *127.5 => [0,255]
+ return frameTensor.add(1).mul(127.5).clipByValue(0,255).cast('int32');
+ });
+ // Transpose to HWC for texture upload
+ const hwc = tf.tidy(() => tf.transpose(scaled, [1,2,0])); // [H,W,3]
+ const data = await hwc.data(); // Uint8Array-like (Int32 but values0‑255)
+ // Clean up tensors
+ mouseTensor.dispose();
+ btnTensor.dispose();
+ frameTensor.dispose();
+ scaled.dispose();
+ hwc.dispose();
+ const pipeTime = (performance.now() - t0) /1000; // seconds
+ return { data: new Uint8Array(data), pipeTime };
+ }
+
+ // ------------------------------------------------------------
+ // Rendering loop
+ // ------------------------------------------------------------
+ let running = true;
+ async function mainLoop() {
+ if (!running) return;
+ const start = performance.now();
+ const { data, pipeTime } = await runInference();
+ // Upload to texture (data is Uint8Array of length WIDTH*HEIGHT*3)
+ gl.bindTexture(gl.TEXTURE_2D, texture);
+ gl.texSubImage2D(gl.TEXTURE_2D,0,0,0, WIDTH, HEIGHT, gl.RGB, gl.UNSIGNED_BYTE, data);
+ // Draw full‑screen quad
+ gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+ const drawTime = (performance.now() - start) /1000 - pipeTime;
+ // Stats accumulation
+ pipeFpsSum +=1 / Math.max(pipeTime,1e-6);
+ totalFpsSum +=1 / Math.max(pipeTime + drawTime,1e-6);
+ frameCounter++;
+ const now = performance.now();
+ if (now - statsT0 >=1000) {
+ const avgPipeFps = pipeFpsSum / Math.max(frameCounter,1);
+ const avgTotalFps = totalFpsSum / Math.max(frameCounter,1);
+ document.getElementById('stats').textContent =
+ `[${new Date().toLocaleTimeString()}] FPS (total): ${avgTotalFps.toFixed(1)} | FPS (pipeline): ${avgPipeFps.toFixed(1)} | Latency pipeline: ${(pipeTime*1000).toFixed(1)} ms | Latency draw: ${(drawTime*1000).toFixed(1)} ms`;
+ statsT0 = now;
+ pipeFpsSum =0;
+ totalFpsSum =0;
+ frameCounter =0;
+ }
+ // Schedule next frame respecting target FPS
+ const elapsed = performance.now() - start;
+ const delay = Math.max(0, (1000 / TARGET_FPS) - elapsed);
+ setTimeout(() => requestAnimationFrame(mainLoop), delay);
+ }
+
+ // ------------------------------------------------------------
+ // Startup
+ // ------------------------------------------------------------
+ (async () => {
+ await loadModel();
+ requestAnimationFrame(mainLoop);
+ })();
+ </script>
+</body>
+</html>

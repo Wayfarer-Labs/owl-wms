@@ -11,9 +11,13 @@ Latency & FPS are printed to stdout every second.
 
 from __future__ import annotations
 
-from platform import system as psystem
+from platform import system as p_system
 
-if psystem != "darwin":
+x_display = True
+if p_system == "darwin":
+    x_display = False
+    import moderngl
+else:
     import Xlib.Xatom as Xatom
     import Xlib.display
     import Xlib.X as X
@@ -48,39 +52,50 @@ class GameCV:
         self.target_frame_time = 1.0 / fps
 
         # X11 setup ----------------------------------------------------------
-        self.disp = Xlib.display.Display()
-        self.screen = self.disp.screen()
-        self.win = self.screen.root.create_window(
-            0,
-            0,
-            width,
-            height,
-            0,
-            self.screen.root_depth,
-            X.InputOutput,
-            X.CopyFromParent,
-            background_pixel=self.screen.black_pixel,
-            event_mask=(X.ExposureMask | X.KeyPressMask | X.KeyReleaseMask | X.ButtonPressMask | X.ButtonReleaseMask | X.PointerMotionMask | X.StructureNotifyMask),
-        )
-        self.win.set_wm_name("Causvid Game - X11")
-        self.gc = self.win.create_gc()
-        self.win.map()
+        if x_display:
+            self.disp = Xlib.display.Display()
+            self.screen = self.disp.screen()
+            self.win = self.screen.root.create_window(
+                0,
+                0,
+                width,
+                height,
+                0,
+                self.screen.root_depth,
+                X.InputOutput,
+                X.CopyFromParent,
+                background_pixel=self.screen.black_pixel,
+                event_mask=(X.ExposureMask | X.KeyPressMask | X.KeyReleaseMask | X.ButtonPressMask | X.ButtonReleaseMask | X.PointerMotionMask | X.StructureNotifyMask),
+            )
+            self.win.set_wm_name("Causvid Game - X11")
+            self.gc = self.win.create_gc()
+            self.win.map()
 
-        # Handle graceful close via WM_DELETE_WINDOW
-        self.WM_DELETE = self.disp.intern_atom("WM_DELETE_WINDOW")
-        self.win.change_property(self.disp.intern_atom("WM_PROTOCOLS"), Xatom.ATOM, 32, [self.WM_DELETE])
+            # Handle graceful close via WM_DELETE_WINDOW
+            self.WM_DELETE = self.disp.intern_atom("WM_DELETE_WINDOW")
+            self.win.change_property(self.disp.intern_atom("WM_PROTOCOLS"), Xatom.ATOM, 32, [self.WM_DELETE])
 
-        # Game state ---------------------------------------------------------
-        self.pipeline = CausvidPipeline()
-        self.button_state = [False] * 11
-        self.last_mouse_pos: tuple[int, int] | None = None
-        self.running = True
+            # Game state ---------------------------------------------------------
+            self.pipeline = CausvidPipeline()
+            self.button_state = [False] * 11
+            self.last_mouse_pos: tuple[int, int] | None = None
+            self.running = True
 
-        # Stats
-        self.pipe_fps_sum = 0.0  # pipeline-only
-        self.total_fps_sum = 0.0  # pipeline + draw
-        self.frame_counter = 0
-        self.stats_t0 = time.time()
+            # Stats
+            self.pipe_fps_sum = 0.0  # pipeline-only
+            self.total_fps_sum = 0.0  # pipeline + draw
+            self.frame_counter = 0
+            self.stats_t0 = time.time()
+        else:
+            self.display = moderngl.create_context(standalone=True)
+            gl_buffer = display.buffer(b"Hello World!")
+            gl_buffer.read()
+            b"Hello World!"
+            if self.display.info["GL_VERSION"]:
+                gl_version = gl_buffer.version_code
+
+                self.display = moderngl.get_context()
+                self.display.buffer(reserve=1024, dynamic=True)
 
     # --------------------------------------------------------------------- #
     # Input Handling
