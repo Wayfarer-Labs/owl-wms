@@ -66,7 +66,7 @@ train:
   output_path: /mnt/data/waypoint_1/models/pilot_stage0/${oc.env:RUN_NAME}
   resume_ckpt: null
 
-  sample_interval: 2000
+  sample_interval: 5000
   save_interval: 10000
 
   vae_id: null
@@ -137,8 +137,8 @@ train:
 
   samplers:
     prefix_30:
-      num_seed_frames: 250
-      num_generated_frames: 256
+      num_seed_frames: 150
+      num_generated_frames: 150
 
 wandb:
   name: wayfarerlabs

@@ -233,16 +233,17 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
             sel = _label_selected(lbl, selected_vks)
             if stage == "bg":
                 if sel:
-                    # Draw to BOTH img and overlay so post-blend remains fully blue
-                    cv2.rectangle(img,     (rect[0], rect[1]), (rect[2], rect[3]), BLUE, -1, cv2.LINE_AA)
-                    cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), BLUE, -1, cv2.LINE_AA)
+                    # Draw to BOTH img and overlay so post-blend remains fully white
+                    cv2.rectangle(img,     (rect[0], rect[1]), (rect[2], rect[3]), WHITE, -1, cv2.LINE_AA)
+                    cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), WHITE, -1, cv2.LINE_AA)
                 else:
                     cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, -1, cv2.LINE_AA)
             else:
-                cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, 1, cv2.LINE_AA)
+                bth = 3 if sel else 1
+                cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, bth, cv2.LINE_AA)
                 s = _fit_scale(lbl, FONT, base_label_scale, 1, (rect[2] - rect[0]) - 6)
                 tx, ty, _, _ = _center_text_in_rect(lbl, rect, s, 1)
-                cv2.putText(img, lbl, (tx, ty), FONT, s, YELLOW if sel else WHITE, 1, cv2.LINE_AA)
+                cv2.putText(img, lbl, (tx, ty), FONT, s, BLACK if sel else WHITE, 1, cv2.LINE_AA)
             x = rect[2] + gap
 
     # backgrounds for main block
@@ -263,9 +264,9 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
 
     for rect, label in [(left_r,"<"), (down_r,"v"), (right_r,">"), (up_r,"^")]:
         if _label_selected(label, selected_vks):
-            # Same trick for arrows: paint both surfaces
-            cv2.rectangle(img,     (rect[0], rect[1]), (rect[2], rect[3]), BLUE, -1, cv2.LINE_AA)
-            cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), BLUE, -1, cv2.LINE_AA)
+            # Same trick for arrows: paint both surfaces (white on press)
+            cv2.rectangle(img,     (rect[0], rect[1]), (rect[2], rect[3]), WHITE, -1, cv2.LINE_AA)
+            cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), WHITE, -1, cv2.LINE_AA)
         else:
             cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, -1, cv2.LINE_AA)
 
@@ -279,10 +280,12 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
         y += unit + gap
 
     def draw_arrow_fg(rect, label):
-        cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, 1, cv2.LINE_AA)
+        sel = _label_selected(label, selected_vks)
+        bth = 3 if sel else 1
+        cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, bth, cv2.LINE_AA)
         s = _fit_scale(label, FONT, 0.42, 1, (rect[2] - rect[0]) - 6)
         tx, ty, _, _ = _center_text_in_rect(label, rect, s, 1)
-        color = YELLOW if _label_selected(label, selected_vks) else WHITE
+        color = BLACK if sel else WHITE
         cv2.putText(img, label, (tx, ty), FONT, s, color, 1, cv2.LINE_AA)
 
     for rect, label in [(left_r,"<"), (down_r,"v"), (right_r,">"), (up_r,"^")]:
@@ -315,6 +318,7 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
     circle_center, circle_radius = (50, 50), 40
     cv2.circle(frame, circle_center, circle_radius, WHITE, 1)
     if mouse is not None:
+        mouse = mouse * 0.25  # TODO clean up / HACK: scale mouse x,y to 1/4
         mx = int(mouse[0].item() * circle_radius + circle_center[0])
         my = int(mouse[1].item() * circle_radius + circle_center[1])
         cv2.arrowedLine(frame, circle_center, (mx, my), (0, 255, 0), 2)

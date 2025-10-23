@@ -145,7 +145,7 @@ class WorldDiT(nn.Module):
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
         if ctrl_emb is not None:
-            cond = cond + ctrl_emb
+            cond = cond + (ctrl_emb * 0)
             # TODO: fix
 
         t_pos = pos_ids["t_pos"]
