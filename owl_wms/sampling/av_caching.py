@@ -42,9 +42,10 @@ class AVCachingSampler:
         model,
         x,
         prompt_emb: Optional[TensorDict],
-        controller_input: Optional[Tensor],
         fps: Tensor,
         noise_prev: Tensor,
+        mouse: Optional[Tensor] = None,
+        button: Optional[Tensor] = None,
         num_frames: int = 120,
         noise_distribution: str = "iid"
     ):
@@ -56,7 +57,8 @@ class AVCachingSampler:
         frame_timestamps = model.get_frame_timestamps(fps, seq_len, x.device)
 
         # History for the first frame generation step = full clean clip
-        prev_ctrl = controller_input[:, :init_len] if controller_input is not None else None
+        prev_mouse = mouse[:, :init_len] if mouse is not None else None
+        prev_btn = button[:, :init_len] if button is not None else None
         prev_ts = frame_timestamps[0, :init_len]
 
         latents = [x]
@@ -80,19 +82,21 @@ class AVCachingSampler:
 
         for idx in tqdm(range(num_frames), desc="Sampling frames"):
             start = init_len + idx
-            curr_ctrl = controller_input[:, start: start + 1] if controller_input is not None else None
+            curr_mouse = mouse[:, start: start + 1] if mouse is not None else None
+            curr_btn = button[:, start: start + 1] if button is not None else None
             curr_ts = frame_timestamps[0, start:start + 1]
 
             x, hist = self.denoise_frame(
-                model, prompt_emb, kv_cache,
-                hist, prev_ctrl, curr_ctrl,
+                model, prompt_emb, kv_cache, hist,
+                prev_mouse, curr_mouse,
+                prev_btn, curr_btn,
                 prev_ts=prev_ts, curr_ts=curr_ts,
                 noise_prev=noise_prev,
                 gaussian=next(g_iter),
             )
 
             latents.append(x)
-            prev_ctrl, prev_ts = curr_ctrl, curr_ts
+            prev_mouse, prev_btn, prev_ts = curr_mouse, curr_btn, curr_ts
 
         return torch.cat(latents, dim=1)
 
@@ -121,8 +125,10 @@ class AVCachingSampler:
         prompt_emb,
         kv_cache: StaticKVCache,
         hist: torch.Tensor,
-        prev_ctrl: torch.Tensor,
-        curr_ctrl: torch.Tensor,
+        prev_mouse: torch.Tensor,
+        curr_mouse: torch.Tensor,
+        prev_btn: torch.Tensor,
+        curr_btn: torch.Tensor,
         prev_ts: torch.Tensor,
         curr_ts: torch.Tensor,
         noise_prev: torch.Tensor,
@@ -144,10 +150,11 @@ class AVCachingSampler:
             if step == 0:
                 vid = torch.cat([hist, new_vid], dim=1)
                 sigma = torch.cat([sigma_prev, sigma], dim=1)  # TODO: rename sigma
-                ctrl = torch.cat([prev_ctrl, curr_ctrl], dim=1) if prev_ctrl is not None else None
+                mouse = torch.cat([prev_mouse, curr_mouse], dim=1) if prev_mouse is not None else None
+                btn = torch.cat([prev_btn, curr_btn], dim=1) if prev_mouse is not None else None
                 frame_ts = torch.cat([prev_ts, curr_ts], dim=0)
             else:
-                vid, ctrl, frame_ts = new_vid, curr_ctrl, curr_ts
+                vid, mouse, btn, frame_ts = new_vid, curr_mouse, curr_btn, curr_ts
             frame_ts = frame_ts.unsqueeze(0)  # batchsize = 1
 
             pre = new_vid
@@ -157,7 +164,8 @@ class AVCachingSampler:
                 sigma=sigma,
                 frame_timestamp=frame_ts,
                 prompt_emb=prompt_emb,
-                controller_inputs=ctrl,
+                mouse=mouse,
+                button=btn,
                 kv_cache=kv_cache
             )[:, -1:]  # only the new frame’s eps
 

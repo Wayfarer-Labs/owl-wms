@@ -19,9 +19,6 @@ class NpyTable:
         self._pid = None
         self._connect()
         self._db.executescript("""
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=NORMAL;
-            PRAGMA wal_checkpoint(TRUNCATE);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS manifest (row_json TEXT NOT NULL);
         """)
@@ -74,10 +71,10 @@ class NpyTable:
             except Exception:
                 pass
             self._connect()
-            self._db.executescript("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA wal_checkpoint(TRUNCATE);")
 
     def __len__(self):
         with self._lock:
+            self._reopen_if_forked()
             return self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0]
 
     def append(self, **row: Any) -> int:
@@ -100,12 +97,14 @@ class NpyTable:
                 entry[key] = val
 
         # Atomic insert under a lock; 0-based idx is (rowid - 1)
-        with self._lock, self._db:
-            try:
-                cur = self._db.execute("INSERT INTO manifest(row_json) VALUES (?)", (json.dumps(entry),))
-            except sqlite3.IntegrityError as e:
-                raise ValueError("Duplicate primary key") from e
-            return cur.lastrowid - 1
+        with self._lock:
+            self._reopen_if_forked()
+            with self._db:
+                try:
+                    cur = self._db.execute("INSERT INTO manifest(row_json) VALUES (?)", (json.dumps(entry),))
+                except sqlite3.IntegrityError as e:
+                    raise ValueError("Duplicate primary key") from e
+                return cur.lastrowid - 1
 
     def add_column(self, name: str, values, array: bool = False):
         if name in self.columns:
@@ -116,6 +115,7 @@ class NpyTable:
             raise TypeError("values must be an iterable") from e
         # ---- Phase 1: take a stable snapshot under the lock ----
         with self._lock:
+            self._reopen_if_forked()
             baseline_len = self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0]
         if len(vals) != baseline_len:
             raise ValueError(f"Expected {baseline_len} values, got {len(vals)}")
@@ -134,10 +134,12 @@ class NpyTable:
                 file_names[i] = final_path.name
 
         # ---- Phase 3: publish atomically under the lock ----
-        with self._lock, self._db:
-            # Abort if table changed between phases (e.g., append happened).
-            if self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0] != baseline_len:
-                raise RuntimeError("Table changed during add_column; retry the operation")
+        with self._lock:
+            self._reopen_if_forked()
+            with self._db:
+                # Abort if table changed between phases (e.g., append happened).
+                if self._db.execute("SELECT COUNT(*) FROM manifest").fetchone()[0] != baseline_len:
+                    raise RuntimeError("Table changed during add_column; retry the operation")
 
             # Update schema in DB (meta table)
             self.columns.append(name)
@@ -180,6 +182,7 @@ class NpyTable:
         extracts = ", ".join(f"json_extract(row_json, '$.\"{c}\"')" for c in columns)
         base_sql = f"SELECT rowid, {extracts} FROM manifest"
         with self._lock:
+            self._reopen_if_forked()
             if rows is None:
                 ordered = self._db.execute(base_sql + " ORDER BY rowid").fetchall()
             else:

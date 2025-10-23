@@ -50,7 +50,9 @@ class ControllerInputEmbedding(nn.Module):
         super().__init__()
         self.mlp = owl_nn.MLPCustom(n_inputs, dim * 4, dim_out)
 
-    def forward(self, controller_input: Tensor):
+    def forward(self, mouse: Tensor, button: Tensor):
+        assert len(mouse.shape) == 3
+        controller_input = torch.cat((mouse, button), dim=2)
         return self.mlp(controller_input)
 
 
@@ -142,8 +144,9 @@ class WorldDiT(nn.Module):
             blk.attn.rope = ref_rope
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
-        # if ctrl_emb is not None:
-        #    cond = cond + ctrl_emb
+        if ctrl_emb is not None:
+            cond = cond + ctrl_emb
+            # TODO: fix
 
         t_pos = pos_ids["t_pos"]
         if kv_cache is not None:
@@ -231,7 +234,8 @@ class WorldModel(nn.Module):
         sigma: Tensor,
         frame_timestamp: Tensor,
         prompt_emb: Optional[TensorDict] = None,
-        controller_inputs: Optional[Tensor] = None,
+        mouse: Optional[Tensor] = None,
+        button: Optional[Tensor] = None,
         doc_id: Optional[Tensor] = None,
         kv_cache=None,
         curr_frame_mask: Optional[Tensor] = None,
@@ -262,7 +266,7 @@ class WorldModel(nn.Module):
         # embed
         cond = self.denoise_step_emb(sigma)  # [B, N, d]
         cond = self.additive_text_conditioning(cond, prompt_emb)
-        ctrl_emb = self.ctrl_emb(controller_inputs) if controller_inputs is not None else None
+        ctrl_emb = self.ctrl_emb(mouse, button) if mouse is not None else None
 
         D = self.unpatchify.in_features
         x = self.patchify(x.reshape(B * N, C, H, W))

@@ -205,10 +205,8 @@ class WorldTrainer(BaseTrainer):
 
         assert "rgb" not in batch, "rgb not supported, pass latents"
 
-        if "mouse" in batch or "buttons" in batch:
-            assert "controller_inputs" not in batch, "passed mouse or button, but already have `controller_inputs`"
-            xs = tuple(filter(lambda x: x is not None, [batch.pop("mouse"), batch.pop("buttons")]))
-            batch["controller_inputs"] = torch.cat(xs, dim=-1)
+        if "mouse" in batch or "button" in batch:
+            assert ("mouse" in batch) and ("button" in batch)
 
         # TODO: Clean up hacks
         if "captions" in batch:
@@ -672,7 +670,8 @@ class WorldTrainer(BaseTrainer):
         eval_batch = self.prep_batch(raw_batch)
         vid_init = eval_batch["x"]
         prompt_emb = eval_batch.get("prompt_emb")
-        controller_inputs = eval_batch.get("controller_inputs")  # pass FULL ctrl to sampler
+        mouse_full = eval_batch.get("mouse")
+        btn_full = eval_batch.get("button")
         fps = int(raw_batch["fps"])
 
         # Per-config params (independent)
@@ -682,27 +681,29 @@ class WorldTrainer(BaseTrainer):
 
         # Slice seed prefix for input; keep full ctrl for safe indexing in the sampler
         vid_prefix = vid_init[:, :nsf]
-        ctrl_full = controller_inputs  # None or full sequence; sampler will index per-frame
 
         with self.autocast_ctx:
             latent_vid = sampler(
                 ema_model,
                 vid_prefix,
                 prompt_emb,
-                ctrl_full,
                 fps=raw_batch["fps"],
-                num_frames=num_gen,
                 noise_prev=noise_prev,
+                mouse=mouse_full,
+                button=btn_full,
+                num_frames=num_gen,
                 noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
             )
 
         # Post-process according to only_return_generated policy
         if self.sampler_only_return_generated:
             latent_vid = None if latent_vid is None else latent_vid[:, nsf:]
-            ci_slice = None if controller_inputs is None else controller_inputs[:, nsf:nsf + num_gen]
+            mouse_slice = None if mouse_full is None else mouse_full[:, nsf:nsf + num_gen]
+            btn_slice = None if btn_full is None else btn_full[:, nsf:nsf + num_gen]
             num_gt_frames = 0
         else:
-            ci_slice = None if controller_inputs is None else controller_inputs[:, :nsf + num_gen]
+            mouse_slice = None if mouse_full is None else mouse_full[:, :nsf + num_gen]
+            btn_slice = None if btn_full is None else btn_full[:, :nsf + num_gen]
             num_gt_frames = nsf
 
         # Decode
@@ -710,8 +711,8 @@ class WorldTrainer(BaseTrainer):
 
         # Gather per-config outputs across ranks
         video_out = self._gather_concat_cpu(video_out)
-        ci = self._gather_concat_cpu(ci_slice)
-        mouse, btn = (None, None) if ci is None else torch.split(ci, [2, 11], dim=-1)
+        mouse = self._gather_concat_cpu(mouse_slice)
+        btn = self._gather_concat_cpu(btn_slice)
 
         # Gather literal prompts (for logging) across ranks
         if self.pg_cpu is not None:
@@ -731,6 +732,12 @@ class WorldTrainer(BaseTrainer):
         if self.rank == 0:
             n_out = 0 if video_out is None else video_out.size(0)
             labels_out = mk_labels(fps, n_out, noise_prev)
+
+            # convert many-hot btn Tensor -> List[Set]
+            hot = btn > 0
+            btn = [[set(torch.nonzero(hot[i, j]).flatten().tolist())
+                    for j in range(hot.size(1))] for i in range(hot.size(0))]
+            print(f"btn: {btn}")
 
             samples = to_wandb_samples(
                 video_out, mouse, btn,
