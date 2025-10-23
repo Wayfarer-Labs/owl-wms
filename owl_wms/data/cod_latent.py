@@ -36,26 +36,29 @@ class WindowedViewDataset(Dataset):
         sampling_periods: tuple[int, ...],
         include_missing_features: bool = False,
         include_truncated: bool = True,
-        meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps"),
+        meta_cols: tuple = ("vid_path", "missing", "truncated", "seq_len", "fps", "sample_rel_path"),
         array_columns: set | None = None,
         legal_fps: list[int] | None = None,
     ):
         self.window_length = window_length
         self.table = NpyTable(table_dir)
         self.sampling_periods = sampling_periods
+        self.requested_columns = set(array_columns) if array_columns is not None else set(self.table.columns)
 
         if array_columns is None:
             self.array_columns = [c for c in self.table.columns if c not in meta_cols]
         else:
             self.array_columns = [c for c in array_columns if c not in meta_cols]
 
+        self.meta_passthrough = [c for c in self.requested_columns if c not in set(self.array_columns) and c != "fps"]
+
         seq_len, missing, truncated, fps = self.table[["seq_len", "missing", "truncated", "fps"]]
         self.fps = fps
 
-        want_caps = (array_columns is not None and "captions" in array_columns)
+        want_caps = ("captions" in self.requested_columns)
         if "captions" in self.array_columns:
             self.array_columns.remove("captions")
-        self._captions_index = self.table["captions"] if want_caps else None
+        self._captions_index = self.table["captions"] if (want_caps and "captions" in self.table.columns) else None
 
         self._index = []
         for i, (L, miss, trunc, f) in enumerate(zip(seq_len, missing, truncated, fps)):
@@ -136,6 +139,16 @@ class WindowedViewDataset(Dataset):
             out["captions"] = cmap
 
         out["fps"] = torch.tensor(int(self.fps[row]) // stride, dtype=torch.long)
+
+        # Ensure all requested non-array columns are present.
+        # If the column doesn't exist in the table schema, fill with None.
+        for m in self.meta_passthrough:
+            if m in out:  # already set (e.g., captions handled above)
+                continue
+            if m in self.table.columns:
+                out[m] = self.table[m][row]
+            else:
+                out[m] = None
 
         return out
 

@@ -117,7 +117,7 @@ train:
     defaults:
       batch_size: 1
       seq_len: 512
-      batch_columns: ["depthlatent", "fps", "mouse", "button"]
+      batch_columns: ["depthlatent", "fps", "mouse", "button", "sample_rel_path"]
       latent_column: "depthlatent"
       sampling_periods: [1]
       legal_fps: [60]
@@ -138,8 +138,8 @@ train:
 
   samplers:
     prefix_30:
-      num_seed_frames: 150
-      num_generated_frames: 150
+      num_seed_frames: 250
+      num_generated_frames: 100
 
 wandb:
   name: wayfarerlabs

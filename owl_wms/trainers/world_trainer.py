@@ -218,6 +218,9 @@ class WorldTrainer(BaseTrainer):
             ]
         # ########
 
+        if "sample_rel_path" in batch:
+            del batch["sample_rel_path"]
+
         if "prompt" in batch:
             assert "prompt_emb" not in batch, "passed prompt to convert, but already have batch item `prompt_emb`"
             batch["prompt_emb"] = self.prompt_encoder(batch.pop("prompt"))
@@ -673,6 +676,7 @@ class WorldTrainer(BaseTrainer):
         mouse_full = eval_batch.get("mouse")
         btn_full = eval_batch.get("button")
         fps = int(raw_batch["fps"])
+        sample_paths = raw_batch.get("sample_rel_path", [])
 
         # Per-config params (independent)
         nsf = int(sample_cfg.get("num_seed_frames", 0) or 0)
@@ -721,13 +725,23 @@ class WorldTrainer(BaseTrainer):
             literal_prompt_all = [p for b in _bufs for p in (b if isinstance(b, list) else [b])]
         else:
             literal_prompt_all = literal_prompt
+        # Gather sample paths (to align with gathered videos)
+        if self.pg_cpu is not None:
+            _bufs = [None] * self.world_size
+            dist.all_gather_object(_bufs, sample_paths, group=self.pg_cpu)
+            sample_paths_all = [p for b in _bufs for p in b]
+        else:
+            sample_paths_all = sample_paths
 
         # Labels
         lw = int(ema_model.transformer.local_window)
         gw = int(ema_model.transformer.global_window)
         def mk_labels(fps_val: int, n: int, noise_prev_val: float):
             base = {"noise_prev": noise_prev_val, "local attn": lw, "global attn": gw}
-            return [{"fps": fps_val, **base} for _ in range(n)]
+            return [
+                {"fps": fps_val, "path": (sample_paths_all[i] if i < len(sample_paths_all) else None), **base}
+                for i in range(n)
+            ]
 
         if self.rank == 0:
             n_out = 0 if video_out is None else video_out.size(0)
