@@ -239,8 +239,11 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
                 else:
                     cv2.rectangle(overlay, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, -1, cv2.LINE_AA)
             else:
-                bth = 3 if sel else 1
-                cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, bth, cv2.LINE_AA)
+                # Keep 1px border on the key edge; if selected, grow outline OUTWARDS only.
+                cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, 1, cv2.LINE_AA)
+                if sel:
+                    for d in range(1, 3):  # add 2px outward -> same visual thickness as old 3px
+                        cv2.rectangle(img, (rect[0]-d, rect[1]-d), (rect[2]+d, rect[3]+d), BLACK, 1, cv2.LINE_AA)
                 s = _fit_scale(lbl, FONT, base_label_scale, 1, (rect[2] - rect[0]) - 6)
                 tx, ty, _, _ = _center_text_in_rect(lbl, rect, s, 1)
                 cv2.putText(img, lbl, (tx, ty), FONT, s, BLACK if sel else WHITE, 1, cv2.LINE_AA)
@@ -281,8 +284,11 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
 
     def draw_arrow_fg(rect, label):
         sel = _label_selected(label, selected_vks)
-        bth = 3 if sel else 1
-        cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, bth, cv2.LINE_AA)
+        # Same outward-only outline behavior for arrows.
+        cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), BLACK, 1, cv2.LINE_AA)
+        if sel:
+            for d in range(1, 3):
+                cv2.rectangle(img, (rect[0]-d, rect[1]-d), (rect[2]+d, rect[3]+d), BLACK, 1, cv2.LINE_AA)
         s = _fit_scale(label, FONT, 0.42, 1, (rect[2] - rect[0]) - 6)
         tx, ty, _, _ = _center_text_in_rect(label, rect, s, 1)
         color = BLACK if sel else WHITE

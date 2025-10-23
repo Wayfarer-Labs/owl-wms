@@ -89,6 +89,8 @@ class WorldDiTBlock(nn.Module):
 
         if config.text_conditioning == "cross_attention":
             self.text_cross_attn = owl_nn.CrossAttention(config, config.text_embedding_dim)
+        if self.config.ctrl_conditioning == "cross_attention":
+            self.ctrl_cross_attn = owl_nn.CrossAttentionSameFrame(config)
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -109,6 +111,9 @@ class WorldDiTBlock(nn.Module):
                 context=prompt_emb["emb"],
                 context_pad_mask=prompt_emb["pad_mask"]
             ) + x
+
+        if ctrl_emb is not None and self.config.ctrl_conditioning == "cross_attention":
+            x = self.ctrl_cross_attn(x, context=ctrl_emb) + x
 
         def cond_mlp(xm, sm, bm, gm):
             residual = xm
@@ -144,10 +149,6 @@ class WorldDiT(nn.Module):
             blk.attn.rope = ref_rope
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
-        if ctrl_emb is not None:
-            cond = cond + (ctrl_emb * 0)
-            # TODO: fix
-
         t_pos = pos_ids["t_pos"]
         if kv_cache is not None:
             t_pos = kv_cache.upsert_t_pos(t_pos)

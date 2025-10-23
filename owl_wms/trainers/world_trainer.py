@@ -737,7 +737,6 @@ class WorldTrainer(BaseTrainer):
             hot = btn > 0
             btn = [[set(torch.nonzero(hot[i, j]).flatten().tolist())
                     for j in range(hot.size(1))] for i in range(hot.size(0))]
-            print(f"btn: {btn}")
 
             samples = to_wandb_samples(
                 video_out, mouse, btn,

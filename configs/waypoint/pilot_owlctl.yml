@@ -35,6 +35,7 @@ model:
   cfg_prob: 0.1  # TODO: implement, currently unused
 
   text_conditioning: null
+  ctrl_conditioning: cross_attention
 
 
 train:
