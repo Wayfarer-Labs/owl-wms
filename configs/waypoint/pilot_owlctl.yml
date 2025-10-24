@@ -93,7 +93,7 @@ train:
     loaders:
       - data_id: sequence_packing
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/train
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_shift8/train
           sampling_periods: [1]
 
   n_eval_loss_samples: 8192
@@ -109,7 +109,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/eval
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_shift8/eval
           sampling_periods: [1]
 
   sample_data_id: multi
@@ -124,7 +124,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/eval
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_shift8/eval
           sampling_periods: [1]
 
   sampler_id: standard
