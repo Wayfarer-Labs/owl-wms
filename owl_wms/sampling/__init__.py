@@ -1,5 +1,8 @@
 def get_sampler_cls(sampler_id):
-    if sampler_id == "av_window":
+    if sampler_id == "standard":
+        from .standard import StandardSampler
+        return StandardSampler
+    elif sampler_id == "av_window":
         """
         Most basic Audio+Video sampler with CFG
         """

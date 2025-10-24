@@ -696,7 +696,6 @@ class WorldTrainer(BaseTrainer):
                 mouse=mouse_full,
                 button=btn_full,
                 num_frames=num_gen,
-                noise_distribution=getattr(self.train_cfg, "noise_distribution", "iid"),
             )
 
         # Post-process according to only_return_generated policy
