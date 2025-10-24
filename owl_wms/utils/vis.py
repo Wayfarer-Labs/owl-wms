@@ -257,8 +257,7 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
 
     # arrows (inverted T, ↑ centered over ↓)
     # Place cluster tucked near the BOTTOM-RIGHT of the keyboard, with a small gutter (no overlap).
-    gutter = max(gap * arrow_gutter_mult, gap * 2)
-    arrows_left = main_right + gutter
+    arrows_left = main_right + unit
     # Align the bottom row of arrows with the keyboard bottom edge.
     kb_bottom = y0 + (5 * unit + 4 * gap)
     bottom_y = kb_bottom - unit
@@ -300,9 +299,10 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
     for rect, label in [(left_r,"<"), (down_r,"v"), (right_r,">"), (up_r,"^")]:
         draw_arrow_fg(rect, label)
 
-    # Return layout rects for downstream placement (keyboard rect, arrow rect)
+    # Return layout rects + unit & gap for downstream alignment
     arrow_right = arrows_left + (3 * unit + 2 * gap)
-    return (main_left, y0, main_right, kb_bottom), (arrows_left, up_y, arrow_right, bottom_y + unit)
+    return (main_left, y0, main_right, kb_bottom), (arrows_left, up_y, arrow_right, bottom_y + unit), unit, gap
+
 
 def _draw_mouse_panel(img: np.ndarray, pressed_ids: set[int],
                       origin: tuple[int,int] = (10, 110),
@@ -409,29 +409,43 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
     # Keyboard with VK selection
     selected_vks = set(button) if button is not None else set()
 
-    kb_rect, arr_rect = _draw_keyboard(frame, selected_vks)
+    kb_rect, arr_rect, unit, key_gap = _draw_keyboard(frame, selected_vks)
     # Mouse clicks panel (IDs 1..6 map directly), to the RIGHT of arrows/keyboard with no overlap.
     # Compute panel size (mirrors _draw_mouse_panel defaults).
     title = "mouse"
     (tw, th), _ = cv2.getTextSize(title, FONT, 0.45, 1)
-    _cell_w, _cell_h, _gap, _pad = 36, 24, 6, 6
+    # Mouse buttons match keyboard letter keys (square unit×unit)
+    _cell_w, _cell_h, _gap, _pad = unit, unit, key_gap, 6
     _inner_w = 2 * _cell_w + _gap
     panel_w = _inner_w + 2 * _pad
     panel_h = th + _gap + 3 * _cell_h + 2 * _gap + 2 * _pad
-    # place slightly to the right of the arrow cluster, align tops, clamp to frame
-    mx0 = min(arr_rect[2] + _gap * 2, W - panel_w - 6)
-    my0 = min(arr_rect[1],           H - panel_h - 6)
-    _draw_mouse_panel(frame, {int(v) for v in selected_vks if 1 <= int(v) <= 6}, origin=(mx0, my0))
+    # Align rows: (1,2)=U/I/O/P, (3,4)=N/M/Shift, (5,6)=Space
+    first_grid_row_top = kb_rect[1] + (unit + key_gap) * 1
+    my0 = min(max(0, first_grid_row_top - (_pad + th + _gap)), H - panel_h - 6)
+    # Place mouse panel to the right of arrows, leaving ≥1 unit gap between them
+    mx0 = min(arr_rect[2] + key_gap + unit, W - panel_w - 6)
+    _draw_mouse_panel(
+        frame,
+        {int(v) for v in selected_vks if 1 <= int(v) <= 6},
+        origin=(mx0, my0),
+        cell_w=_cell_w, cell_h=_cell_h, gap=_gap, pad=_pad
+    )
 
-    # Compass: move to BOTTOM-RIGHT
-    circle_radius = 40
-    circle_center = (W - circle_radius - 10, H - circle_radius - 10)
-    cv2.circle(frame, circle_center, circle_radius, WHITE, 1)
-    if mouse is not None:
-        mouse = mouse * 0.25  # TODO clean up / HACK: scale mouse x,y to 1/4
-        mx = int(mouse[0].item() * circle_radius + circle_center[0])
-        my = int(mouse[1].item() * circle_radius + circle_center[1])
-        cv2.arrowedLine(frame, circle_center, (mx, my), (0, 255, 0), 2)
+    # Mouse circle: same height as the TOP 3 key rows and centered between keyboard and mouse.
+    top3_h = 3 * unit + 2 * key_gap
+    margin = key_gap
+    left_bound  = kb_rect[2] + margin          # between keyboard block and mouse panel
+    right_bound = mx0 - margin
+    if right_bound > left_bound:
+        target_radius = top3_h // 2
+        circle_radius = min(target_radius, (right_bound - left_bound) // 2)
+        circle_center = ((left_bound + right_bound) // 2, kb_rect[1] + target_radius)
+        cv2.circle(frame, circle_center, circle_radius, WHITE, 1)
+        if mouse is not None:
+            mouse = mouse * 0.25  # TODO clean up / HACK: scale mouse x,y to 1/4
+            mx = int(mouse[0].item() * circle_radius + circle_center[0])
+            my = int(mouse[1].item() * circle_radius + circle_center[1])
+            cv2.arrowedLine(frame, circle_center, (mx, my), (0, 255, 0), 2)
 
     # Return CHW RGB
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
