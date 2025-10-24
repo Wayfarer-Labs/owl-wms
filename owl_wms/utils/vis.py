@@ -202,7 +202,7 @@ def _render_top_left_banner(img: np.ndarray, text: str, right_edge_x: int, max_h
 def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
                    pad: int = 12, gap: int = 6, scale_factor: float = 0.7,
                    base_label_scale: float = 0.42, key_alpha: float = 0.3,
-                   arrow_gutter_mult: int = 5):
+                   arrow_gutter_mult: int = 2):
     H, W = img.shape[:2]
 
     def sum_units(row): return sum(w for _, w in row)
@@ -215,7 +215,7 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
         return int(round(sum(w * unit for _, w in row) + (len(row) - 1) * gap))
 
     block_w = max(row_px(r) for r in _KEY_ROWS)
-    main_left = pad
+    main_left  = pad
     main_right = main_left + block_w
 
     total_h = 5 * unit + 4 * gap
@@ -256,9 +256,12 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
         y += unit + gap
 
     # arrows (inverted T, ↑ centered over ↓)
-    gutter = arrow_gutter_mult * gap
+    # Place cluster tucked near the BOTTOM-RIGHT of the keyboard, with a small gutter (no overlap).
+    gutter = max(gap * arrow_gutter_mult, gap * 2)
     arrows_left = main_right + gutter
-    bottom_y = y0 + unit * 3 + gap * 3
+    # Align the bottom row of arrows with the keyboard bottom edge.
+    kb_bottom = y0 + (5 * unit + 4 * gap)
+    bottom_y = kb_bottom - unit
     left_r  = (arrows_left,                    bottom_y, arrows_left + unit,                    bottom_y + unit)
     down_r  = (arrows_left + (unit + gap),     bottom_y, arrows_left + 2*unit + gap,            bottom_y + unit)
     right_r = (arrows_left + 2*(unit + gap),   bottom_y, arrows_left + 3*unit + 2*gap,          bottom_y + unit)
@@ -297,6 +300,81 @@ def _draw_keyboard(img: np.ndarray, selected_vks: set[int],
     for rect, label in [(left_r,"<"), (down_r,"v"), (right_r,">"), (up_r,"^")]:
         draw_arrow_fg(rect, label)
 
+    # Return layout rects for downstream placement (keyboard rect, arrow rect)
+    arrow_right = arrows_left + (3 * unit + 2 * gap)
+    return (main_left, y0, main_right, kb_bottom), (arrows_left, up_y, arrow_right, bottom_y + unit)
+
+def _draw_mouse_panel(img: np.ndarray, pressed_ids: set[int],
+                      origin: tuple[int,int] = (10, 110),
+                      cell_w: int = 36, cell_h: int = 24,
+                      gap: int = 6, pad: int = 6,
+                      key_alpha: float = 0.3):
+    """
+    Rectangle labelled 'mouse' with a 2x3 grid:
+      1  2
+      3  4
+      5  6
+    Numbers map directly to button IDs. Visual style matches keyboard keys:
+    - Unpressed: dark, semi-transparent fill
+    - Pressed: solid white fill, outward-only outline, black text
+    """
+    x0, y0 = origin
+    title = "mouse"
+    (tw, th), _ = cv2.getTextSize(title, FONT, 0.45, 1)
+    inner_w = 2 * cell_w + gap
+    box_w = inner_w + 2 * pad
+    box_h = th + gap + 3 * cell_h + 2 * gap + 2 * pad
+    x1, y1 = x0 + box_w, y0 + box_h
+
+    # Outer panel box
+    cv2.rectangle(img, (x0, y0), (x1, y1), BLACK, 1, cv2.LINE_AA)
+
+    # Title centered
+    tx = x0 + pad + max(0, (inner_w - tw) // 2)
+    ty = y0 + pad + th
+    cv2.putText(img, title, (tx, ty), FONT, 0.45, WHITE, 1, cv2.LINE_AA)
+
+    # Grid origin
+    gx, gy = x0 + pad, y0 + pad + th + gap
+
+    # -------- BG pass (match keyboard's overlay blend) --------
+    overlay = img.copy()
+    idx = 1
+    cells: list[tuple[int,int,int,int,int]] = []  # store rects with idx
+    for r in range(3):
+        for c in range(2):
+            rx0 = gx + c * (cell_w + gap)
+            ry0 = gy + r * (cell_h + gap)
+            rx1, ry1 = rx0 + cell_w, ry0 + cell_h
+            cells.append((rx0, ry0, rx1, ry1, idx))
+            pressed = idx in pressed_ids
+            if pressed:
+                # Draw to BOTH so white persists after blend (same trick as keyboard)
+                cv2.rectangle(img,     (rx0, ry0), (rx1, ry1), WHITE, -1, cv2.LINE_AA)
+                cv2.rectangle(overlay, (rx0, ry0), (rx1, ry1), WHITE, -1, cv2.LINE_AA)
+            else:
+                cv2.rectangle(overlay, (rx0, ry0), (rx1, ry1), BLACK, -1, cv2.LINE_AA)
+            idx += 1
+
+    # Blend non-pressed cells
+    cv2.addWeighted(overlay, key_alpha, img, 1 - key_alpha, 0, img)
+
+    # -------- FG pass (borders + labels, matching keyboard) --------
+    for rx0, ry0, rx1, ry1, idx in cells:
+        pressed = idx in pressed_ids
+        # 1px border, add outward outline if pressed
+        cv2.rectangle(img, (rx0, ry0), (rx1, ry1), BLACK, 1, cv2.LINE_AA)
+        if pressed:
+            for d in range(1, 3):
+                cv2.rectangle(img, (rx0 - d, ry0 - d), (rx1 + d, ry1 + d), BLACK, 1, cv2.LINE_AA)
+
+        # Label (no brackets)
+        label = str(idx)
+        s = _fit_scale(label, FONT, 0.42, 1, (rx1 - rx0) - 6)
+        tx, ty, _, _ = _center_text_in_rect(label, (rx0, ry0, rx1, ry1), s, 1)
+        color = BLACK if pressed else WHITE
+        cv2.putText(img, label, (tx, ty), FONT, s, color, 1, cv2.LINE_AA)
+
 # =========================
 # Public API
 # =========================
@@ -320,15 +398,6 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     H, W = frame.shape[:2]
 
-    # Compass
-    circle_center, circle_radius = (50, 50), 40
-    cv2.circle(frame, circle_center, circle_radius, WHITE, 1)
-    if mouse is not None:
-        mouse = mouse * 0.25  # TODO clean up / HACK: scale mouse x,y to 1/4
-        mx = int(mouse[0].item() * circle_radius + circle_center[0])
-        my = int(mouse[1].item() * circle_radius + circle_center[1])
-        cv2.arrowedLine(frame, circle_center, (mx, my), (0, 255, 0), 2)
-
     # Top-right badge and top-left caption banner
     bx0, by0, bx1, by1 = _render_badge_top_right(frame, is_gt=is_gt, labels=labels)
     badge_h = max(24, by1 - by0)  # robust default
@@ -339,7 +408,30 @@ def draw_frame(frame, mouse, button, labels=None, is_gt=None, prompts=None):
 
     # Keyboard with VK selection
     selected_vks = set(button) if button is not None else set()
-    _draw_keyboard(frame, selected_vks)
+
+    kb_rect, arr_rect = _draw_keyboard(frame, selected_vks)
+    # Mouse clicks panel (IDs 1..6 map directly), to the RIGHT of arrows/keyboard with no overlap.
+    # Compute panel size (mirrors _draw_mouse_panel defaults).
+    title = "mouse"
+    (tw, th), _ = cv2.getTextSize(title, FONT, 0.45, 1)
+    _cell_w, _cell_h, _gap, _pad = 36, 24, 6, 6
+    _inner_w = 2 * _cell_w + _gap
+    panel_w = _inner_w + 2 * _pad
+    panel_h = th + _gap + 3 * _cell_h + 2 * _gap + 2 * _pad
+    # place slightly to the right of the arrow cluster, align tops, clamp to frame
+    mx0 = min(arr_rect[2] + _gap * 2, W - panel_w - 6)
+    my0 = min(arr_rect[1],           H - panel_h - 6)
+    _draw_mouse_panel(frame, {int(v) for v in selected_vks if 1 <= int(v) <= 6}, origin=(mx0, my0))
+
+    # Compass: move to BOTTOM-RIGHT
+    circle_radius = 40
+    circle_center = (W - circle_radius - 10, H - circle_radius - 10)
+    cv2.circle(frame, circle_center, circle_radius, WHITE, 1)
+    if mouse is not None:
+        mouse = mouse * 0.25  # TODO clean up / HACK: scale mouse x,y to 1/4
+        mx = int(mouse[0].item() * circle_radius + circle_center[0])
+        my = int(mouse[1].item() * circle_radius + circle_center[1])
+        cv2.arrowedLine(frame, circle_center, (mx, my), (0, 255, 0), 2)
 
     # Return CHW RGB
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

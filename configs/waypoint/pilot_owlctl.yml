@@ -93,7 +93,7 @@ train:
     loaders:
       - data_id: sequence_packing
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control/train
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/train
           sampling_periods: [1]
 
   n_eval_loss_samples: 8192
@@ -109,7 +109,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control/eval
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/eval
           sampling_periods: [1]
 
   sample_data_id: multi
@@ -124,7 +124,7 @@ train:
     loaders:
       - data_id: cod
         data_kwargs:
-          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control/eval
+          dataset_path: /mnt/data/waypoint_1/wm_npy/owl_control_2/eval
           sampling_periods: [1]
 
   sampler_id: av_caching
@@ -138,8 +138,8 @@ train:
 
   samplers:
     prefix_30:
-      num_seed_frames: 250
-      num_generated_frames: 100
+      num_seed_frames: 150
+      num_generated_frames: 150
 
 wandb:
   name: wayfarerlabs
