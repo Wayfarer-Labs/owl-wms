@@ -22,7 +22,7 @@ from ..muon import init_muon
 
 # Prevent eager mode by increasing recompile limit
 import torch._dynamo as dynamo
-dynamo.config.recompile_limit = 32
+dynamo.config.recompile_limit = 64
 
 
 # speed up fp32
@@ -385,7 +385,8 @@ class WorldTrainer(BaseTrainer):
         v_target = x1 - x0
         L_main = F.mse_loss(v_pred, v_target, reduction=reduction)
         L_hat = F.mse_loss(v_pred_hat, v_target, reduction=reduction)
-        losses = L_main * 0.25 + L_hat
+        lamb = 0.5
+        losses = L_main * lamb + L_hat * (1 - lamb)
         return (losses, sigma[:, :N]) if return_sigma else losses
 
     def flow_matching_loss(self, model, x, reduction="mean", return_sigma=False, **kw):

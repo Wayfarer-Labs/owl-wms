@@ -33,7 +33,9 @@ class StandardSampler:
 
         # snap noise_prev to nearest scheduler sigma (excluding the last)
         noise_prev = torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)
-        noise_prev = self.scheduler.sigmas[:-1][(self.scheduler.sigmas[:-1] - noise_prev).abs().argmin()]
+        _sig = self.scheduler.sigmas.to(x.device, x.dtype)
+        if not torch.isclose(noise_prev, _sig[-1], rtol=1e-5, atol=1e-8):
+            noise_prev = _sig[:-1][(_sig[:-1] - noise_prev).abs().argmin()]
 
         # initialize running noised history once at snapped noise_prev (iid)
         g_hist = torch.randn_like(x) if init_len else x.new_empty((B, 0, *x.shape[2:]))
@@ -65,7 +67,7 @@ class StandardSampler:
             noise_prev: Tensor
     ):
         """Run all denoising steps for the new frame (no KV cache)."""
-        sigma_prev = hist.new_full(hist.shape[:2], noise_prev)
+        sigma_prev = hist.new_full(hist.shape[:2], float(noise_prev))
         new_vid = torch.randn_like(hist[:, :1])
         hist_new = None
         sig = self.scheduler.sigmas.to(hist.device, hist.dtype)
@@ -82,6 +84,9 @@ class StandardSampler:
             # FlowMatchEulerDiscreteScheduler step
             dsigma = self.scheduler.sigmas[step + 1] - self.scheduler.sigmas[step]
             new_vid = (new_vid.float() + dsigma.float() * v.float()).type_as(new_vid)
+
+        if torch.isclose(noise_prev.to(sig.dtype), sig[-1], rtol=1e-5, atol=1e-8):
+            hist_new = new_vid
 
         assert hist_new is not None, "noise_prev must lie within the scheduler sigma range."
         return new_vid, hist_new

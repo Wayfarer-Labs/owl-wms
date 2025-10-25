@@ -228,7 +228,7 @@ class ControllerCrossAttention(nn.Module):
         tpf = self.config.tokens_per_frame
         assert Lq % tpf == 0, f"Lq={Lq} not divisible by tokens_per_frame={tpf}"
         p = t_pos.view(B, -1, tpf)  # [B, frames, tpf]
-        assert (p == p[..., :1]).all().item(), "t_pos not constant within frames"
+        assert (p == p[..., :1]).all(), "t_pos not constant within frames"
 
         context_pos = t_pos[:, ::tpf]
         assert context_pos.size(1) == M, f"M={M} must equal frames={context_pos.size(1)}"
