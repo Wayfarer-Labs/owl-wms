@@ -46,9 +46,10 @@ class StandardSampler:
             ctx_btn   = button[:, start - hist_len : start + 1] if button is not None else None
             ctx_ts    = frame_timestamps[:, start - hist_len : start + 1]
 
-            x, hist = self.denoise_frame(model, prompt_emb, hist, ctx_mouse, ctx_btn, ctx_ts, noise_prev)
+            x, hist_new = self.denoise_frame(model, prompt_emb, hist, ctx_mouse, ctx_btn, ctx_ts, noise_prev)
 
             latents.append(x)
+            hist = torch.cat([hist, hist_new], dim=1)
 
         return torch.cat(latents, dim=1)
 
