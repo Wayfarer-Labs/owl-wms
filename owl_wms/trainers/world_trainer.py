@@ -362,7 +362,7 @@ class WorldTrainer(BaseTrainer):
         with self.autocast_ctx:
             v_pred_hat = model(x_t, sigma, **kw)
         clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
-        x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat
+        x_hat = x_t + (clean_sigma - sigma).view(B, N, 1, 1, 1) * v_pred_hat.detach()
 
         # Construct sequence with predicted clean frames and original noised frames
         # noised frames can only attend to clean frames

@@ -33,7 +33,7 @@ class StandardSampler:
 
         # snap noise_prev to nearest scheduler sigma (excluding the last)
         noise_prev = torch.as_tensor(noise_prev, device=x.device, dtype=x.dtype)
-        _sig = self.scheduler.sigmas.to(x.device, x.dtype)
+        _sig = self.scheduler.sigmas.to(x)
         if not torch.isclose(noise_prev, _sig[-1], rtol=1e-5, atol=1e-8):
             noise_prev = _sig[:-1][(_sig[:-1] - noise_prev).abs().argmin()]
 
@@ -67,10 +67,10 @@ class StandardSampler:
             noise_prev: Tensor
     ):
         """Run all denoising steps for the new frame (no KV cache)."""
-        sigma_prev = hist.new_full(hist.shape[:2], float(noise_prev))
+        sigma_prev = noise_prev.to(hist).expand(hist.shape[0], hist.shape[1])
         new_vid = torch.randn_like(hist[:, :1])
         hist_new = None
-        sig = self.scheduler.sigmas.to(hist.device, hist.dtype)
+        sig = self.scheduler.sigmas.to(hist)
 
         for step in range(self.n_steps):
             sig_val = sig[step]
