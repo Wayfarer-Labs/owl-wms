@@ -53,6 +53,7 @@ class StandardSampler:
 
         return torch.cat(latents, dim=1)
 
+    @torch.compile
     def denoise_frame(
             self,
             model: Any,

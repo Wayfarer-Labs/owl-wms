@@ -1,4 +1,4 @@
-from .attn import get_block_mask, AttnMaskScheduler, Attn, CrossAttention, CrossAttentionSameFrame
+from .attn import get_block_mask, AttnMaskScheduler, Attn, CrossAttention, CrossAttentionSameFrame, ControllerCrossAttention
 from .checkpointing import checkpoint, maybe_ckpt
 from .embeddings import TimestepEmbedding, ControlEmbedding, NoiseConditioner
 from .mlp import MLP, MLPCustom, QMLP

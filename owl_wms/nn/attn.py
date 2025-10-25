@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .normalization import rms_norm
-from .rope import get_rope
+from .rope import get_rope, SeqRoPE
 
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 
@@ -192,12 +192,63 @@ class CrossAttentionSameFrame(nn.Module):
 
         return create_block_mask(mask_mod, B=B, H=H, Q_LEN=Lq, KV_LEN=M, device=q.device)
 
-    def forward(self, x, context, context_pad_mask=None):
+    def forward(self, x, context):
         q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
         k = eo.rearrange(self.k_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
         v = eo.rearrange(self.v_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
         q, k = rms_norm(q), rms_norm(k)
         block_mask = self.get_block_mask(q, k)
+        out = flex_attention(q, k, v, block_mask=block_mask)
+        out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
+        return self.out_proj(out)
+
+
+class ControllerCrossAttention(nn.Module):
+    HARDCODED_WINDOW = 32  # TODO: DONT HARDCODE
+
+    def __init__(self, config, context_dim=None):
+        super().__init__()
+        self.config = config
+        assert config.d_model % config.n_heads == 0
+        self.n_heads = config.n_heads
+        self.q_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+        self.k_proj = nn.Linear(context_dim or config.d_model, config.d_model, bias=False)
+        self.v_proj = nn.Linear(context_dim or config.d_model, config.d_model, bias=False)
+        self.out_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+
+        self.rope = SeqRoPE(config)
+
+    def get_block_mask(self, q, k, t_pos):
+        """Note: assumes query is H*W tokens per frame and context is a single token per frame"""
+        B, H, Lq, _ = q.shape
+        M = k.size(2)
+
+        # NOTE: assumes context is 1 token per frame
+        # TODO: make less brittle
+        tpf = self.config.tokens_per_frame
+        assert Lq % tpf == 0, f"Lq={Lq} not divisible by tokens_per_frame={tpf}"
+        p = t_pos.view(B, -1, tpf)  # [B, frames, tpf]
+        assert (p == p[..., :1]).all().item(), "t_pos not constant within frames"
+
+        context_pos = t_pos[:, ::tpf]
+        assert context_pos.size(1) == M, f"M={M} must equal frames={context_pos.size(1)}"
+
+        def mask_mod(b, h, q, kv):
+            t_q, t_kv = t_pos[b, q], context_pos[b, kv]
+            causal_mask = (t_kv <= t_q)
+            window_mask = (t_q - t_kv).abs() < self.HARDCODED_WINDOW
+            return causal_mask & window_mask
+
+        return create_block_mask(mask_mod, B=B, H=H, Q_LEN=Lq, KV_LEN=M, device=q.device)
+
+    def forward(self, x, context, pos_ids):
+        """Assumes shared positions / shared count between x and context"""
+        q = eo.rearrange(self.q_proj(x), "b t (h d) -> b h t d", h=self.n_heads)
+        k = eo.rearrange(self.k_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
+        v = eo.rearrange(self.v_proj(context), "b t (h d) -> b h t d", h=self.n_heads)
+        q = self.rope(q, pos_ids)
+        k = self.rope(k, pos_ids[:, ::self.config.tokens_per_frame])
+        block_mask = self.get_block_mask(q, k, pos_ids["t_pos"])
         out = flex_attention(q, k, v, block_mask=block_mask)
         out = out.transpose(1, 2).contiguous().reshape(x.size(0), x.size(1), -1)
         return self.out_proj(out)

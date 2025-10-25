@@ -89,8 +89,11 @@ class WorldDiTBlock(nn.Module):
 
         if config.text_conditioning == "cross_attention":
             self.text_cross_attn = owl_nn.CrossAttention(config, config.text_embedding_dim)
-        if self.config.ctrl_conditioning == "cross_attention":
+
+        if self.config.ctrl_conditioning == "cross_attention_same_frame":
             self.ctrl_cross_attn = owl_nn.CrossAttentionSameFrame(config)
+        elif self.config.ctrl_conditioning == "cross_attention":
+            self.ctrl_cross_attn = owl_nn.ControllerCrossAttention(config)
 
     def forward(self, x, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache=None):
         """
@@ -113,7 +116,7 @@ class WorldDiTBlock(nn.Module):
             ) + x
 
         if ctrl_emb is not None and self.config.ctrl_conditioning == "cross_attention":
-            x = self.ctrl_cross_attn(x, context=ctrl_emb) + x
+            x = self.ctrl_cross_attn(x, context=ctrl_emb, pos_ids=pos_ids) + x
 
         def cond_mlp(xm, sm, bm, gm):
             residual = xm
