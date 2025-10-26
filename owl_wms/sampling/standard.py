@@ -1,7 +1,8 @@
 from typing import Optional, Any
+from diffusers import FlowMatchEulerDiscreteScheduler
+from tqdm import tqdm
 from torch import Tensor
 import torch
-from diffusers import FlowMatchEulerDiscreteScheduler
 
 
 class StandardSampler:
@@ -41,12 +42,12 @@ class StandardSampler:
         g_hist = torch.randn_like(x) if init_len else x.new_empty((B, 0, *x.shape[2:]))
         hist = torch.lerp(x, g_hist, noise_prev)
 
-        for i in range(num_frames):
-            start = init_len + i
+        for idx in tqdm(range(num_frames), desc="Sampling frames"):
+            start = init_len + idx
             hist_len = hist.size(1)  # match conditioning length to `hist`
-            ctx_mouse = mouse[:, start - hist_len : start + 1] if mouse is not None else None
-            ctx_btn   = button[:, start - hist_len : start + 1] if button is not None else None
-            ctx_ts    = frame_timestamps[:, start - hist_len : start + 1]
+            ctx_mouse = mouse[:, start - hist_len: start + 1] if mouse is not None else None
+            ctx_btn = button[:, start - hist_len: start + 1] if button is not None else None
+            ctx_ts = frame_timestamps[:, start - hist_len: start + 1]
 
             x, hist_new = self.denoise_frame(model, prompt_emb, hist, ctx_mouse, ctx_btn, ctx_ts, noise_prev)
 

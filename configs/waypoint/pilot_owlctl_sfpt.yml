@@ -41,7 +41,7 @@ model:
 train:
   trainer_id: world
 
-  sfpt: true
+  sfpt_v2: true
   noise_prev: 0.0
   image_only_warmup: null
   bidirectional_warmup: null

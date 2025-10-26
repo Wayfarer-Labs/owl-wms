@@ -315,6 +315,8 @@ class WorldTrainer(BaseTrainer):
             loss = self.progressive_flow_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         elif getattr(self.train_cfg, "sfpt", False):
             loss = self.sfpt_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
+        elif getattr(self.train_cfg, "sfpt_v2", False):
+            loss = self.sfpt_v2_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         else:
             loss = self.flow_matching_loss(model, **batch, reduction=reduction, return_sigma=return_sigma)
         if return_sigma:
@@ -346,9 +348,50 @@ class WorldTrainer(BaseTrainer):
         pref = torch.full((B, N - R), p, device=device, dtype=dtype)
         return torch.cat((pref, r), dim=1)
 
-    def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+    def sfpt_v2_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
         assert self.train_cfg.noise_prev == 0.0, "No evidenced strategy for handling noise_prev > 0.0"
 
+        x0 = x
+        B, N = x0.size(0), x0.size(1)
+
+        # sample diffusion forcing noised frames and self-consistency masks
+        with torch.no_grad():
+            sigma = torch.randn(B, N, device=x0.device, dtype=x0.dtype).sigmoid()  # LogitNormal(0,1)
+            clean_sigma = torch.full_like(sigma, self.train_cfg.noise_prev)
+            kwargs = {
+                **kw,
+                "sigma": torch.cat((sigma, clean_sigma), dim=1),
+                "frame_timestamp": kw["frame_timestamp"].repeat(1, 2),
+                "doc_id": kw["doc_id"].repeat(1, 2) if kw.get("doc_id") is not None else None,
+                "curr_frame_mask": (torch.arange(N * 2, device=x0.device) < N).repeat(B, 1),  # N noised (1), N clean (0)
+            }
+            x1 = torch.randn_like(x0)
+            x_t = torch.lerp(x0, x1, sigma[..., None, None, None])
+            v_target = x1 - x0
+
+        with self.autocast_ctx:
+            # IM diffusion forcing forward
+            x_pass0 = torch.cat((x_t, x0), dim=1)
+            kwargs_p0 = {k: (v.detach().clone() if torch.is_tensor(v) else v) for k, v in kwargs.items()}
+            v_pred_hat = model(x_pass0, **kwargs_p0)[:, :N]
+
+            # reconstruct clean latents for self-consistency
+            x_hat = x_t + (clean_sigma - sigma)[..., None, None, None] * v_pred_hat.detach()
+
+            # self-consistency forward
+            x_pass1 = torch.cat((x_t, x_hat), dim=1)
+            kwargs_p1 = {k: (v.detach().clone() if torch.is_tensor(v) else v) for k, v in kwargs.items()}
+            v_pred = model(x_pass1, **kwargs_p1)[:, :N]
+
+        # combined loss
+        L_main = F.mse_loss(v_pred, v_target, reduction=reduction)
+        L_hat = F.mse_loss(v_pred_hat, v_target, reduction=reduction)
+        lamb = 0.5
+        losses = torch.lerp(L_hat, L_main, lamb)
+        return (losses, sigma[:, :N]) if return_sigma else losses
+
+    def sfpt_loss(self, model, x, reduction="mean", return_sigma=False, **kw):
+        assert self.train_cfg.noise_prev == 0.0, "No evidenced strategy for handling noise_prev > 0.0"
         x0 = x
         B, N = x0.size(0), x0.size(1)
 

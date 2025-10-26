@@ -135,8 +135,8 @@ class WorldDiT(nn.Module):
         self.config = config
         self.attn_masker = owl_nn.AttnMaskScheduler(config)
 
-        self.local_window = nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
-        self.global_window = nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
+        self.local_window = config.local_window  # nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
+        self.global_window = config.global_window  # nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
 
         self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
 
