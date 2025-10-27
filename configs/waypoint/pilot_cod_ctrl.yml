@@ -53,13 +53,12 @@ train:
   opt_kwargs:
     lr: 1.0e-3
     momentum: 0.95
+    weight_decay: 1.0e-2
     adamw_lr: 1.0e-4
-    adamw_wd: 1.0e-4
+    adamw_wd: 1.0e-2
     adamw_eps: 1.0e-6
     adamw_betas: [0.9, 0.95]
     adamw_keys: [patchify, unpatchify, _emb, cond_proj, out_norm, gate_proj, null_prompt, prompt_proj]
-    adamw_low_lr_keys: []
-    adamw_low_lr_mul: 0.1
 
   scheduler: null
 
