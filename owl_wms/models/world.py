@@ -117,6 +117,8 @@ class WorldDiTBlock(nn.Module):
 
         if ctrl_emb is not None and self.config.ctrl_conditioning == "cross_attention":
             x = self.ctrl_cross_attn(x, context=ctrl_emb, pos_ids=pos_ids) + x
+        elif ctrl_emb is not None and self.config.ctrl_conditioning == "cross_attention_same_frame":
+            x = self.ctrl_cross_attn(x, context=ctrl_emb) + x
 
         def cond_mlp(xm, sm, bm, gm):
             residual = xm
