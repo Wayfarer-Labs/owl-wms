@@ -11,10 +11,10 @@ model:
   gradient_checkpointing: false
   ####
 
-  tokens_per_frame: 64
-  height: 8
-  width: 8
-  patch: [2, 2]
+  tokens_per_frame: 256
+  height: 16
+  width: 16
+  patch: [1, 1]
 
   base_fps: 60  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
