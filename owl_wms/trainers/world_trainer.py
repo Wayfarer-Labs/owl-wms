@@ -495,7 +495,7 @@ class WorldTrainer(BaseTrainer):
             L = N // K
 
             def one_seq():
-                seg = torch.rand(K + 1, L, device=device, dtype=dtype).sort(-1).values
+                seg = torch.rand(K + 1, L, device=device, dtype=dtype).sort(-1).values  # U(0, 1)
                 r = torch.randint(0, L, (), device=device)
                 x = torch.cat([seg[0, :r], seg[1:K].flatten(), seg[K]], -1)[:N]
                 ids = torch.cat([torch.zeros(r, device=device, dtype=torch.long),
@@ -504,12 +504,12 @@ class WorldTrainer(BaseTrainer):
                 return x, ids
 
             sigmas, seq_ids = zip(*(one_seq() for _ in range(B)))
-            return torch.stack(sigmas), torch.stack(seq_ids)
+            sigmas = torch.stack(sigmas).clamp_min(self.train_cfg.noise_prev)
+            return sigmas, torch.stack(seq_ids)
 
         with torch.no_grad():
             v_target = torch.randn_like(x0) - x0  # iid
 
-            assert self.train_cfg.noise_prev == 0.0
             num_subsequences = N // self.train_cfg.sampler_kwargs.n_steps
             sigma, sigma_ids = ernest_khalimov_sampler(K=num_subsequences, device=x0.device, dtype=x0.dtype)
 

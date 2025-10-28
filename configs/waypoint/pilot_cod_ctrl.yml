@@ -41,7 +41,8 @@ model:
 train:
   trainer_id: world
 
-  noise_prev: 0.2
+  prog_flow: true
+  noise_prev: 0.008928571827709675
   image_only_warmup: null
   bidirectional_warmup: null
 
@@ -84,7 +85,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 64
+      seq_len: 60
       batch_columns: ["depthlatent", "fps", "mouse", "button"]
       latent_column: "depthlatent"
       sampling_periods: [1]
@@ -100,7 +101,7 @@ train:
   eval_data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 192
+      seq_len: 180
       batch_columns: ["depthlatent", "fps", "mouse", "button"]
       latent_column: "depthlatent"
       sampling_periods: [1]
