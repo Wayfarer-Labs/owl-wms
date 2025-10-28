@@ -2,6 +2,9 @@ def get_sampler_cls(sampler_id):
     if sampler_id == "standard":
         from .standard import StandardSampler
         return StandardSampler
+    if sampler_id == "standard_progressive":
+        from .standard_progressive import StandardProgressiveSampler
+        return StandardProgressiveSampler
     elif sampler_id == "av_window":
         """
         Most basic Audio+Video sampler with CFG

@@ -126,7 +126,7 @@ train:
           dataset_path: /mnt/data/lapp0/BlackOpsColdWar_npy/eval
           sampling_periods: [1]
 
-  sampler_id: av_caching
+  sampler_id: standard_progressive
   sampler_kwargs:
     n_steps: 20
     cfg_scale: 1.0
