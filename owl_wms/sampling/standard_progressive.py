@@ -47,7 +47,7 @@ class StandardProgressiveSampler:
             x, new_levels = self.denoise_frame(model, prompt_emb, hist_levels, ctx_mouse, ctx_btn, ctx_ts)
 
             latents.append(x)
-            hist_levels = torch.cat([hist_levels, new_levels], dim=2)
+            hist_levels = torch.cat([hist_levels, new_levels], dim=2)  # cat along sequence dim
 
         return torch.cat(latents, dim=1)
 
@@ -61,38 +61,27 @@ class StandardProgressiveSampler:
             btn: Optional[Tensor],
             frame_ts: Tensor,
     ):
-        """Denoise a new frame; return final frame and per-step states as a tensor [S, B, 1, C, H, W]."""
+        """Denoise a new frame; return final frame and per-step states as [S, B, 1, C, H, W]."""
         # hist_levels: [S, B, L, C, H, W]
-        base = hist_levels[0]                      # [B, L, C, H, W]
-        B, L = base.size(0), base.size(1)
-        T = frame_ts.size(1) - 1                  # number of prior tokens used for context
-        sig = self.scheduler.sigmas.to(base)
-        new_vid = torch.randn_like(base[:, :1])   # [B, 1, C, H, W]
-        new_levels = torch.empty((self.n_steps, *new_vid.shape), dtype=new_vid.dtype, device=new_vid.device)
+        B, L = hist_levels.size(1), hist_levels.size(2)
+        sig = self.scheduler.sigmas.to(hist_levels)
+        ds = sig.diff()
+        new_frame = torch.randn_like(hist_levels[0, :, :1])  # [B, 1, C, H, W]
+        frame_step_cache = new_frame.new_empty((self.n_steps, *new_frame.shape))
+        base_levels = torch.arange(L, -1, -1, device=hist_levels.device, dtype=torch.long)  # [L+1]
 
-        for s in range(self.n_steps):
-            if T == 0:
-                ctx = base[:, :0]                                 # [B, 0, C, H, W]
-                sigma_ctx = sig.new_empty((B, 0))                 # [B, 0]
-            else:
-                # Map oldest->newest prior frames to levels S+T, ..., S+1 (clamped to last step).
-                k = torch.arange(T, 0, -1, device=base.device)    # (T,)
-                lvl_idxs = torch.clamp(s + k, max=self.n_steps - 1).to(torch.long)  # (T,)
+        for step in range(self.n_steps):
+            frame_step_cache[step] = new_frame
 
-                time_idx = torch.arange(L - T, L, device=base.device)               # (T,)
-                HL = hist_levels[:, :, time_idx]                                    # [S, B, T, C, H, W]
-                idx = lvl_idxs.view(1, 1, T, 1, 1, 1).expand(1, B, T, 1, 1, 1)      # [1, B, T, 1, 1, 1]
-                ctx = torch.take_along_dim(HL, idx, dim=0).squeeze(0)               # [B, T, C, H, W]
+            # Context and sigmas at shared levels
+            level_idxs = (step + base_levels).clamp_max(self.n_steps - 1)  # Denoise step levels index
+            sigma = sig.index_select(0, level_idxs).unsqueeze(0).expand(B, -1).type_as(new_frame)
+            ctx = hist_levels.index_select(0, level_idxs[:-1]).diagonal(0, 0, 2).movedim(-1, 1)  # [B, L, C, H, W]
+            vid = torch.cat([ctx, new_frame], dim=1)                             # [B, T+1, C, H, W]
 
-                sigma_ctx = sig.index_select(0, lvl_idxs).unsqueeze(0).expand(B, -1)  # [B, T]
-
-            sigma = torch.cat([sigma_ctx, sig[s].expand(B, 1)], dim=1)               # [B, T+1]
-            vid = torch.cat([ctx, new_vid], dim=1)                                    # [B, T+1, C, H, W]
+            # get velocity -> resolve next step
             v = model(vid, sigma=sigma, frame_timestamp=frame_ts, prompt_emb=prompt_emb, mouse=mouse, button=btn)
-            v = v[:, -1:]  # last frame only
+            v = v[:, -1:]
+            new_frame = (new_frame.float() + ds[step].float() * v.float()).type_as(new_frame)
 
-            new_levels[s] = new_vid  # state at level s (pre-update)
-            dsigma = sig[s + 1] - sig[s]
-            new_vid = (new_vid.float() + dsigma.float() * v.float()).type_as(new_vid)
-
-        return new_vid, new_levels
+        return new_frame, frame_step_cache
