@@ -18,7 +18,7 @@ model:
 
   base_fps: 60  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
-  global_window: 128
+  global_window: 32
   global_attn_period: 2
 
   n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
@@ -72,7 +72,7 @@ train:
   vae_id: null
   vae_batch_size: 4
 
-  vae_scale: 0.9
+  vae_scale: 0.7
   vae_cfg_path: /mnt/data/shahbuland/owl-vaes/configs/waypoint_1/wp1_depth.yml
   vae_ckpt_path: /mnt/data/shahbuland/owl-vaes/checkpoints/waypoint_1_vae_owlc_depth/step_390000.pt
 
@@ -84,7 +84,7 @@ train:
   data_kwargs:
     defaults:
       batch_size: 1
-      seq_len: 128
+      seq_len: 64
       batch_columns: ["depthlatent", "fps", "mouse", "button"]
       latent_column: "depthlatent"
       sampling_periods: [1]
@@ -126,7 +126,7 @@ train:
           dataset_path: /mnt/data/lapp0/BlackOpsColdWar_npy/eval
           sampling_periods: [1]
 
-  sampler_id: standard_progressive
+  sampler_id: standard
   sampler_kwargs:
     n_steps: 20
     cfg_scale: 1.0
