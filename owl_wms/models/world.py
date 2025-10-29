@@ -176,6 +176,60 @@ class WorldDiT(nn.Module):
             x = owl_nn.maybe_ckpt(do_layer_ckpt, _block, x)
         return x
 
+class Expert(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+        self.blocks = nn.ModuleList([WorldDiTBlock(config, idx) for idx in range(config.n_layers)])
+
+        if self.config.noise_conditioning in ("dit_air", "wan"):
+            ref_proj = self.blocks[0].cond_head.cond_proj
+            for blk in self.blocks[1:]:
+                for blk_mod, ref_mod in zip(blk.cond_head.cond_proj, ref_proj):
+                    blk_mod.weight = ref_mod.weight
+
+        # Shared RoPE buffers
+        ref_rope = self.blocks[0].attn.rope
+        for blk in self.blocks[1:]:
+            blk.attn.rope = ref_rope
+    
+    def forward(self, x, block_masks, pos_ids, cond, prompt_emb, ctrl_emb, kv_cache):
+        do_layer_ckpt = getattr(self.config, "layer_gradient_checkpointing", False) and self.training
+        for block, block_mask in zip(self.blocks, block_masks):
+            def _block(x_):
+                return block(x_, pos_ids, cond, prompt_emb, ctrl_emb, block_mask, kv_cache)
+            x = owl_nn.maybe_ckpt(do_layer_ckpt, _block, x)
+        return x
+
+class WorldDiTMoE(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.attn_masker = owl_nn.AttnMaskScheduler(config)
+
+        self.local_window = config.local_window  # nn.Buffer(torch.tensor(config.local_window, dtype=torch.int32), persistent=False)
+        self.global_window = config.global_window  # nn.Buffer(torch.tensor(config.global_window, dtype=torch.int32), persistent=False)
+
+        self.experts = nn.ModuleList([Expert(config) for _ in range(config.n_experts)])
+
+    def forward(self, x expert_idx, pos_ids, cond, prompt_emb, ctrl_emb, doc_id=None, kv_cache=None, curr_frame_mask=None):
+        t_pos = pos_ids["t_pos"]
+        if kv_cache is not None:
+            t_pos = kv_cache.upsert_t_pos(t_pos)
+
+        # generate block masks for each layer
+        block_masks = self.attn_masker(
+            seq_len=x.size(1),
+            doc_id=doc_id,
+            kv_cache=kv_cache,
+            t_pos=t_pos,
+            curr_frame_mask=curr_frame_mask,
+            device=x.device,
+            local_window=self.local_window,
+            global_window=self.global_window,
+        )
+        return self.experts[expert_idx](x, block_masks, pos_ids, cond, prompt_emb, ctrl_emb, kv_cache)
 
 class WorldModel(nn.Module):
     """
@@ -196,7 +250,11 @@ class WorldModel(nn.Module):
         self.denoise_step_emb = owl_nn.NoiseConditioner(config.d_model)
         self.ctrl_emb = ControllerInputEmbedding(config.n_controller_inputs, config.d_model)
 
-        self.transformer = WorldDiT(config)
+        n_experts = getattr(config, "n_experts", 1)
+        if n_experts == 1:
+            self.transformer = WorldDiT(config)
+        else:
+            self.transformer = WorldDiTMoE(config)
 
         self.patch = tuple(getattr(config, "patch", (1, 1)))
 
