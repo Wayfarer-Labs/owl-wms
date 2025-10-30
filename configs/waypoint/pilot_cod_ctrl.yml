@@ -11,17 +11,17 @@ model:
   gradient_checkpointing: false
   ####
 
-  tokens_per_frame: 256
-  height: 16
-  width: 16
-  patch: [1, 1]
+  tokens_per_frame: 64
+  height: 8
+  width: 8
+  patch: [2, 2]
 
   base_fps: 60  # FPS must be divisible by this. atomic time unit is 1/base_fps
   local_window: 8
   global_window: 32
   global_attn_period: 2
 
-  n_frames: 512  # num RoPE cached frames, doesn't impact model behavior
+  n_frames: 2048  # num RoPE cached frames, doesn't impact model behavior
 
   rope_impl: motion
 
@@ -63,8 +63,8 @@ train:
 
   scheduler: null
 
-  checkpoint_dir: /mnt/data/waypoint_1/checkpoints/pilot_stage0/${oc.env:RUN_NAME}
-  output_path: /mnt/data/waypoint_1/models/pilot_stage0/${oc.env:RUN_NAME}
+  checkpoint_dir: checkpoints/wp1_test_1
+  output_path: models/wp1_test_1
   resume_ckpt: null
 
   sample_interval: 5000
@@ -139,9 +139,9 @@ train:
   samplers:
     prefix_30:
       num_seed_frames: 100
-      num_generated_frames: 300
+      num_generated_frames: 60
 
 wandb:
   name: wayfarerlabs
-  project: waypoint_pilot
-  run_name: ${oc.env:RUN_NAME}
+  project: waypoint_moe_exps
+  run_name: pilot_cod_ctrl
