@@ -176,6 +176,7 @@ class WorldDiT(nn.Module):
             x = owl_nn.maybe_ckpt(do_layer_ckpt, _block, x)
         return x
 
+"""
 class Expert(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -230,6 +231,7 @@ class WorldDiTMoE(nn.Module):
             global_window=self.global_window,
         )
         return self.experts[expert_idx](x, block_masks, pos_ids, cond, prompt_emb, ctrl_emb, kv_cache)
+"""
 
 class WorldModel(nn.Module):
     """
