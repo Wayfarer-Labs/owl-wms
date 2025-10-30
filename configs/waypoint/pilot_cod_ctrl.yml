@@ -41,8 +41,7 @@ model:
 train:
   trainer_id: world
 
-  prog_flow: true
-  noise_prev: 0.008928571827709675
+  noise_prev: 0.25
   image_only_warmup: null
   bidirectional_warmup: null
 
@@ -127,9 +126,9 @@ train:
           dataset_path: /mnt/data/lapp0/BlackOpsColdWar_npy/eval
           sampling_periods: [1]
 
-  sampler_id: standard_progressive
+  sampler_id: av_caching
   sampler_kwargs:
-    n_steps: 20
+    n_steps: 16
     cfg_scale: 1.0
     only_return_generated: false
 
@@ -140,6 +139,7 @@ train:
     prefix_30:
       num_seed_frames: 100
       num_generated_frames: 60
+      noise_prev: 0.25
 
 wandb:
   name: wayfarerlabs
